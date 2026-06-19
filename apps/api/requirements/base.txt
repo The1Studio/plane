@@ -81,3 +81,8 @@ anthropic==0.42.0
 requests==2.32.3
 # Markdown -> HTML for ClickUp description conversion (SP1 P4 MD->ProseMirror)
 mistune==3.0.2
+# pgvector Django integration (SP2 ai_ext: VectorField + HNSW). REQUIRED — the
+# ai_ext migrations import `pgvector.django`; without it manage.py check / migrate
+# fail with ModuleNotFoundError (caught by company-main-ci). httpx (bge_client)
+# is satisfied transitively via anthropic.
+pgvector==0.3.6
