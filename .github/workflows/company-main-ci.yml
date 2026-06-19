@@ -53,7 +53,7 @@ jobs:
       DATABASE_URL: postgresql://plane:plane_ci@localhost:5432/plane
       REDIS_URL: redis://localhost:6379/0
       SECRET_KEY: ci-only-not-a-real-secret-key-generated-for-tests-only
-      DJANGO_SETTINGS_MODULE: plane.settings.development
+      DJANGO_SETTINGS_MODULE: plane.settings.test
       # LLM keys — placeholders, not real; CI only checks imports + migrations
       LLM_PROVIDER: anthropic
       LLM_API_KEY: sk-ci-placeholder
@@ -77,9 +77,11 @@ jobs:
 
       - name: Django system check
         working-directory: apps/api
-        run: python manage.py check --deploy 2>&1 | grep -v "WARNINGS" || python manage.py check
-        # --deploy surfaces security warnings; we allow warnings in CI but fail on errors.
-        # The fallback (without --deploy) runs the standard check which exits non-zero on errors.
+        run: python manage.py check
+        # Standard system check: exits non-zero on any model/app/settings error.
+        # This is the gate that fires when a rebase onto a new upstream tag breaks
+        # app loading or the documented touch-point appends. (Deployment-security
+        # warnings belong to the prod settings profile, not this CI check.)
         timeout-minutes: 3
 
       - name: Migration completeness check
