@@ -71,3 +71,13 @@ opentelemetry-exporter-otlp==1.28.1
 drf-spectacular==0.28.0
 # html sanitizer
 nh3==0.2.18
+# ── The1Studio fork add-ons (append-only — docs/FORK.md touch-point 5) ──
+# SP1 ClickUp ETL + SP2 AI suite. NOTE: verify these pins resolve on the
+# build (CI `pip install` gate fails loud if a version is unavailable);
+# the anthropic pin especially must be confirmed against PyPI at build time.
+# Claude native SDK (SP2 AI suite + SP1 AI normalization)
+anthropic==0.42.0
+# ClickUp API v2 client (SP1 extractor)
+requests==2.32.3
+# Markdown -> HTML for ClickUp description conversion (SP1 P4 MD->ProseMirror)
+mistune==3.0.2

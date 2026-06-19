@@ -20,6 +20,8 @@ urlpatterns = [
     path("api/instances/", include("plane.license.urls")),
     path("api/v1/", include("plane.api.urls")),
     path("auth/", include("plane.authentication.urls")),
+    # The1Studio fork add-on (append-only — docs/FORK.md touch-point 2)
+    path("api/ai/", include("plane.ai_ext.urls")),
     path("", include("plane.web.urls")),
 ]
 

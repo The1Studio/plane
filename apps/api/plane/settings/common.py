@@ -93,6 +93,9 @@ INSTALLED_APPS = [
     "plane.license",
     "plane.api",
     "plane.authentication",
+    # The1Studio fork add-on apps (append-only — docs/FORK.md touch-point 1)
+    "plane.clickup_migrate",
+    "plane.ai_ext",
     # Third-party things
     "rest_framework",
     "corsheaders",
@@ -509,3 +512,15 @@ if ENABLE_DRF_SPECTACULAR:
 # MongoDB Settings
 MONGO_DB_URL = os.environ.get("MONGO_DB_URL", False)
 MONGO_DB_DATABASE = os.environ.get("MONGO_DB_DATABASE", False)
+
+# ── The1Studio fork add-on settings (append-only — docs/FORK.md) ──────────
+# SP2 Celery routing: ai_ext background tasks (embeddings, triage, digests)
+# run on a dedicated bounded `ai` queue so 50-user LLM/embedding work never
+# competes in the default worker's request-adjacent path. A `-Q ai` worker is
+# MANDATORY (plane-deploy compose overlay) or these tasks pile up silently.
+# The default worker (no -Q) consumes only the default `celery` queue and will
+# NOT steal `ai` tasks once routed here. (config_from_object reads CELERY_*.)
+CELERY_TASK_DEFAULT_QUEUE = "celery"
+CELERY_TASK_ROUTES = {
+    "plane.ai_ext.bgtasks.*": {"queue": "ai"},
+}

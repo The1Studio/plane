@@ -165,6 +165,16 @@ def get_llm_response(task, prompt, api_key: str, model: str, provider: str) -> T
 class GPTIntegrationEndpoint(BaseAPIView):
     @allow_permission([ROLE.ADMIN, ROLE.MEMBER])
     def post(self, request, slug, project_id):
+        # The1Studio SP2 opt-in gate (docs/FORK.md touch-point 4, decision A2):
+        # this pre-existing endpoint egresses to the LLM today, so it must honor
+        # the per-workspace AI opt-in like the new ai_ext endpoints. Lazy import
+        # keeps base.py importable independent of the add-on app.
+        from plane.ai_ext.gate import gate_or_403
+
+        workspace = Workspace.objects.filter(slug=slug).first()
+        if workspace and (resp := gate_or_403(str(workspace.id))):
+            return resp
+
         api_key, model, provider = get_llm_config()
 
         if not api_key or not model or not provider:
@@ -201,6 +211,13 @@ class GPTIntegrationEndpoint(BaseAPIView):
 class WorkspaceGPTIntegrationEndpoint(BaseAPIView):
     @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
     def post(self, request, slug):
+        # The1Studio SP2 opt-in gate (docs/FORK.md touch-point 4, decision A2).
+        from plane.ai_ext.gate import gate_or_403
+
+        workspace = Workspace.objects.filter(slug=slug).first()
+        if workspace and (resp := gate_or_403(str(workspace.id))):
+            return resp
+
         api_key, model, provider = get_llm_config()
 
         if not api_key or not model or not provider:
