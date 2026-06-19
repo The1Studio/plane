@@ -1,0 +1,157 @@
+# Upstream sync check — weekly alert when a new makeplane/plane tag is available.
+#
+# Queries the upstream repo's latest release/tag. If a tag newer than the last
+# adopted company-v* tag is found, writes a job summary and (optionally) updates
+# a tracking issue. The job NEVER fails the repo — it is advisory only.
+
+name: Upstream sync check
+
+on:
+  schedule:
+    # Runs every Monday at 09:00 UTC
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+    # Manual run: Actions tab → "Upstream sync check" → "Run workflow"
+    inputs:
+      upstream_repo:
+        description: "Upstream repo (org/name)"
+        required: false
+        default: "makeplane/plane"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  # Read-only on the repo contents. Issues write permission is requested separately
+  # so the job degrades gracefully if the token lacks it.
+  contents: read
+  issues: write
+
+jobs:
+  check-upstream-tags:
+    name: Check for new upstream Plane CE tags
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout (for git tag history)
+        uses: actions/checkout@v4
+        with:
+          # Fetch full tag history so we can find the latest company-v* tag
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Find latest adopted tag and latest upstream tag
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPSTREAM_REPO: ${{ inputs.upstream_repo || 'makeplane/plane' }}
+        run: |
+          set -euo pipefail
+
+          # Latest company-v* tag on this repo (the last adopted upstream version)
+          LAST_ADOPTED=$(git tag -l 'company-v*' | sort -V | tail -1 || true)
+          echo "last_adopted=${LAST_ADOPTED}" >> "$GITHUB_OUTPUT"
+
+          if [ -z "$LAST_ADOPTED" ]; then
+            # No company-v* tag yet; treat as if v0.0.0 was the base
+            LAST_UPSTREAM_VERSION="0.0.0"
+          else
+            # Extract the upstream version from company-vX.Y.Z-N → X.Y.Z
+            LAST_UPSTREAM_VERSION=$(echo "$LAST_ADOPTED" | sed 's/company-v//' | sed 's/-[0-9]*$//')
+          fi
+          echo "last_upstream_version=${LAST_UPSTREAM_VERSION}" >> "$GITHUB_OUTPUT"
+
+          # Latest upstream tag (vX.Y.Z) via GitHub API — degrades gracefully on auth failure
+          LATEST_UPSTREAM=$(gh api "repos/${UPSTREAM_REPO}/releases/latest" \
+            --jq '.tag_name' 2>/dev/null || \
+            gh api "repos/${UPSTREAM_REPO}/tags" \
+            --jq '.[0].name' 2>/dev/null || \
+            echo "")
+
+          if [ -z "$LATEST_UPSTREAM" ]; then
+            echo "latest_upstream=unknown" >> "$GITHUB_OUTPUT"
+            echo "newer=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "latest_upstream=${LATEST_UPSTREAM}" >> "$GITHUB_OUTPUT"
+
+            # Strip leading 'v' for semver comparison
+            LATEST_CLEAN=$(echo "$LATEST_UPSTREAM" | sed 's/^v//')
+
+            # Compare versions using sort -V; "newer" if upstream > last adopted
+            HIGHER=$(printf '%s\n%s\n' "$LAST_UPSTREAM_VERSION" "$LATEST_CLEAN" \
+              | sort -V | tail -1)
+            if [ "$HIGHER" = "$LATEST_CLEAN" ] && \
+               [ "$LATEST_CLEAN" != "$LAST_UPSTREAM_VERSION" ]; then
+              echo "newer=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "newer=false" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Write job summary
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" << EOF
+          ## Upstream sync check — $(date -u '+%Y-%m-%d')
+
+          | | Value |
+          |---|---|
+          | Last adopted tag (company-v*) | \`${{ steps.check.outputs.last_adopted || 'none' }}\` |
+          | Last adopted upstream version | \`${{ steps.check.outputs.last_upstream_version }}\` |
+          | Latest upstream tag | \`${{ steps.check.outputs.latest_upstream }}\` |
+          | New upstream tag available | **${{ steps.check.outputs.newer }}** |
+
+          EOF
+
+          if [ "${{ steps.check.outputs.newer }}" = "true" ]; then
+            cat >> "$GITHUB_STEP_SUMMARY" << EOF
+
+          ### Action required
+
+          Upstream Plane CE has released \`${{ steps.check.outputs.latest_upstream }}\`.
+          Follow the rebase-on-tags workflow in \`docs/FORK.md\` to adopt it.
+
+          \`\`\`bash
+          git fetch upstream --tags
+          git checkout company-main
+          git rebase ${{ steps.check.outputs.latest_upstream }}
+          \`\`\`
+          EOF
+          fi
+
+      - name: Create or update tracking issue (if newer tag and permissions allow)
+        if: steps.check.outputs.newer == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TITLE="chore: adopt upstream ${{ steps.check.outputs.latest_upstream }}"
+          BODY="Upstream Plane CE has released \`${{ steps.check.outputs.latest_upstream }}\`.
+
+          Follow the rebase-on-tags workflow in \`docs/FORK.md\` to adopt it:
+
+          \`\`\`bash
+          git fetch upstream --tags
+          git checkout company-main
+          git rebase ${{ steps.check.outputs.latest_upstream }}
+          \`\`\`
+
+          Last adopted: \`${{ steps.check.outputs.last_adopted || 'none' }}\`
+          Detected by: upstream-sync-check.yml (automated, $(date -u '+%Y-%m-%d'))"
+
+          # Search for an existing open issue with the same title to avoid duplicates
+          EXISTING=$(gh issue list \
+            --state open \
+            --search "$TITLE" \
+            --json number \
+            --jq '.[0].number' 2>/dev/null || echo "")
+
+          if [ -z "$EXISTING" ]; then
+            gh issue create \
+              --title "$TITLE" \
+              --body "$BODY" \
+              --label "maintenance" 2>/dev/null || \
+              echo "Note: could not create issue (token may lack issues:write permission). See job summary above."
+          else
+            echo "Tracking issue #${EXISTING} already exists for this upstream tag."
+          fi

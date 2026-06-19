@@ -1,0 +1,158 @@
+# CI gate for The1Studio's company-main fork branch.
+# Purpose: fail fast on any rebase that silently breaks the fork — missing migrations,
+# Django system errors, or frontend type-check failures.
+#
+# This workflow is REQUIRED on company-main and must never carry a `paths:` filter
+# (per ci-cd-trigger-design rule §3: path-filtered required-check workflows cause
+# permanent "Expected — Waiting" → merge deadlock).
+
+name: company-main CI
+
+on:
+  push:
+    branches:
+      - company-main
+  pull_request:
+    branches:
+      - company-main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1 — Backend isolation check
+  # Verifies that:
+  #   (a) no migration was added or removed during the rebase without a matching
+  #       migration file (makemigrations --check --dry-run exits non-zero if so)
+  #   (b) Django's system check passes (import errors, url resolver errors, etc.)
+  # ---------------------------------------------------------------------------
+  backend-isolation-check:
+    name: Backend — migration check + Django system check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_DB: plane
+          POSTGRES_USER: plane
+          POSTGRES_PASSWORD: plane_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U plane"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # Minimal env to satisfy Django settings imports — not used in real deploys
+      DATABASE_URL: postgresql://plane:plane_ci@localhost:5432/plane
+      REDIS_URL: redis://localhost:6379/0
+      SECRET_KEY: ci-only-not-a-real-secret-key-generated-for-tests-only
+      DJANGO_SETTINGS_MODULE: plane.settings.development
+      # LLM keys — placeholders, not real; CI only checks imports + migrations
+      LLM_PROVIDER: anthropic
+      LLM_API_KEY: sk-ci-placeholder
+      LLM_MODEL: claude-sonnet-4-6
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: apps/api/requirements/base.txt
+
+      - name: Install Python dependencies
+        working-directory: apps/api
+        run: pip install -r requirements/base.txt
+        timeout-minutes: 5
+
+      - name: Django system check
+        working-directory: apps/api
+        run: python manage.py check --deploy 2>&1 | grep -v "WARNINGS" || python manage.py check
+        # --deploy surfaces security warnings; we allow warnings in CI but fail on errors.
+        # The fallback (without --deploy) runs the standard check which exits non-zero on errors.
+        timeout-minutes: 3
+
+      - name: Migration completeness check
+        working-directory: apps/api
+        run: python manage.py makemigrations --check --dry-run
+        # Exits 1 if any app has pending model changes without a corresponding migration file.
+        # This fires when a rebase onto a new upstream tag adds/removes model fields and the
+        # migration file is missing or the cross-app FK pin is stale.
+        timeout-minutes: 5
+
+  # ---------------------------------------------------------------------------
+  # Job 2 — Frontend type-check
+  # Verifies pnpm lockfile integrity and TypeScript compilation after a rebase.
+  # ---------------------------------------------------------------------------
+  frontend-check:
+    name: Frontend — lockfile + type-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Get pnpm store directory
+        id: pnpm-cache
+        run: echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
+
+      - name: Cache pnpm modules
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+        # --frozen-lockfile fails if pnpm-lock.yaml is out of sync with package.json.
+        # This catches the case where a rebase introduced a package.json change but
+        # the lockfile was not regenerated.
+        timeout-minutes: 5
+
+      - name: Type-check
+        run: pnpm check
+        # Runs TypeScript compiler across all workspace packages.
+        # Catches type errors introduced by the rebase (e.g. upstream API shape changes).
+        timeout-minutes: 5
+
+  # ---------------------------------------------------------------------------
+  # Job 3 — Smoke placeholder (Phase 5)
+  # This job is a stub. Wire it to the staging VM and the Phase-5 smoke checklist
+  # documented in plans/SP0-fork-selfhost-plane.md §Phase 5 once the VM is live.
+  # ---------------------------------------------------------------------------
+  smoke-placeholder:
+    name: Smoke — staging (placeholder, wire to VM)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # TODO(Phase 5): replace this job with a real smoke trigger against the staging VM.
+    # The smoke checklist lives in plans/SP0-fork-selfhost-plane.md §Phase 5 and will be
+    # documented in docs/SMOKE.md once the stack is deployed.
+    steps:
+      - name: Placeholder — staging smoke not yet wired
+        run: |
+          echo "Staging smoke gate placeholder."
+          echo "Wire this job to the staging VM and Phase-5 smoke checklist before go-live."
+          echo "See: plans/SP0-fork-selfhost-plane.md §Phase 5 / docs/SMOKE.md"

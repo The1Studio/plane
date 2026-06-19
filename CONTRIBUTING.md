@@ -2,6 +2,22 @@
 
 Thank you for showing an interest in contributing to Plane! All kinds of contributions are valuable to us. In this guide, we will cover how you can quickly onboard and make your first contribution.
 
+---
+
+## Fork governance (The1Studio company-main)
+
+This repository is a **governed private fork** of [Plane CE](https://github.com/makeplane/plane)
+maintained by The1Studio. The production branch is `company-main`, derived from upstream release
+tags. All The1Studio customizations go into **new Django apps** (`apps/api/plane/ai_ext/`,
+`apps/api/plane/clickup_migrate/`) or **new frontend packages** (`packages/ai-ext/`) — core
+Plane source files are never edited in place except at the six documented touch-points (two
+appended lines in `INSTALLED_APPS` and `urlpatterns`, plus the pre-applied Phase 4b LLM fix and
+the designed `extendedRoutes` frontend seam). This append-only discipline keeps rebases onto new
+upstream tags conflict-free by design. See [`docs/FORK.md`](docs/FORK.md) for the complete
+rebase recipe, touch-point inventory, secret hygiene policy, and CI gate documentation.
+
+---
+
 ## Submitting an issue
 
 Before submitting a new issue, please search the [issues](https://github.com/makeplane/plane/issues) tab. Maybe an issue or discussion already exists and might inform you of workarounds. Otherwise, you can give new information.
