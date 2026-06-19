@@ -25,21 +25,11 @@ class AiAutoCreateView(BaseAPIView):
 
     @allow_permission([ROLE.ADMIN, ROLE.MEMBER])
     def post(self, request, slug, project_id):
-        err = gate_or_403(
-            request.parser_context["kwargs"].get("workspace_id")
-            or _workspace_id_from_slug(slug)
-        )
-        if err:
-            return err
-
-        source_text = request.data.get("text", "").strip()
-        if not source_text:
-            return Response(
-                {"error": "text is required"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        from plane.db.models import Project
+        # H1 FIX: resolve project first, then gate using the confirmed workspace_id.
+        # The old code tried request.parser_context["kwargs"].get("workspace_id") which
+        # is never set by our URL patterns, so it always fell back to a slug lookup that
+        # could return "" on DoesNotExist → gate_or_403("") → 500.
+        from plane.db.models import Project, ProjectMember
         try:
             project = Project.objects.select_related("workspace").get(
                 pk=project_id,
@@ -47,6 +37,33 @@ class AiAutoCreateView(BaseAPIView):
             )
         except Project.DoesNotExist:
             return Response({"error": "project not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Gate uses the resolved workspace_id from the project — never a derived/cached value.
+        err = gate_or_403(str(project.workspace_id))
+        if err:
+            return err
+
+        # H2 FIX: allow_permission default is workspace-scoped, meaning ANY active workspace
+        # member passes the decorator.  Add an explicit active-ProjectMember check to confirm
+        # the calling user actually belongs to THIS project (not just the workspace).
+        is_project_member = ProjectMember.objects.filter(
+            project_id=project_id,
+            member=request.user,
+            is_active=True,
+            workspace__slug=slug,
+        ).exists()
+        if not is_project_member:
+            return Response(
+                {"error": "You are not an active member of this project."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        source_text = request.data.get("text", "").strip()
+        if not source_text:
+            return Response(
+                {"error": "text is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         from plane.ai_ext.bgtasks.triage_task import ai_triage_issue
 
@@ -114,10 +131,5 @@ class AiIntakeDraftView(BaseAPIView):
         )
 
 
-def _workspace_id_from_slug(slug: str) -> str:
-    """Helper to resolve workspace_id from slug for gate check."""
-    from plane.db.models import Workspace
-    try:
-        return str(Workspace.objects.get(slug=slug).id)
-    except Workspace.DoesNotExist:
-        return ""
+# (H1 fix removed _workspace_id_from_slug — workspace_id is now always taken
+#  from the resolved project.workspace_id, never from a slug-derived fallback.)

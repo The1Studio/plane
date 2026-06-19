@@ -79,7 +79,17 @@ def embed_entity(
         bge.close()
 
     # Atomic replace: delete all existing chunks then bulk-insert new ones.
-    with __import__("django.db", fromlist=["transaction"]).transaction.atomic():
+    # M3 FIX: drop ignore_conflicts=True from the post-delete insert — after an
+    # explicit DELETE there are no conflicts to ignore, and masking IntegrityError
+    # here would hide real bugs (e.g. race between two concurrent signal firings).
+    # The unique_together constraint on (entity_type, entity_id, chunk_idx) makes
+    # a true conflict impossible after a clean delete within the same transaction.
+    #
+    # C5 FIX: 'tsv' is editable=False (SearchVectorField) so the ORM will NOT
+    # include it in the INSERT column list.  Postgres GENERATED ALWAYS AS columns
+    # reject any INSERT that names them explicitly — this ensures we never do so.
+    import django.db.transaction as _tx
+    with _tx.atomic():
         AiEmbedding.objects.filter(entity_type=entity_type, entity_id=entity_id).delete()
 
         rows = []
@@ -98,7 +108,7 @@ def embed_entity(
                     embedding=embed_result.embedding,
                 )
             )
-        AiEmbedding.objects.bulk_create(rows, batch_size=100, ignore_conflicts=True)
+        AiEmbedding.objects.bulk_create(rows, batch_size=100)
 
     logger.debug(
         "embed_entity: upserted %d chunks for %s/%s", len(rows), entity_type, entity_id

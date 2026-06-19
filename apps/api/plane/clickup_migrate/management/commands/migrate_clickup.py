@@ -76,12 +76,17 @@ class Command(BaseCommand):
             )
 
         # ── MigrationRun ──────────────────────────────────────────────
+        # H1: gate ALL DB writes on dry_run — dry-run must emit zero rows.
         if run_id:
             try:
                 run = MigrationRun.objects.get(pk=run_id)
                 self.stdout.write(f"Resuming MigrationRun #{run.pk}")
             except MigrationRun.DoesNotExist:
                 raise CommandError(f"MigrationRun #{run_id} not found.")
+        elif dry_run:
+            # H1: No MigrationRun row in dry-run — use a sentinel.
+            run = None
+            self.stdout.write("[dry-run] No MigrationRun created")
         else:
             run = MigrationRun.objects.create(
                 space_ids=space_ids,
@@ -144,11 +149,13 @@ class Command(BaseCommand):
             except User.DoesNotExist:
                 plane_uid = None
 
-            EmailCoverage.objects.get_or_create(
-                run=run,
-                clickup_email=email,
-                defaults={"plane_user_id": plane_uid, "signed_off": False},
-            )
+            # H1: skip EmailCoverage writes entirely in dry-run.
+            if not dry_run:
+                EmailCoverage.objects.get_or_create(
+                    run=run,
+                    clickup_email=email,
+                    defaults={"plane_user_id": plane_uid, "signed_off": False},
+                )
 
         # ── collect tasks + field defs ─────────────────────────────────
         all_tasks: list[dict] = []
@@ -333,17 +340,21 @@ class Command(BaseCommand):
                     counts["state"] += 1
 
                 # Ensure at least one default state.
-                if project and not default_set:
+                if project and not default_set and not dry_run:
                     from plane.db.models import State
-                    State.all_state_objects.create(
+                    # C1: BaseModel.save() clears created_by via crum in management
+                    # commands. Use the post-save .save(disable_auto_set_user=True) pattern.
+                    fallback_state = State.all_state_objects.create(
                         project=project,
                         workspace=workspace,
                         name="Backlog",
                         color="#60646C",
                         group="backlog",
                         default=True,
+                    )
+                    fallback_state.save(
                         created_by_id=bot_user.id,
-                        updated_by_id=bot_user.id,
+                        disable_auto_set_user=True,
                     )
 
                 # Labels from tags.
@@ -412,17 +423,18 @@ class Command(BaseCommand):
                 counts["parent_link"] += 1
 
         # ── pass-2: issue relations ───────────────────────────────────
+        # C3 fix: write_issue_relation resolves project from the DB (Issue
+        # lookup via ledger plane_id) — the in-memory task_to_issue map is
+        # empty on a resumed run and MUST NOT be used for project resolution.
         for task_id, task in all_tasks_raw.items():
             deps = task.get("dependencies") or []
             for dep in deps:
                 dep_task_id = str(dep.get("task_id", ""))
                 dep_type = dep.get("type", "waiting_on")
                 if dep_task_id:
-                    project_for_rel = getattr(task_to_issue.get(task_id), "project", None)
-                    ws_for_rel = workspace
                     write_issue_relation(
                         run, dep_type, task_id, dep_task_id,
-                        ws_for_rel, project_for_rel, bot_user, dry_run,
+                        workspace, bot_user, dry_run,
                     )
                     counts["relation"] += 1
 
@@ -518,37 +530,43 @@ class Command(BaseCommand):
                         counts["attachment"] += 1
 
                     # Comments (with cursor resumption).
+                    # H1: MigrationCursor.get_or_create only in non-dry-run.
                     from plane.clickup_migrate.models import MigrationCursor
-                    cursor_obj, _ = MigrationCursor.objects.get_or_create(
-                        run=run,
-                        entity_type="comments",
-                        container_id=task_id,
-                        defaults={"cursor_token": None, "done": False},
-                    )
-                    if cursor_obj.done:
-                        continue
+                    if dry_run:
+                        # Dry-run: iterate all comments without persisting cursor state.
+                        for comments, _, _ in client.iter_comments(task_id, start_id=None):
+                            counts["comment"] += len(comments)
+                            for comment in comments:
+                                counts["comment"] += len(comment.get("replies") or [])
+                    else:
+                        cursor_obj, _ = MigrationCursor.objects.get_or_create(
+                            run=run,
+                            entity_type="comments",
+                            container_id=task_id,
+                            defaults={"cursor_token": None, "done": False},
+                        )
+                        if cursor_obj.done:
+                            continue
 
-                    start_id = cursor_obj.cursor_token
-                    for comments, _, next_cursor in client.iter_comments(task_id, start_id=start_id):
-                        for comment in comments:
-                            parent_comment = write_comment(
-                                run, issue, workspace, comment, user_cache,
-                                parent_comment=None, dry_run=dry_run,
-                            )
-                            counts["comment"] += 1
-                            # Replies.
-                            for reply in (comment.get("replies") or []):
-                                write_comment(
-                                    run, issue, workspace, reply, user_cache,
-                                    parent_comment=parent_comment, dry_run=dry_run,
+                        start_id = cursor_obj.cursor_token
+                        for comments, _, next_cursor in client.iter_comments(task_id, start_id=start_id):
+                            for comment in comments:
+                                parent_comment = write_comment(
+                                    run, issue, workspace, comment, user_cache,
+                                    parent_comment=None, dry_run=dry_run,
                                 )
                                 counts["comment"] += 1
+                                # Replies.
+                                for reply in (comment.get("replies") or []):
+                                    write_comment(
+                                        run, issue, workspace, reply, user_cache,
+                                        parent_comment=parent_comment, dry_run=dry_run,
+                                    )
+                                    counts["comment"] += 1
 
-                        # Checkpoint cursor.
-                        cursor_obj.cursor_token = next_cursor
-                        if not dry_run:
+                            # Checkpoint cursor.
+                            cursor_obj.cursor_token = next_cursor
                             cursor_obj.save(update_fields=["cursor_token"])
 
-                    if not dry_run:
                         cursor_obj.done = True
                         cursor_obj.save(update_fields=["done"])

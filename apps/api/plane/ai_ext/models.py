@@ -10,6 +10,13 @@ import uuid
 from django.db import models
 from pgvector.django import VectorField  # type: ignore[import]
 
+try:
+    from django.contrib.postgres.search import SearchVectorField  # Django ≥ 3.1
+    _HAS_SEARCH_VECTOR_FIELD = True
+except ImportError:  # pragma: no cover
+    SearchVectorField = None
+    _HAS_SEARCH_VECTOR_FIELD = False
+
 
 class AiWorkspaceConfig(models.Model):
     """Per-workspace opt-in gate for all AI features (SP2 decision A2).
@@ -101,15 +108,23 @@ class AiEmbedding(models.Model):
     embed_version = models.CharField(max_length=32, default="1")
     # Dense embedding vector — dim enforced by BGE client assert.
     embedding = VectorField(dimensions=1024)
-    # Full-text search tsvector — GENERATED ALWAYS AS STORED (migration 0002 SQL).
-    # Declared as GeneratedField conceptually; we use a dummy default here only
-    # so Django can introspect the column.  Django ORM excludes it from INSERT/UPDATE
-    # via the `update_fields` mechanism in bulk_create — callers MUST pass
-    # update_fields that omit 'tsv', or use ignore_conflicts=True which avoids
-    # a full UPDATE.  Postgres enforces the GENERATED ALWAYS contract server-side
-    # and will error if we accidentally try to write to it.
-    # editable=False prevents inclusion in ModelForms and admin.
-    tsv = models.TextField(blank=True, editable=False, default="")
+    # Full-text search tsvector — GENERATED ALWAYS AS STORED (migration 0002).
+    #
+    # C5 FIX: declared as SearchVectorField(editable=False) so:
+    #   (a) Django migration state matches the real Postgres column type (tsvector
+    #       vs the old TextField drift that caused migration disagreement).
+    #   (b) bulk_create MUST NOT include 'tsv' in the field list — Postgres
+    #       rejects any INSERT that names a GENERATED ALWAYS column.
+    #       All callers use AiEmbedding(...) without setting tsv, so the ORM
+    #       will not include it in INSERT by default (editable=False + no default
+    #       means it's omitted from the SQL unless explicitly listed).
+    #
+    # The GENERATED expression in migration 0002 uses the full content_excerpt
+    # text (not capped at 512 — the cap was on content_excerpt itself, which is
+    # fine; tsv is generated from the full stored content_excerpt value).
+    tsv = (SearchVectorField if _HAS_SEARCH_VECTOR_FIELD else models.TextField)(
+        editable=False, null=True, blank=True
+    )
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

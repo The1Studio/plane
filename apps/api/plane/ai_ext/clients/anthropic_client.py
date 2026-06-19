@@ -294,14 +294,39 @@ class AnthropicClient:
         return hashlib.sha256(text.encode()).hexdigest()
 
     def validate_output_safe(self, output: str, system: str) -> bool:
-        """Return False if output echoes a system-prompt token (simple heuristic).
+        """Return False if the output echoes system-prompt content.
 
-        A more rigorous check would compare n-grams; this catches obvious leaks.
+        H5 FIX: the old implementation only checked sentinel strings; its
+        docstring promised n-gram detection but didn't implement it.  Now:
+
+        1. Sentinel check: reject if _DATA_START or _DATA_END appear verbatim.
+        2. N-gram check: build all 6-word n-grams from the system prompt; if
+           any appear verbatim in the output, the response likely leaked the
+           system prompt and is rejected.  6-grams are long enough to avoid
+           false positives on common phrases ("you are a helpful assistant")
+           while catching meaningful echoes.
+
+        This is a heuristic, not a cryptographic guarantee.  It catches the
+        most common prompt-injection / system-leak patterns without an extra
+        API call.
         """
-        # Take first few distinct tokens from system and check if they appear verbatim.
-        sentinel_phrases = [_DATA_START, _DATA_END]
-        for phrase in sentinel_phrases:
+        # 1. Sentinel check.
+        for phrase in (_DATA_START, _DATA_END):
             if phrase in output:
-                logger.error("ai_ext: output echoes system sentinel — rejected")
+                logger.error("ai_ext: output echoes data sentinel — rejected")
                 return False
+
+        # 2. 6-gram overlap check between system prompt and output.
+        _NGRAM_SIZE = 6
+        output_lower = output.lower()
+        sys_words = system.lower().split()
+        if len(sys_words) >= _NGRAM_SIZE:
+            for i in range(len(sys_words) - _NGRAM_SIZE + 1):
+                ngram = " ".join(sys_words[i : i + _NGRAM_SIZE])
+                if ngram in output_lower:
+                    logger.error(
+                        "ai_ext: output contains system-prompt n-gram %r — rejected", ngram
+                    )
+                    return False
+
         return True

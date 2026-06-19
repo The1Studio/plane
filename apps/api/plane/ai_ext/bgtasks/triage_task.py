@@ -9,6 +9,7 @@
 # is the gate before anything leaves TRIAGE.
 
 import hashlib
+import html
 import json
 import logging
 import os
@@ -215,7 +216,10 @@ def _run_triage(workspace_id: str, project_id: str, source_text: str, created_by
 
         issue = Issue.objects.create(
             name=draft.get("title", "Untitled AI triage")[:255],
-            description_html=f"<p>{draft.get('description', '')}</p>",
+            # XSS FIX: model output is untrusted content — html.escape() before
+            # embedding in HTML.  Plane may sanitize description_html on render
+            # but we cannot rely on that; escape at the source.
+            description_html=f"<p>{html.escape(draft.get('description', ''))}</p>",
             priority=draft.get("priority", "none"),
             state_id=triage_state.id,
             project_id=project_id,

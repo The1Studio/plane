@@ -148,18 +148,15 @@ def _connect_page():
 
 
 # ------------------------------------------------------------------
-# Page — ACL re-stamp on access change
+# M1 FIX: on_page_acl_change was a dead no-op (`pass` body).
+# Removed — _connect_page() above already handles every Page save, and
+# retrieval-time live-filtering in _get_accessible_entity_ids() is the
+# SOLE ACL gate (embeddings are corpus keys, not auth tokens).
+# A page access flip (public→private) takes effect instantly for new
+# queries without any re-embed: the live filter checks
+#   Q(access=0) | Q(created_by=user)
+# at query time.  No separate ACL signal is needed.
 # ------------------------------------------------------------------
-def _connect_page_acl():
-    from plane.db.models import Page
-
-    @receiver(post_save, sender=Page, dispatch_uid="ai_ext_acl_page")
-    def on_page_acl_change(sender, instance, **kwargs):
-        # Re-embed so future retrieval uses live access filter (no stale metadata).
-        # Only needed if access changed; signal fires on every save — cheap no-op
-        # if text hasn't changed (embed_entity checks content_hash in backfill,
-        # but signals always re-upsert for simplicity).
-        pass  # live-filter at retrieval is the actual gate; signal above covers re-embed
 
 
 # ------------------------------------------------------------------
@@ -272,7 +269,7 @@ def _connect_module():
 _connect_issue()
 _connect_issue_comment()
 _connect_page()
-_connect_page_acl()
+# _connect_page_acl() removed (M1 fix — was dead no-op; live filter is the ACL gate)
 _connect_project()
 _connect_cycle()
 _connect_module()

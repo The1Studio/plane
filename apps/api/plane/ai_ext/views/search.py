@@ -33,8 +33,11 @@ _RRF_K = 60
 # Final top-k to feed the LLM.
 _TOP_K = 8
 
-# Minimum retrieval score to attempt generation (avoid weak retrieval hallucinations).
-_MIN_SCORE_THRESHOLD = 0.3
+# Minimum cosine SIMILARITY score (= 1.0 - cosine_distance, range 0..1) for the
+# top ANN hit before we attempt generation.  Applied BEFORE RRF fusion so the
+# scale is meaningful (RRF score max ≈ 0.033 — a threshold on rrf_score would
+# fire on virtually every query and always return "I don't know").
+_MIN_ANN_COSINE_SCORE = 0.25
 
 
 class AiSearchView(BaseAPIView):
@@ -119,8 +122,11 @@ class AiSearchView(BaseAPIView):
         if not top_results:
             return Response({"answer": "I don't know.", "citations": []}, status=status.HTTP_200_OK)
 
-        # Check minimum score to avoid weak-retrieval hallucinations.
-        if top_results[0]["rrf_score"] < _MIN_SCORE_THRESHOLD:
+        # Guard against weak ANN retrieval using the cosine similarity score (0..1 range),
+        # NOT the RRF score (max ≈ 0.033 — too low for a meaningful threshold).
+        # ann_results is sorted by distance ascending; first entry is the best hit.
+        top_ann_score = ann_results[0]["score"] if ann_results else 0.0
+        if top_ann_score < _MIN_ANN_COSINE_SCORE:
             return Response(
                 {"answer": "I don't have enough relevant information to answer that.", "citations": []},
                 status=status.HTTP_200_OK,
@@ -437,12 +443,21 @@ def _rrf_fuse(
 
 import re as _re
 
+# Context blocks are formatted as "[entity_type:uuid]" (see context_blocks above).
+# The LLM therefore cites as "[issue:abc123…]" or "[page:abc123…]".
+# The old bare-uuid pattern never matched, so citations were always silently dropped.
+# Accept either format and capture only the UUID portion.
 _CITATION_PATTERN = _re.compile(
-    r"\[([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\]",
+    r"\[(?:[a-z_]+:)?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\]",
     _re.IGNORECASE,
 )
 
 
 def _extract_citation_ids(text: str) -> list[str]:
-    """Extract UUID citations from LLM output text."""
+    """Extract UUID citations from LLM output text.
+
+    Handles both [uuid] and [entity_type:uuid] formats.  The LLM is prompted
+    to cite as [entity_type:uuid] to match the context block format, so the
+    type-prefixed pattern is the primary path.
+    """
     return _CITATION_PATTERN.findall(text)

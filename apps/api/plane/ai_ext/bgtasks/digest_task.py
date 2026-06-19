@@ -49,7 +49,8 @@ def submit_digest_batch(self, workspace_id: str, project_id: str | None = None, 
         logger.info("submit_digest_batch: AI gate blocked — %s", exc.message)
         return
 
-    from plane.db.models import Issue, Project, User, WorkspaceMember
+    from plane.db.models import Issue, ProjectMember, WorkspaceMember
+    from plane.db.models import UserNotificationPreference
     from plane.ai_ext.models import AiBatchJob
 
     # ------------------------------------------------------------------
@@ -82,15 +83,63 @@ def submit_digest_batch(self, workspace_id: str, project_id: str | None = None, 
         context_text = _map_reduce_summarize(context_text, workspace_id, config)
 
     # ------------------------------------------------------------------
-    # Find opted-in receivers: workspace members with notification prefs.
+    # C3 FIX: Find opted-in receivers only.
+    #
+    # We filter to active workspace/project members whose
+    # UserNotificationPreference.property_change is True (the closest existing
+    # opt-in signal — no digest-specific field exists in the schema).  Members
+    # with NO preference row are treated as opted-in (default True per Django
+    # field default).  Members who have explicitly set property_change=False
+    # are excluded as opted-out.
+    #
+    # C4 FIX: When project_id or cycle_id is set, restrict receivers to active
+    # ProjectMember of that specific project (cycle-scoped digest → cycle's
+    # project members only).  Workspace-level digests use all workspace members.
     # ------------------------------------------------------------------
-    receiver_ids = list(
-        WorkspaceMember.objects.filter(workspace_id=workspace_id, is_active=True)
-        .values_list("member_id", flat=True)[:100]
+    if project_id:
+        # Project-scoped or cycle-scoped digest: receivers = active project members.
+        scope_project_id = project_id
+    elif cycle_id:
+        # Derive project from the cycle.
+        from plane.db.models import Cycle
+        try:
+            scope_project_id = str(
+                Cycle.objects.filter(id=cycle_id).values_list("project_id", flat=True).get()
+            )
+        except Cycle.DoesNotExist:
+            logger.warning("submit_digest_batch: cycle %s not found", cycle_id)
+            return
+    else:
+        scope_project_id = None
+
+    if scope_project_id:
+        # C4: restrict receivers to active ProjectMember of the scoped project.
+        candidate_ids = list(
+            ProjectMember.objects.filter(
+                workspace_id=workspace_id,
+                project_id=scope_project_id,
+                is_active=True,
+            ).values_list("member_id", flat=True)
+        )
+    else:
+        # Workspace-level digest: all active workspace members.
+        candidate_ids = list(
+            WorkspaceMember.objects.filter(workspace_id=workspace_id, is_active=True)
+            .values_list("member_id", flat=True)
+        )
+
+    # C3: exclude explicit opt-outs (property_change=False for this workspace).
+    opted_out_ids = set(
+        UserNotificationPreference.objects.filter(
+            workspace_id=workspace_id,
+            user_id__in=candidate_ids,
+            property_change=False,
+        ).values_list("user_id", flat=True)
     )
+    receiver_ids = [uid for uid in candidate_ids if uid not in opted_out_ids][:100]
 
     if not receiver_ids:
-        logger.info("submit_digest_batch: no receivers for workspace %s", workspace_id)
+        logger.info("submit_digest_batch: no opted-in receivers for %s", entity_label)
         return
 
     # ------------------------------------------------------------------
@@ -122,6 +171,26 @@ def submit_digest_batch(self, workspace_id: str, project_id: str | None = None, 
                 ],
             }
         )
+
+    # H3 FIX: pre-reserve estimated cost before submitting the Batch so the
+    # ceiling check is atomic (INCRBY-then-rollback pattern in CostTracker).
+    # Estimate: Sonnet input+output tokens per receiver × token cost.
+    # Rough: 512 output + ~len(context_text)//4 input tokens per receiver.
+    # Sonnet price ≈ $3/M input + $15/M output (2025); use conservative estimate.
+    _SONNET_INPUT_COST_PER_TOKEN = 3.0 / 1_000_000
+    _SONNET_OUTPUT_COST_PER_TOKEN = 15.0 / 1_000_000
+    input_tokens_each = len(context_text) // 4
+    output_tokens_each = 512
+    estimated_cost = len(batch_requests) * (
+        input_tokens_each * _SONNET_INPUT_COST_PER_TOKEN
+        + output_tokens_each * _SONNET_OUTPUT_COST_PER_TOKEN
+    )
+    from plane.ai_ext.cost_tracker import CostTracker, CostCeilingExceeded
+    try:
+        CostTracker(workspace_id).pre_reserve(estimated_cost, config.monthly_usd_ceiling)
+    except CostCeilingExceeded as exc:
+        logger.warning("submit_digest_batch: pre-reserve blocked — %s", exc)
+        return
 
     client = AnthropicClient(workspace_id=workspace_id)
     try:

@@ -10,6 +10,7 @@
 
 import uuid
 
+import django.contrib.postgres.search
 import django.db.models.deletion
 from django.db import migrations, models
 from pgvector.django import VectorField
@@ -37,8 +38,10 @@ class Migration(migrations.Migration):
                 ("embedding", VectorField(dimensions=1024)),
                 # Plain-text excerpt (first 512 chars) used to populate tsv.
                 ("content_excerpt", models.TextField(blank=True, default="")),
-                # tsv placeholder — real expression is added via RunSQL below.
-                ("tsv", models.TextField(blank=True, editable=False)),
+                # C5 FIX: SearchVectorField so Django migration state matches the
+                # real tsvector GENERATED ALWAYS AS STORED column added by RunSQL below.
+                # editable=False ensures ORM never names it in INSERT/UPDATE.
+                ("tsv", django.contrib.postgres.search.SearchVectorField(editable=False, null=True, blank=True)),
                 ("updated_at", models.DateTimeField(auto_now=True)),
                 (
                     "workspace",
@@ -82,15 +85,12 @@ class Migration(migrations.Migration):
             ),
         ),
 
-        # Convert the tsv column to GENERATED ALWAYS AS (entity_type || ' ' || entity_id::text)
-        # using 'simple' configuration.  We generate from content_hash as a proxy because
-        # we don't store raw text in the row — real full-text indexing on stored chunk text
-        # is handled by re-embedding on write.  The GENERATED column expression uses
-        # to_tsvector over model_id + entity_type (stable, always non-null).
-        # Actual text content goes through BM25-style approximate matching via
-        # plainto_tsquery against this column.
-        # NOTE: the tsv column is updated via trigger in production; here we use the
-        # closest portable approximation.
+        # C5 FIX: Replace the ORM-created tsvector column with a GENERATED ALWAYS AS
+        # STORED expression so Postgres computes it automatically on INSERT/UPDATE.
+        # The expression indexes content_excerpt (the stored chunk text, up to 512 chars)
+        # + entity_type for full-text matching via plainto_tsquery.
+        # Django sees SearchVectorField (editable=False) in migration state, which
+        # matches the real tsvector column type — no drift.
         migrations.RunSQL(
             sql="""
             ALTER TABLE ai_embeddings

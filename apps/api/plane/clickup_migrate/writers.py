@@ -11,14 +11,26 @@
 #   pass-2: subtask parents + issue relations
 #
 # CRITICAL constraints (verified against Plane source):
-#   - Issue.save() uses an advisory lock per project + auto-creates IssueSequence.
-#     NEVER bulk_create Issue; NEVER manually create IssueSequence.
-#   - BaseModel uses auto_now_add/auto_now — post-save .update() required for timestamps.
-#   - IssueComment.save() auto-creates a Description — do not double-write.
-#   - crum.get_current_user() returns None in management commands → must set
-#     created_by_id / updated_by_id explicitly on every instance.
-#   - Use all_state_objects / all_objects (unfiltered) managers, NOT objects
-#     (which excludes triage states and soft-deleted rows).
+#
+# C1 — AUTHORSHIP: BaseModel.save() (db/models/base.py:23-44) clears
+#   created_by/updated_by when crum.get_current_user() returns None (which
+#   it always does in management commands). The only correct pattern is:
+#     instance.save(created_by_id=author.id, disable_auto_set_user=True)
+#   NEVER put created_by_id/updated_by_id in update_or_create(defaults={}).
+#   For update_or_create we must post-save re-call .save() with the flags.
+#   Canonical source: bgtasks/workspace_seed_task.py:112,205,238,292,471.
+#
+# C2 — State.unique(name, project, deleted_at IS NULL): upsert by
+#   (project, name, group) not per-list external_id to avoid collisions.
+#
+# C3 — Relations pass-2: resolve project from the LEDGER (Issue lookup),
+#   not the volatile in-memory task_to_issue map which is empty on resume.
+#
+# H2 — completed_at: Issue.save() forces completed_at=now() on completed
+#   states; we ALWAYS set it in the post-save .update() (backdated or None)
+#   unconditionally so the timestamp reflects ClickUp, not migration time.
+#
+# M4 — Attachment size mismatch → STATUS_ERROR in ledger (not just warning).
 
 import io
 import json
@@ -37,7 +49,6 @@ logger = logging.getLogger(__name__)
 
 EXTERNAL_SOURCE = "clickup"
 
-# ClickUp priority → Plane priority (fallback; real mapping comes from MappingTable).
 _PRIO_FALLBACK = {
     "urgent": "urgent",
     "high": "high",
@@ -98,7 +109,11 @@ def _ledger_done(run, source_type: str, source_id: str) -> Optional[str]:
             run=run,
             source_type=source_type,
             source_id=source_id,
-            status__in=(MigrationRecord.STATUS_CREATED, MigrationRecord.STATUS_UPDATED, MigrationRecord.STATUS_SKIPPED),
+            status__in=(
+                MigrationRecord.STATUS_CREATED,
+                MigrationRecord.STATUS_UPDATED,
+                MigrationRecord.STATUS_SKIPPED,
+            ),
         )
         return rec.plane_id
     except MigrationRecord.DoesNotExist:
@@ -112,6 +127,17 @@ def _verify_plane_object_exists(model_class, pk: str) -> bool:
         return True
     except model_class.DoesNotExist:
         return False
+
+
+def _ts_ms_to_dt(ts_ms_str) -> Optional[object]:
+    """Convert a ClickUp millisecond epoch string to a timezone-aware datetime."""
+    if not ts_ms_str:
+        return None
+    try:
+        from django.utils import timezone
+        return timezone.datetime.fromtimestamp(int(ts_ms_str) / 1000, tz=timezone.utc)
+    except (ValueError, OSError, TypeError):
+        return None
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -157,7 +183,6 @@ def check_apply_gate(run) -> list[str]:
     --apply MUST be refused unless:
     1. Every MappingTable row for this run has approved=True.
     2. Every EmailCoverage row for this run has signed_off=True.
-    3. No unapproved distinct value is present (per-row gate).
     """
     from plane.clickup_migrate.models import MappingTable, EmailCoverage
 
@@ -218,14 +243,14 @@ class MappingCache:
 def write_project(run, workspace, clickup_folder_or_list: dict, user_cache: UserCache, dry_run: bool) -> Optional[object]:
     """Write a single Project.
 
-    Idempotent: update_or_create on (external_source, external_id).
-    Creates a ProjectIdentifier via get_or_create (serialiser doesn't run here).
+    C1 fix: removed created_by_id from defaults; post-save .save() with
+    disable_auto_set_user=True (pattern from workspace_seed_task.py:112).
     """
+    from plane.clickup_migrate.models import MigrationRecord
     from plane.db.models import Project, ProjectIdentifier
 
     src_id = str(clickup_folder_or_list["id"])
     name = clickup_folder_or_list.get("name", "")[:255]
-    # Derive a short identifier (≤12 chars, uppercase, letters+digits only).
     identifier_raw = re.sub(r"[^A-Z0-9]", "", name.upper())[:12] or src_id[:6].upper()
 
     if dry_run:
@@ -240,9 +265,12 @@ def write_project(run, workspace, clickup_folder_or_list: dict, user_cache: User
                 "workspace": workspace,
                 "name": name,
                 "identifier": identifier_raw,
-                "created_by_id": user_cache.bot_user.id,
-                "updated_by_id": user_cache.bot_user.id,
             },
+        )
+        # C1: set authorship via save kwargs, not defaults.
+        project.save(
+            created_by_id=user_cache.bot_user.id,
+            disable_auto_set_user=True,
         )
         ProjectIdentifier.objects.get_or_create(
             project=project,
@@ -256,40 +284,70 @@ def write_project(run, workspace, clickup_folder_or_list: dict, user_cache: User
     return project
 
 
-def write_state(run, project, workspace, list_id: str, clickup_status: dict, group: str, is_default: bool, user_cache: UserCache, dry_run: bool) -> Optional[object]:
-    """Write a single State for a project."""
+def write_state(
+    run,
+    project,
+    workspace,
+    list_id: str,
+    clickup_status: dict,
+    group: str,
+    is_default: bool,
+    user_cache: UserCache,
+    dry_run: bool,
+) -> Optional[object]:
+    """Write a State for a project.
+
+    C2 fix: upsert on (project, name) not on per-list external_id.
+    Two ClickUp lists in the same Folder with status "Open" would otherwise
+    violate State's unique(name, project, deleted_at IS NULL) constraint.
+    external_id/external_source are written after upsert (metadata only).
+    """
+    from plane.clickup_migrate.models import MigrationRecord
     from plane.db.models import State
 
-    status_name = clickup_status.get("status", "") if isinstance(clickup_status, dict) else str(clickup_status)
-    src_id = f"{list_id}_{status_name}"
-    color = clickup_status.get("color", "#60646C") if isinstance(clickup_status, dict) else "#60646C"
+    status_name = (
+        clickup_status.get("status", "") if isinstance(clickup_status, dict) else str(clickup_status)
+    )
+    color = (
+        clickup_status.get("color", "#60646C") if isinstance(clickup_status, dict) else "#60646C"
+    )
+    # External id still encodes the list for tracing, but upsert key is (project, name).
+    per_list_ext_id = f"{list_id}_{status_name}"
 
     if dry_run:
         logger.info("[dry-run] would create/update state: %s / %s", project.name if project else "?", status_name)
         return None
 
     with transaction.atomic():
+        # C2: key on (project, name) — mirrors the DB unique constraint.
         state, created = State.all_state_objects.update_or_create(
-            external_source=EXTERNAL_SOURCE,
-            external_id=src_id,
             project=project,
+            name=status_name[:255],
             defaults={
                 "workspace": workspace,
-                "name": status_name[:255],
                 "color": color[:255],
                 "group": group,
                 "default": is_default,
-                "created_by_id": user_cache.bot_user.id,
-                "updated_by_id": user_cache.bot_user.id,
+                "external_source": EXTERNAL_SOURCE,
+                "external_id": per_list_ext_id,
             },
         )
-        status = MigrationRecord.STATUS_CREATED if created else MigrationRecord.STATUS_UPDATED
-        _record_upsert(run, "status", src_id, "State", str(state.id), status)
+        # C1: authorship via save kwargs.
+        state.save(
+            created_by_id=user_cache.bot_user.id,
+            disable_auto_set_user=True,
+        )
+        status_str = MigrationRecord.STATUS_CREATED if created else MigrationRecord.STATUS_UPDATED
+        _record_upsert(run, "status", per_list_ext_id, "State", str(state.id), status_str)
     return state
 
 
 def write_label(run, workspace, project, clickup_tag: dict, user_cache: UserCache, dry_run: bool) -> Optional[object]:
-    """Write a Label (ClickUp tag → Plane label)."""
+    """Write a Label (ClickUp tag → Plane label).
+
+    C1 fix: authorship via save kwargs.
+    """
+    from plane.clickup_migrate.models import MigrationRecord
     from plane.db.models import Label
 
     src_id = str(clickup_tag.get("name", ""))
@@ -309,9 +367,12 @@ def write_label(run, workspace, project, clickup_tag: dict, user_cache: UserCach
             defaults={
                 "name": name,
                 "color": color,
-                "created_by_id": user_cache.bot_user.id,
-                "updated_by_id": user_cache.bot_user.id,
             },
+        )
+        # C1: authorship via save kwargs.
+        label.save(
+            created_by_id=user_cache.bot_user.id,
+            disable_auto_set_user=True,
         )
         status = MigrationRecord.STATUS_CREATED if created else MigrationRecord.STATUS_UPDATED
         _record_upsert(run, "tag", src_id, "Label", str(label.id), status)
@@ -319,7 +380,11 @@ def write_label(run, workspace, project, clickup_tag: dict, user_cache: UserCach
 
 
 def write_module(run, project, workspace, clickup_list: dict, user_cache: UserCache, dry_run: bool) -> Optional[object]:
-    """Write a Module (ClickUp list inside a folder → Plane module)."""
+    """Write a Module (ClickUp list inside a folder → Plane module).
+
+    C1 fix: authorship via save kwargs.
+    """
+    from plane.clickup_migrate.models import MigrationRecord
     from plane.db.models import Module
 
     src_id = str(clickup_list["id"])
@@ -338,9 +403,12 @@ def write_module(run, project, workspace, clickup_list: dict, user_cache: UserCa
                 "workspace": workspace,
                 "name": name,
                 "status": "planned",
-                "created_by_id": user_cache.bot_user.id,
-                "updated_by_id": user_cache.bot_user.id,
             },
+        )
+        # C1: authorship via save kwargs.
+        module.save(
+            created_by_id=user_cache.bot_user.id,
+            disable_auto_set_user=True,
         )
         status = MigrationRecord.STATUS_CREATED if created else MigrationRecord.STATUS_UPDATED
         _record_upsert(run, "list", src_id, "Module", str(module.id), status)
@@ -365,6 +433,10 @@ def write_issue(
 
     NEVER bulk_create Issue — Issue.save() holds an advisory lock and
     creates IssueSequence (issue.py:205-235).
+
+    C1 fix: authorship via .save(created_by_id=..., disable_auto_set_user=True).
+    H2 fix: always write completed_at in the post-save .update(), backdated
+      or explicitly None, so the timestamp reflects ClickUp not migration time.
     """
     from plane.clickup_migrate.convert import convert_markdown
     from plane.clickup_migrate.models import MigrationRecord
@@ -372,13 +444,16 @@ def write_issue(
 
     src_id = str(clickup_task["id"])
     name = clickup_task.get("name", "")[:255]
-    priority = mapping_cache.priority(clickup_task.get("priority", {}).get("priority", "none") if isinstance(clickup_task.get("priority"), dict) else "none")
+    priority_raw = (
+        clickup_task.get("priority", {}).get("priority", "none")
+        if isinstance(clickup_task.get("priority"), dict)
+        else "none"
+    )
+    priority = mapping_cache.priority(priority_raw)
 
-    # Markdown description
     md = clickup_task.get("markdown_description") or clickup_task.get("description") or ""
     conv = convert_markdown(md)
 
-    # Authorship
     creator_email = (clickup_task.get("creator") or {}).get("email")
     author = user_cache.resolve(creator_email)
 
@@ -386,16 +461,13 @@ def write_issue(
         logger.info("[dry-run] would create/update issue: %s", name)
         return None
 
-    # Resume skip: ledger already has a successful record.
     existing_plane_id = _ledger_done(run, "task", src_id)
     if existing_plane_id:
-        # Verify the Plane object still exists before skipping.
         if _verify_plane_object_exists(Issue, existing_plane_id):
             _record_upsert(run, "task", src_id, "Issue", existing_plane_id, MigrationRecord.STATUS_SKIPPED)
-            return Issue.issue_objects.get(pk=existing_plane_id)
+            return Issue.all_objects.get(pk=existing_plane_id)
 
     with transaction.atomic():
-        # update_or_create on external key.
         issue, created = Issue.all_objects.update_or_create(
             external_source=EXTERNAL_SOURCE,
             external_id=src_id,
@@ -408,47 +480,30 @@ def write_issue(
                 "description_stripped": conv.description_stripped,
                 "state": state,
                 "priority": priority,
-                "parent": None,  # pass-2 will set this
-                "created_by_id": author.id,
-                "updated_by_id": author.id,
+                "parent": None,  # pass-2 links subtask parents
             },
         )
+        # C1: set authorship after upsert via save kwargs (mixins.py:23-44).
+        issue.save(
+            created_by_id=author.id,
+            disable_auto_set_user=True,
+        )
 
-        # Backdate timestamps (auto_now_add discards the assigned value;
-        # must use .update() post-save — mixins.py:19-20).
-        dates: dict = {}
-        due_date = clickup_task.get("due_date")
-        date_updated = clickup_task.get("date_updated")
-        date_created = clickup_task.get("date_created")
+        # H2 + C5: always backdate created_at, updated_at, AND completed_at.
+        # Issue.save() forces completed_at=now() for completed states (issue.py:198-203);
+        # we unconditionally overwrite it here — either with the ClickUp date or None.
+        date_created = _ts_ms_to_dt(clickup_task.get("date_created"))
+        date_updated = _ts_ms_to_dt(clickup_task.get("date_updated"))
+        is_completed = state and state.group == "completed"
+        completed_at = date_updated if is_completed else None
 
+        dates: dict = {"completed_at": completed_at}  # always written (H2)
         if date_created:
-            try:
-                from django.utils import timezone
-                import datetime
-                ts_ms = int(date_created)
-                dates["created_at"] = timezone.datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
-            except (ValueError, OSError):
-                pass
-
+            dates["created_at"] = date_created
         if date_updated:
-            try:
-                from django.utils import timezone
-                ts_ms = int(date_updated)
-                dates["updated_at"] = timezone.datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
-            except (ValueError, OSError):
-                pass
+            dates["updated_at"] = date_updated
 
-        if state and state.group == "completed":
-            if date_updated:
-                try:
-                    from django.utils import timezone
-                    ts_ms = int(date_updated)
-                    dates["completed_at"] = timezone.datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
-                except (ValueError, OSError):
-                    pass
-
-        if dates:
-            Issue.all_objects.filter(pk=issue.pk).update(**dates)
+        Issue.all_objects.filter(pk=issue.pk).update(**dates)
 
         rec_status = MigrationRecord.STATUS_CREATED if created else MigrationRecord.STATUS_UPDATED
         _record_upsert(run, "task", src_id, "Issue", str(issue.id), rec_status)
@@ -458,54 +513,56 @@ def write_issue(
 
 # ─────────────────────────────────────────────────────────────────────
 # Junction writers
+# C1 fix applied to all: get_or_create returns (obj, created); if created,
+#   we call obj.save(created_by_id=..., disable_auto_set_user=True).
 # ─────────────────────────────────────────────────────────────────────
 
 def write_issue_assignee(issue, assignee_user, dry_run: bool) -> None:
     from plane.db.models import IssueAssignee
     if dry_run:
         return
-    IssueAssignee.all_objects.get_or_create(
+    obj, created = IssueAssignee.all_objects.get_or_create(
         issue=issue,
         assignee=assignee_user,
         defaults={
             "project": issue.project,
             "workspace": issue.workspace,
-            "created_by_id": assignee_user.id,
-            "updated_by_id": assignee_user.id,
         },
     )
+    if created:
+        obj.save(created_by_id=assignee_user.id, disable_auto_set_user=True)
 
 
 def write_issue_label(issue, label, bot_user, dry_run: bool) -> None:
     from plane.db.models import IssueLabel
     if dry_run:
         return
-    IssueLabel.all_objects.get_or_create(
+    obj, created = IssueLabel.all_objects.get_or_create(
         issue=issue,
         label=label,
         defaults={
             "project": issue.project,
             "workspace": issue.workspace,
-            "created_by_id": bot_user.id,
-            "updated_by_id": bot_user.id,
         },
     )
+    if created:
+        obj.save(created_by_id=bot_user.id, disable_auto_set_user=True)
 
 
 def write_module_issue(module, issue, bot_user, dry_run: bool) -> None:
     from plane.db.models import ModuleIssue
     if dry_run:
         return
-    ModuleIssue.all_objects.get_or_create(
+    obj, created = ModuleIssue.all_objects.get_or_create(
         module=module,
         issue=issue,
         defaults={
             "project": issue.project,
             "workspace": issue.workspace,
-            "created_by_id": bot_user.id,
-            "updated_by_id": bot_user.id,
         },
     )
+    if created:
+        obj.save(created_by_id=bot_user.id, disable_auto_set_user=True)
 
 
 def write_issue_subscriber(issue, subscriber_user, bot_user, dry_run: bool) -> None:
@@ -513,16 +570,16 @@ def write_issue_subscriber(issue, subscriber_user, bot_user, dry_run: bool) -> N
     from plane.db.models import IssueSubscriber
     if dry_run:
         return
-    IssueSubscriber.all_objects.get_or_create(
+    obj, created = IssueSubscriber.all_objects.get_or_create(
         issue=issue,
         subscriber=subscriber_user,
         defaults={
             "project": issue.project,
             "workspace": issue.workspace,
-            "created_by_id": bot_user.id,
-            "updated_by_id": bot_user.id,
         },
     )
+    if created:
+        obj.save(created_by_id=bot_user.id, disable_auto_set_user=True)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -542,6 +599,8 @@ def write_comment(
 
     IssueComment.save() auto-creates a Description — do NOT create it manually.
     parent= sets the threaded-reply FK (IssueComment.parent, issue.py:467).
+
+    C1 fix: authorship via save kwargs after upsert.
     """
     from plane.clickup_migrate.convert import convert_markdown
     from plane.clickup_migrate.models import MigrationRecord
@@ -554,7 +613,11 @@ def write_comment(
     conv = convert_markdown(text)
 
     if dry_run:
-        logger.info("[dry-run] would create/update comment %s on issue %s", src_id, issue.pk if issue else "?")
+        logger.info(
+            "[dry-run] would create/update comment %s on issue %s",
+            src_id,
+            issue.pk if issue else "?",
+        )
         return None
 
     existing = _ledger_done(run, "comment", src_id)
@@ -575,19 +638,19 @@ def write_comment(
                 "comment_html": conv.description_html,
                 "actor_id": author.id,
                 "parent": parent_comment,
-                "created_by_id": author.id,
-                "updated_by_id": author.id,
             },
         )
-        # Backdate comment timestamp.
-        date_ms = clickup_comment.get("date")
-        if date_ms:
-            try:
-                from django.utils import timezone
-                ts = timezone.datetime.fromtimestamp(int(date_ms) / 1000, tz=timezone.utc)
-                IssueComment.all_objects.filter(pk=comment.pk).update(created_at=ts, updated_at=ts)
-            except (ValueError, OSError):
-                pass
+        # C1: authorship via save kwargs; IssueComment.save() also updates
+        # the auto-created Description's created_by (issue.py:488).
+        comment.save(
+            created_by_id=author.id,
+            disable_auto_set_user=True,
+        )
+
+        # Backdate comment timestamp (mixins.py:19-20).
+        ts = _ts_ms_to_dt(clickup_comment.get("date"))
+        if ts:
+            IssueComment.all_objects.filter(pk=comment.pk).update(created_at=ts, updated_at=ts)
 
         rec_status = MigrationRecord.STATUS_CREATED if created else MigrationRecord.STATUS_UPDATED
         _record_upsert(run, "comment", src_id, "IssueComment", str(comment.id), rec_status)
@@ -601,7 +664,6 @@ def write_comment(
 
 def write_subtask_parent(run, child_task_id: str, parent_task_id: str, dry_run: bool) -> bool:
     """Set Issue.parent for a subtask.  Orphans (parent not in ledger) are logged."""
-    from plane.clickup_migrate.models import MigrationRecord
     from plane.db.models import Issue
 
     parent_plane_id = _ledger_done(run, "task", parent_task_id)
@@ -626,7 +688,6 @@ def write_issue_relation(
     source_task_id: str,
     target_task_id: str,
     workspace,
-    project,
     bot_user,
     dry_run: bool,
 ) -> bool:
@@ -636,25 +697,32 @@ def write_issue_relation(
     plane/utils/issue_relation_mapper.py:19-32.
 
     ClickUp relation types → Plane:
-      'waiting_on'  → stored as blocked_by  (issue=waiter, related=blocker)
-      'blocking'    → stored as blocked_by  (issue=target/blocker, related=source/blocked)
-      'linked'      → stored as relates_to
+      'waiting_on'  → blocked_by  (issue=waiter, related=blocker)
+      'blocking'    → blocked_by  (issue=target/blocker, related=source/blocked; swap)
+      'linked'      → relates_to
+
+    C3 fix: resolve project from the Issue object fetched from the DB via the
+    ledger plane_id — NOT from the volatile in-memory task_to_issue map, which
+    is empty on a resumed run.  Project is a required FK on IssueRelation via
+    ProjectBaseModel.save() (workspace_%(class)s).
     """
-    from plane.clickup_migrate.models import MigrationRecord
-    from plane.db.models import IssueRelation
+    from plane.db.models import Issue, IssueRelation
     from plane.utils.issue_relation_mapper import get_actual_relation
 
     source_plane_id = _ledger_done(run, "task", source_task_id)
     target_plane_id = _ledger_done(run, "task", target_task_id)
 
     if not source_plane_id or not target_plane_id:
-        logger.warning("Relation skip: source=%s target=%s — one not migrated", source_task_id, target_task_id)
+        logger.warning(
+            "Relation skip: source=%s target=%s — one not migrated",
+            source_task_id,
+            target_task_id,
+        )
         return False
 
-    # Map ClickUp relation → Plane canonical form.
     clickup_to_plane = {
-        "waiting_on": "blocked_by",   # I am waiting on target → I am blocked_by target
-        "blocking": "blocked_by",     # I am blocking target → swap: target is blocked_by me
+        "waiting_on": "blocked_by",
+        "blocking": "blocked_by",
         "linked": "relates_to",
         "relates_to": "relates_to",
     }
@@ -672,18 +740,26 @@ def write_issue_relation(
     if dry_run:
         return True
 
+    # C3: resolve project from the DB — the in-memory map is empty on resume.
+    try:
+        issue_obj = Issue.all_objects.select_related("project", "workspace").get(pk=issue_plane_id)
+    except Issue.DoesNotExist:
+        logger.warning("Relation skip: issue %s not found in DB", issue_plane_id)
+        return False
+
     with transaction.atomic():
-        IssueRelation.all_objects.get_or_create(
+        obj, created = IssueRelation.all_objects.get_or_create(
             issue_id=issue_plane_id,
             related_issue_id=related_plane_id,
             defaults={
-                "project": project,
-                "workspace": workspace,
+                "project": issue_obj.project,
+                "workspace": issue_obj.workspace,
                 "relation_type": actual_relation,
-                "created_by_id": bot_user.id,
-                "updated_by_id": bot_user.id,
             },
         )
+        if created:
+            # C1: authorship via save kwargs.
+            obj.save(created_by_id=bot_user.id, disable_auto_set_user=True)
     return True
 
 
@@ -708,6 +784,12 @@ def write_attachment(
       2. download → S3Storage().upload_file → FileAsset.create(is_uploaded=True).
       3. Read back stored size; assert == Content-Length.
       4. Record bytes in MigrationRecord.
+
+    C1 fix: FileAsset is a BaseModel — its .create() calls .save() internally.
+    We post-save re-call .save(created_by_id=...) to set authorship correctly.
+
+    M4 fix: size mismatch → STATUS_ERROR in ledger so reconciliation catches
+    a truncated upload (not just a logger.warning).
     """
     from plane.clickup_migrate.models import MigrationRecord
     from plane.db.models import FileAsset
@@ -732,8 +814,6 @@ def write_attachment(
         content_length = int(resp.headers.get("Content-Length", 0))
         content_type = resp.headers.get("Content-Type", "application/octet-stream")
 
-        # Build asset key mirroring FileAsset.get_upload_path.
-        from uuid import uuid4
         from plane.utils.path_validator import sanitize_filename
         safe_name = sanitize_filename(filename) or uuid4().hex
         asset_key = f"{workspace.id}/{uuid4().hex}-{safe_name}"
@@ -755,13 +835,18 @@ def write_attachment(
         except Exception:
             stored_size = content_length
 
+        # M4: size mismatch → STATUS_ERROR so reconciliation catches truncated uploads.
         if content_length and stored_size != content_length:
-            logger.warning(
-                "Attachment %s size mismatch: expected %d, stored %d",
-                att_id, content_length, stored_size,
+            msg = (
+                f"Attachment {att_id} size mismatch: expected {content_length}, stored {stored_size}"
             )
+            logger.error(msg)
+            _record_error(run, "attachment", att_id, msg)
+            return None
 
         with transaction.atomic():
+            # FileAsset inherits BaseModel; .create() calls .save() which clears
+            # authorship via crum.  Re-call .save() with disable_auto_set_user=True.
             asset = FileAsset.all_objects.create(
                 workspace=workspace,
                 project=issue.project,
@@ -773,10 +858,12 @@ def write_attachment(
                 entity_identifier=str(issue.id),
                 external_source=EXTERNAL_SOURCE,
                 external_id=att_id,
-                created_by_id=bot_user.id,
-                updated_by_id=bot_user.id,
             )
-            _record_upsert(run, "attachment", att_id, "FileAsset", str(asset.id), MigrationRecord.STATUS_CREATED, bytes_val=stored_size)
+            asset.save(created_by_id=bot_user.id, disable_auto_set_user=True)
+            _record_upsert(
+                run, "attachment", att_id, "FileAsset", str(asset.id),
+                MigrationRecord.STATUS_CREATED, bytes_val=stored_size,
+            )
 
         return asset
 
@@ -830,7 +917,6 @@ def write_custom_fields_to_description(
         else:
             display = str(raw_value)
 
-        # Escape Markdown table delimiters.
         display = display.replace("|", "\\|").replace("\n", " ")
         lines.append(f"| {field_name} | {display} |")
 
@@ -864,5 +950,5 @@ def write_custom_fields_to_description(
     return md_table
 
 
-# MigrationRecord is imported here for use in module-level functions.
+# Late import — MigrationRecord used by module-level helpers above.
 from plane.clickup_migrate.models import MigrationRecord  # noqa: E402

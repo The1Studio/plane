@@ -86,22 +86,44 @@ class CostTracker:
             )
 
     def pre_reserve(self, estimated_cost_usd: float, ceiling_usd: float) -> None:
-        """Reserve an estimated cost atomically before submitting a Batch.
+        """Atomically reserve an estimated cost before submitting a Batch.
 
-        Raises CostCeilingExceeded if current + estimated would exceed ceiling.
-        If ceiling is 0, no check is performed.
+        H3 FIX: old implementation was read→check→write (TOCTOU — two concurrent
+        callers could each read the same value and both pass the ceiling check).
+        Fixed to INCRBY-then-rollback:
+          1. Atomically add the estimate via INCRBY.
+          2. Read back the new total.
+          3. If it exceeds the ceiling, DECRBY to roll back, then raise.
+
+        This is atomic at the Redis level: INCRBY is a single command, so two
+        concurrent callers both commit their increments; the one that lands last
+        will see a total over ceiling and roll back while the first still holds
+        its reservation.  The ceiling is a soft limit (cost, not security) — this
+        is an improvement over TOCTOU but not a hard transaction.
+
+        If ceiling_usd == 0, no check is performed.
         """
         if ceiling_usd <= 0:
             return
-        # Read → check → write is not fully atomic but acceptable for cost
-        # tracking (eventual consistency; ceiling is a soft limit).
-        spent = self.current_spend_usd()
-        if spent + estimated_cost_usd >= ceiling_usd:
+
+        micro = int(estimated_cost_usd * _USD_SCALE)
+        ceiling_micro = int(ceiling_usd * _USD_SCALE)
+        key = _month_key(self._workspace_id)
+
+        pipe = self._ri.pipeline()
+        pipe.incrby(key, micro)
+        pipe.expire(key, _month_ttl_secs())
+        new_total_micro, _ = pipe.execute()
+
+        if new_total_micro >= ceiling_micro:
+            # Roll back: deduct what we just added.
+            self._ri.decrby(key, micro)
+            new_total_usd = new_total_micro / _USD_SCALE
             raise CostCeilingExceeded(
                 f"AI pre-reserve: estimated ${estimated_cost_usd:.4f} would push "
-                f"total ${spent + estimated_cost_usd:.4f} >= ${ceiling_usd:.2f} ceiling"
+                f"total to ${new_total_usd:.4f} >= ${ceiling_usd:.2f} ceiling "
+                f"for workspace {self._workspace_id}"
             )
-        self.record(estimated_cost_usd)
 
 
 class CostCeilingExceeded(Exception):
