@@ -12,4 +12,6 @@ import type { RouteConfigEntry } from "@react-router/dev/routes";
 // when AI features are disabled at the workspace level.
 export const extendedRoutes: RouteConfigEntry[] = [
   route(":workspaceSlug/ai/search", "./(ai)/ai-search-page.tsx"),
+  // SP2 workload — per-person hour matrix (docs/FORK.md touch-point 6)
+  route(":workspaceSlug/workload", "./(all)/[workspaceSlug]/(projects)/workload/page.tsx"),
 ];
