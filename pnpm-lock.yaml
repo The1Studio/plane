@@ -576,6 +576,9 @@ importers:
       '@headlessui/react':
         specifier: ^1.7.19
         version: 1.7.19(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      '@plane/ai-ext':
+        specifier: workspace:*
+        version: link:../../packages/ai-ext
       '@plane/constants':
         specifier: workspace:*
         version: link:../../packages/constants
@@ -606,6 +609,9 @@ importers:
       '@plane/utils':
         specifier: workspace:*
         version: link:../../packages/utils
+      '@plane/workload-ext':
+        specifier: workspace:*
+        version: link:../../packages/workload-ext
       '@popperjs/core':
         specifier: ^2.11.8
         version: 2.11.8
@@ -754,6 +760,34 @@ importers:
       vite-tsconfig-paths:
         specifier: ^5.1.4
         version: 5.1.4(typescript@5.8.3)(vite@7.3.2(@types/node@22.12.0)(jiti@2.6.1)(lightningcss@1.30.2)(terser@5.43.1)(yaml@2.8.3))
+
+  packages/ai-ext:
+    dependencies:
+      '@plane/types':
+        specifier: workspace:*
+        version: link:../types
+      react:
+        specifier: 'catalog:'
+        version: 18.3.1
+      react-dom:
+        specifier: 'catalog:'
+        version: 18.3.1(react@18.3.1)
+    devDependencies:
+      '@plane/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      '@types/react':
+        specifier: 'catalog:'
+        version: 18.3.11
+      '@types/react-dom':
+        specifier: 'catalog:'
+        version: 18.3.1
+      tsdown:
+        specifier: 'catalog:'
+        version: 0.16.0(typescript@5.8.3)(unrun@0.2.34)
+      typescript:
+        specifier: 5.8.3
+        version: 5.8.3
 
   packages/codemods:
     devDependencies:
@@ -1515,6 +1549,46 @@ importers:
       '@types/sanitize-html':
         specifier: 2.16.0
         version: 2.16.0
+      tsdown:
+        specifier: 'catalog:'
+        version: 0.16.0(typescript@5.8.3)(unrun@0.2.34)
+      typescript:
+        specifier: 5.8.3
+        version: 5.8.3
+
+  packages/workload-ext:
+    dependencies:
+      '@plane/constants':
+        specifier: workspace:*
+        version: link:../constants
+      '@plane/propel':
+        specifier: workspace:*
+        version: link:../propel
+      '@plane/types':
+        specifier: workspace:*
+        version: link:../types
+      mobx:
+        specifier: 'catalog:'
+        version: 6.12.0
+      mobx-react:
+        specifier: 'catalog:'
+        version: 9.1.1(mobx@6.12.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      react:
+        specifier: 'catalog:'
+        version: 18.3.1
+      react-dom:
+        specifier: 'catalog:'
+        version: 18.3.1(react@18.3.1)
+    devDependencies:
+      '@plane/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      '@types/react':
+        specifier: 'catalog:'
+        version: 18.3.11
+      '@types/react-dom':
+        specifier: 'catalog:'
+        version: 18.3.1
       tsdown:
         specifier: 'catalog:'
         version: 0.16.0(typescript@5.8.3)(unrun@0.2.34)

@@ -1,8 +1,8 @@
 {
-  "name": "@plane/ai-ext",
+  "name": "@plane/workload-ext",
   "version": "0.1.0",
   "private": true,
-  "description": "SP2 AI extension UI — search, intake draft modal",
+  "description": "SP2 workload extension — per-person hour matrix",
   "license": "AGPL-3.0",
   "type": "module",
   "main": "./dist/index.mjs",
@@ -19,7 +19,11 @@
     "clean": "rm -rf .turbo && rm -rf node_modules && rm -rf dist"
   },
   "dependencies": {
+    "@plane/constants": "workspace:*",
+    "@plane/propel": "workspace:*",
     "@plane/types": "workspace:*",
+    "mobx": "catalog:",
+    "mobx-react": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:"
   },

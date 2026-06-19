@@ -5,16 +5,20 @@
  */
 
 // store
+import { WorkloadStore } from "@plane/workload-ext";
+import type { IWorkloadStore } from "@plane/workload-ext";
 import { CoreRootStore } from "@/store/root.store";
 import type { ITimelineStore } from "./timeline";
 import { TimeLineStore } from "./timeline";
 
 export class RootStore extends CoreRootStore {
   timelineStore: ITimelineStore;
+  workloadStore: IWorkloadStore;
 
   constructor() {
     super();
 
     this.timelineStore = new TimeLineStore(this);
+    this.workloadStore = new WorkloadStore();
   }
 }

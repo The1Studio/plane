@@ -4,6 +4,7 @@
  * See the LICENSE file for details.
  */
 
+import { useState, useEffect, useRef } from "react";
 import { observer } from "mobx-react";
 // i18n
 import { useTranslation } from "@plane/i18n";
@@ -81,6 +82,51 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
 
   const maxDate = issue.target_date ? getDate(issue.target_date) : null;
   maxDate?.setDate(maxDate.getDate());
+
+  // Workload estimate (SP2 — fork touch-point exception per docs/FORK.md §5.3)
+  const [estimatedHours, setEstimatedHours] = useState<number | "">("");
+  const [estimateSaving, setEstimateSaving] = useState(false);
+  const estimateFetchedRef = useRef(false);
+
+  useEffect(() => {
+    if (!workspaceSlug || !projectId || !issueId || estimateFetchedRef.current) return;
+    estimateFetchedRef.current = true;
+    fetch(`/api/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/workload-estimate/`, {
+      credentials: "include",
+    })
+      .then((r) => r.json())
+      .then((data: { hours: number | null }) => {
+        if (data.hours !== null && data.hours !== undefined) {
+          setEstimatedHours(data.hours);
+        }
+        return data.hours;
+      })
+      .catch(() => {
+        // silently ignore — estimate may not exist
+      });
+  }, [workspaceSlug, projectId, issueId]);
+
+  const handleEstimateChange = (val: number | "") => {
+    setEstimatedHours(val);
+  };
+
+  const handleEstimateBlur = async () => {
+    if (!workspaceSlug || !projectId || !issueId) return;
+    if (estimatedHours === "" || Number(estimatedHours) < 0) return;
+    setEstimateSaving(true);
+    try {
+      await fetch(`/api/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/workload-estimate/`, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hours: Number(estimatedHours) }),
+      });
+    } catch {
+      // silently ignore save errors
+    } finally {
+      setEstimateSaving(false);
+    }
+  };
 
   return (
     <>
@@ -208,6 +254,25 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
                 />
               </SidebarPropertyListItem>
             )}
+
+            {/* SP2 workload estimate — fork touch-point exception (docs/FORK.md §5.3) */}
+            <SidebarPropertyListItem icon={EstimatePropertyIcon} label="Estimated hours">
+              <div className="flex h-7.5 items-center gap-1 px-2">
+                <input
+                  type="number"
+                  min={0}
+                  max={10000}
+                  step={0.5}
+                  value={estimatedHours}
+                  onChange={(e) => handleEstimateChange(e.target.value === "" ? "" : Number(e.target.value))}
+                  onBlur={handleEstimateBlur}
+                  disabled={!isEditable || estimateSaving}
+                  placeholder="None"
+                  className="w-full bg-transparent text-body-xs-regular text-primary outline-none placeholder:text-placeholder"
+                />
+                {estimateSaving && <span className="text-xs text-secondary">saving…</span>}
+              </div>
+            </SidebarPropertyListItem>
 
             {projectDetails?.module_view && (
               <SidebarPropertyListItem icon={ModuleIcon} label={t("common.modules")}>

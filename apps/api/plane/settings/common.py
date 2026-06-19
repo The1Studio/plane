@@ -96,6 +96,7 @@ INSTALLED_APPS = [
     # The1Studio fork add-on apps (append-only — docs/FORK.md touch-point 1)
     "plane.clickup_migrate",
     "plane.ai_ext",
+    "plane.workload",
     # Third-party things
     "rest_framework",
     "corsheaders",
