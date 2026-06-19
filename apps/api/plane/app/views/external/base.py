@@ -47,7 +47,14 @@ class OpenAIProvider(LLMProvider):
 
 class AnthropicProvider(LLMProvider):
     name = "Anthropic"
+    # Current Claude model ids (verified 2026-06). The pre-4.x ids below are
+    # retired by Anthropic and will 404 if selected; they are kept only so
+    # existing instance configs referencing them still pass membership
+    # validation. New deployments should use one of the claude-*-4-* ids.
     models = [
+        "claude-opus-4-8",
+        "claude-sonnet-4-6",
+        "claude-haiku-4-5-20251001",
         "claude-3-5-sonnet-20240620",
         "claude-3-haiku-20240307",
         "claude-3-opus-20240229",
@@ -57,7 +64,7 @@ class AnthropicProvider(LLMProvider):
         "claude-instant-1.2",
         "claude-instant-1",
     ]
-    default_model = "claude-3-sonnet-20240229"
+    default_model = "claude-sonnet-4-6"
 
 
 class GeminiProvider(LLMProvider):
@@ -128,7 +135,17 @@ def get_llm_response(task, prompt, api_key: str, model: str, provider: str) -> T
         if provider.lower() == "gemini":
             model = f"gemini/{model}"
 
-        client = OpenAI(api_key=api_key)
+        # The OpenAI client defaults to api.openai.com, so every non-OpenAI
+        # provider must be pointed at its own endpoint. Anthropic ships an
+        # OpenAI-compatible API; LLM_API_BASE lets a gateway/proxy override it
+        # later with no further core edit. Without this, an "anthropic" provider
+        # silently authenticates against OpenAI and fails.
+        client_kwargs = {"api_key": api_key}
+        if provider.lower() == "anthropic":
+            client_kwargs["base_url"] = os.environ.get(
+                "LLM_API_BASE", "https://api.anthropic.com/v1/"
+            )
+        client = OpenAI(**client_kwargs)
         chat_completion = client.chat.completions.create(
             model=model, messages=[{"role": "user", "content": final_text}]
         )
