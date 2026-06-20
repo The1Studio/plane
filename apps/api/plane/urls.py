@@ -18,6 +18,9 @@ urlpatterns = [
     path("api/", include("plane.app.urls")),
     path("api/public/", include("plane.space.urls")),
     path("api/instances/", include("plane.license.urls")),
+    # The1Studio fork add-on: public-API workload routes (append-only, before
+    # plane.api.urls so the specific workload paths resolve first — FORK.md tp2)
+    path("api/v1/", include("plane.workload.api_urls")),
     path("api/v1/", include("plane.api.urls")),
     path("auth/", include("plane.authentication.urls")),
     # The1Studio fork add-on (append-only — docs/FORK.md touch-point 2)

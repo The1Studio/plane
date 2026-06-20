@@ -104,6 +104,42 @@ def _run(request, slug, route_project_id=None):
     return Response(data, status=status.HTTP_200_OK)
 
 
+# Shared estimate handlers — reused by both the app API (this module) and the
+# public API (api_views.py), so the logic lives in exactly one place.
+
+def estimate_get(project_id, issue_id):
+    obj = WorkloadEstimate.objects.filter(issue_id=issue_id, project_id=project_id).first()
+    if obj is None:
+        return Response({"hours": None}, status=status.HTTP_200_OK)
+    return Response(WorkloadEstimateSerializer(obj).data, status=status.HTTP_200_OK)
+
+
+def estimate_put(request, slug, project_id, issue_id):
+    serializer = WorkloadEstimateSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    hours = serializer.validated_data["hours"]
+
+    issue = Issue.objects.filter(id=issue_id, project_id=project_id, workspace__slug=slug).first()
+    if issue is None:
+        return Response({"error": "issue not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    obj, _created = WorkloadEstimate.objects.update_or_create(
+        issue_id=issue.id,
+        defaults={
+            "hours": hours,
+            "workspace_id": issue.workspace_id,
+            "project_id": issue.project_id,
+            "created_by": request.user,
+        },
+    )
+    return Response(WorkloadEstimateSerializer(obj).data, status=status.HTTP_200_OK)
+
+
+def estimate_delete(project_id, issue_id):
+    WorkloadEstimate.objects.filter(issue_id=issue_id, project_id=project_id).delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 class WorkspaceWorkloadEndpoint(BaseAPIView):
     """GET /api/workspaces/<slug>/workload/ — workspace-scoped matrix."""
 
@@ -129,43 +165,12 @@ class WorkloadEstimateEndpoint(BaseAPIView):
 
     @allow_permission([ROLE.ADMIN, ROLE.MEMBER])
     def get(self, request, slug, project_id, issue_id):
-        obj = WorkloadEstimate.objects.filter(
-            issue_id=issue_id, project_id=project_id
-        ).first()
-        if obj is None:
-            return Response({"hours": None}, status=status.HTTP_200_OK)
-        return Response(WorkloadEstimateSerializer(obj).data, status=status.HTTP_200_OK)
+        return estimate_get(project_id, issue_id)
 
     @allow_permission([ROLE.ADMIN, ROLE.MEMBER])
     def put(self, request, slug, project_id, issue_id):
-        serializer = WorkloadEstimateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        hours = serializer.validated_data["hours"]
-
-        issue = Issue.objects.filter(
-            id=issue_id, project_id=project_id, workspace__slug=slug
-        ).first()
-        if issue is None:
-            return Response(
-                {"error": "issue not found"}, status=status.HTTP_404_NOT_FOUND
-            )
-
-        obj, _created = WorkloadEstimate.objects.update_or_create(
-            issue_id=issue.id,
-            defaults={
-                "hours": hours,
-                "workspace_id": issue.workspace_id,
-                "project_id": issue.project_id,
-                "created_by": request.user,
-            },
-        )
-        return Response(
-            WorkloadEstimateSerializer(obj).data, status=status.HTTP_200_OK
-        )
+        return estimate_put(request, slug, project_id, issue_id)
 
     @allow_permission([ROLE.ADMIN, ROLE.MEMBER])
     def delete(self, request, slug, project_id, issue_id):
-        WorkloadEstimate.objects.filter(
-            issue_id=issue_id, project_id=project_id
-        ).delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return estimate_delete(project_id, issue_id)
