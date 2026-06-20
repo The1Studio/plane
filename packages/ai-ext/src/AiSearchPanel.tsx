@@ -5,7 +5,7 @@
 // SP2 AI search panel — minimal functional component.
 // Rendered by the /[workspaceSlug]/ai/search route (extended.ts).
 
-import React, { FormEvent, useState } from "react";
+import React, { type FormEvent, useState } from "react";
 import { aiSearch, type SearchResponse } from "./api";
 
 interface Props {
