@@ -1,0 +1,19 @@
+--- a/apps/api/plane/db/models/issue.py
++++ b/apps/api/plane/db/models/issue.py
+@@ -127,6 +127,11 @@ class Issue(ProjectBaseModel):
+     point = models.IntegerField(validators=[MinValueValidator(0), MaxValueValidator(12)], null=True, blank=True)
+     estimate_point = models.ForeignKey(
+         "db.EstimatePoint",
+         on_delete=models.SET_NULL,
+         related_name="issue_estimates",
+         null=True,
+         blank=True,
+     )
++    estimated_hours = models.DecimalField(
++        max_digits=6,
++        decimal_places=2,
++        null=True,
++        blank=True,
++        verbose_name="Estimated Hours",
++    )
+     name = models.CharField(max_length=255, verbose_name="Issue Name")

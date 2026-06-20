@@ -8,12 +8,12 @@ This document is the single source of truth for how The1Studio governs its priva
 
 ## Branch model
 
-| Branch | Purpose | Derived from |
-|---|---|---|
-| `company-main` | Production branch — the only branch deployed | upstream **tags** (e.g. `v1.3.1`) |
-| `sp1/clickup-migrate` | One-time ClickUp → Plane ETL | branches from `company-main` |
-| `sp2/ai-ext` | AI feature suite (BGE-M3 embeddings, Claude tooling) | branches from `company-main` |
-| `preview`, `master` | Upstream tracking branches — **untouched** | never deployed, never edited |
+| Branch                | Purpose                                              | Derived from                      |
+| --------------------- | ---------------------------------------------------- | --------------------------------- |
+| `company-main`        | Production branch — the only branch deployed         | upstream **tags** (e.g. `v1.3.1`) |
+| `sp1/clickup-migrate` | One-time ClickUp → Plane ETL                         | branches from `company-main`      |
+| `sp2/ai-ext`          | AI feature suite (BGE-M3 embeddings, Claude tooling) | branches from `company-main`      |
+| `preview`, `master`   | Upstream tracking branches — **untouched**           | never deployed, never edited      |
 
 **Rules:**
 
@@ -125,14 +125,14 @@ When `git rebase <tag>` produces conflicts:
 
 Per-touch-point recovery notes:
 
-| Touch-point | Conflict likely cause | Recovery |
-|---|---|---|
-| 1 — `INSTALLED_APPS` | Upstream added/removed an app in the same block | Re-apply our appended lines after the upstream change |
-| 2 — `urlpatterns` | Upstream added/restructured url includes | Re-apply our `path("api/ai-ext/", ...)` after upstream's block |
-| 3 — `beat_schedule` | Already zero-edit; no conflict expected | If upstream refactored `celery.py` heavily, check autodiscover still applies |
-| 4 — `base.py` LLM | Claude/Anthropic section was already in-place edited | Reapply the `base_url` line + the model-id list if upstream overwrote it |
-| 5 — `requirements` | Upstream bumped or removed a dep we pinned | Re-pin our dep; check for compatibility |
-| 6 — `extended.ts` | Upstream added structure around the empty array | Re-append our route entries to the array in its new form |
+| Touch-point          | Conflict likely cause                                | Recovery                                                                     |
+| -------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------- |
+| 1 — `INSTALLED_APPS` | Upstream added/removed an app in the same block      | Re-apply our appended lines after the upstream change                        |
+| 2 — `urlpatterns`    | Upstream added/restructured url includes             | Re-apply our `path("api/ai-ext/", ...)` after upstream's block               |
+| 3 — `beat_schedule`  | Already zero-edit; no conflict expected              | If upstream refactored `celery.py` heavily, check autodiscover still applies |
+| 4 — `base.py` LLM    | Claude/Anthropic section was already in-place edited | Reapply the `base_url` line + the model-id list if upstream overwrote it     |
+| 5 — `requirements`   | Upstream bumped or removed a dep we pinned           | Re-pin our dep; check for compatibility                                      |
+| 6 — `extended.ts`    | Upstream added structure around the empty array      | Re-append our route entries to the array in its new form                     |
 
 ---
 
@@ -234,14 +234,14 @@ means a customization leaked into core — relocate it.
 
 Verified line numbers against the live fork (branch `company-main`, tag base `v1.3.1`):
 
-| # | File | Verified line | Why touched | Rebase-safe approach |
-|---|---|---|---|---|
-| 1 | `apps/api/plane/settings/common.py` | `INSTALLED_APPS` at line 79 | Register new apps | Append 1 line per new app at the end of the in-house block (after `"plane.authentication",`, before `# Third-party things`) |
-| 2 | `apps/api/plane/urls.py` | `urlpatterns` at line 17 | Mount new app URLs | Append `path("api/ai-ext/", include("plane.ai_ext.urls")),` after the existing includes |
-| 3 | `apps/api/plane/celery.py` | `beat_schedule` at line 29; `autodiscover_tasks()` at line 101; `DatabaseScheduler` at line 103 | SP2 scheduled digest tasks | **ZERO edit to celery.py** — register `PeriodicTask` rows via `django_celery_beat` `DatabaseScheduler` (already active at line 103) from the new app's `apps.py ready()` or a data migration. `autodiscover_tasks()` at line 101 already picks up any new-app `tasks.py` automatically. |
-| 4 | `apps/api/plane/app/views/external/base.py` | `get_llm_response()` around line 131; `AnthropicProvider.models` around line 54 | Claude/Anthropic fix (Phase 4b) | Prefer a new-app endpoint in `ai_ext` for new AI calls. The in-place edit here is the **documented exception**: the existing core God-mode AI button must keep working. The fix is already applied (commit `4469c63`): `base_url` is set for the anthropic provider branch; current Claude model ids are present. |
-| 5 | `apps/api/requirements/base.txt` + `Dockerfile.api` | — | New pip dependencies | **Avoid** — prefer the OpenAI-compatible gateway path (no new dep). If a dep is unavoidable, pin it in the new app's own requirements fragment and reference it from a prod Dockerfile overlay — never edit `requirements/base.txt` in place. |
-| 6 | `apps/web/app/routes/extended.ts` + `apps/web/package.json` | `extendedRoutes: RouteConfigEntry[] = []` at line 9 of `extended.ts`; merged via `mergeRoutes` in `routes.ts` line 17 | Mount AI UI routes | **Designed seam** — append route entries to the empty `extendedRoutes` array in `extended.ts`. Never edit `routes/core.ts`. The array is already merged into the app via `mergeRoutes(coreRoutes, extendedRoutes)`. |
+| #   | File                                                         | Verified line                                                                                                         | Why touched                     | Rebase-safe approach                                                                                                                                                                                                                                                                                              |
+| --- | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `apps/api/plane/settings/common.py`                          | `INSTALLED_APPS` at line 79                                                                                           | Register new apps               | Append 1 line per new app at the end of the in-house block (after `"plane.authentication",`, before `# Third-party things`)                                                                                                                                                                                       |
+| 2   | `apps/api/plane/urls.py`                                     | `urlpatterns` at line 17                                                                                              | Mount new app URLs              | Append `path("api/ai-ext/", include("plane.ai_ext.urls")),` after the existing includes                                                                                                                                                                                                                           |
+| 3   | `apps/api/plane/celery.py`                                   | `beat_schedule` at line 29; `autodiscover_tasks()` at line 101; `DatabaseScheduler` at line 103                       | SP2 scheduled digest tasks      | **ZERO edit to celery.py** — register `PeriodicTask` rows via `django_celery_beat` `DatabaseScheduler` (already active at line 103) from the new app's `apps.py ready()` or a data migration. `autodiscover_tasks()` at line 101 already picks up any new-app `tasks.py` automatically.                           |
+| 4   | `apps/api/plane/app/views/external/base.py`                  | `get_llm_response()` around line 131; `AnthropicProvider.models` around line 54                                       | Claude/Anthropic fix (Phase 4b) | Prefer a new-app endpoint in `ai_ext` for new AI calls. The in-place edit here is the **documented exception**: the existing core God-mode AI button must keep working. The fix is already applied (commit `4469c63`): `base_url` is set for the anthropic provider branch; current Claude model ids are present. |
+| 5   | `apps/api/requirements/base.txt` + `apps/api/Dockerfile.api` | —                                                                                                                     | New pip dependencies            | **Avoid** — prefer the OpenAI-compatible gateway path (no new dep). If a dep is unavoidable, pin it in the new app's own requirements fragment and reference it from a prod Dockerfile overlay — never edit `requirements/base.txt` in place.                                                                     |
+| 6   | `apps/web/app/routes/extended.ts` + `apps/web/package.json`  | `extendedRoutes: RouteConfigEntry[] = []` at line 9 of `extended.ts`; merged via `mergeRoutes` in `routes.ts` line 17 | Mount AI UI routes              | **Designed seam** — append route entries to the empty `extendedRoutes` array in `extended.ts`. Never edit `routes/core.ts`. The array is already merged into the app via `mergeRoutes(coreRoutes, extendedRoutes)`.                                                                                               |
 
 ### Rebase-conflict budget
 
@@ -323,6 +323,7 @@ company-v<upstream-version>-<N>
 ```
 
 Examples:
+
 - `company-v1.3.1-1` — first adopt of upstream v1.3.1
 - `company-v1.3.1-2` — a hotfix on top of v1.3.1 before the next upstream tag
 - `company-v1.4.0-1` — first adopt of upstream v1.4.0
