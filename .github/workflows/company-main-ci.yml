@@ -111,9 +111,11 @@ jobs:
           node-version: "20"
 
       - name: Install pnpm
+        # No `version:` input — pnpm/action-setup reads the repo's
+        # `packageManager` field (pnpm@10.32.1). Pinning a different version
+        # here triggers ERR_PNPM_BAD_PM_VERSION (version-mismatch) and the
+        # self-installer fails before any install runs.
         uses: pnpm/action-setup@v4
-        with:
-          version: 9
 
       - name: Get pnpm store directory
         id: pnpm-cache
