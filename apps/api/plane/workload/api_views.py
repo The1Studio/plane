@@ -15,7 +15,7 @@ from .views import _run, estimate_delete, estimate_get, estimate_put
 class WorkspaceWorkloadAPIEndpoint(BaseAPIView):
     """GET /api/v1/workspaces/<slug>/workload/"""
 
-    @allow_permission([ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission([ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST], level="WORKSPACE")
     def get(self, request, slug):
         return _run(request, slug, route_project_id=None)
 
@@ -23,7 +23,7 @@ class WorkspaceWorkloadAPIEndpoint(BaseAPIView):
 class ProjectWorkloadAPIEndpoint(BaseAPIView):
     """GET /api/v1/workspaces/<slug>/projects/<project_id>/workload/"""
 
-    @allow_permission([ROLE.ADMIN, ROLE.MEMBER])
+    @allow_permission([ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST])
     def get(self, request, slug, project_id):
         return _run(request, slug, route_project_id=project_id)
 
@@ -31,14 +31,14 @@ class ProjectWorkloadAPIEndpoint(BaseAPIView):
 class WorkloadEstimateAPIEndpoint(BaseAPIView):
     """GET/PUT/DELETE /api/v1/workspaces/<slug>/projects/<project_id>/issues/<issue_id>/workload-estimate/"""
 
-    @allow_permission([ROLE.ADMIN, ROLE.MEMBER])
+    @allow_permission([ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST])
     def get(self, request, slug, project_id, issue_id):
-        return estimate_get(project_id, issue_id)
+        return estimate_get(request, slug, project_id, issue_id)
 
     @allow_permission([ROLE.ADMIN, ROLE.MEMBER])
     def put(self, request, slug, project_id, issue_id):
         return estimate_put(request, slug, project_id, issue_id)
 
-    @allow_permission([ROLE.ADMIN, ROLE.MEMBER])
+    @allow_permission([ROLE.ADMIN])
     def delete(self, request, slug, project_id, issue_id):
         return estimate_delete(project_id, issue_id)
