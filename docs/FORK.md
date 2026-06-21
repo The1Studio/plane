@@ -227,6 +227,26 @@ Packages are consumed from the app workspaces with `workspace:*` version specifi
 **Never edit `@plane/*` packages in place.** The designed seam for mounting new UI routes is
 touch-point 6 (see table below).
 
+### Frontend core-edit exceptions (no upstream seam)
+
+`extendedRoutes` (touch-point 6) only mounts whole **pages**. Upstream Plane has **no plugin
+slot** for injecting a single property row into the issue-detail sidebar, nor for adding an
+item to the workspace nav menu (the nav arrays live in the sealed `@plane/constants` package,
+which we must not edit in place). The SP2 workload feature therefore carries two **minimal,
+clearly-marked in-place edits** to core web components. Each is the documented exception for
+its integration point:
+
+| File | What | Why no seam |
+| --- | --- | --- |
+| `apps/web/core/components/issues/issue-detail/sidebar.tsx` | "Estimated hours" property field (read/write `…/workload-estimate/`) | No upstream API to add an issue-property row; must render inside the core properties list |
+| `apps/web/core/components/workspace/sidebar/sidebar-menu-items.tsx` | "Workload" nav link → `/:workspaceSlug/workload` | Nav items come from `@plane/constants` (sealed package, no edit-in-place) |
+
+**Rebase handling:** these two files ARE expected conflict points (unlike the abort-on-conflict
+rule for everything else). On conflict, re-apply the fork block — each is fenced by a
+`The1Studio fork (SP2 workload)` comment — and keep upstream's changes around it. Do NOT abort
+the rebase for a conflict confined to these two files. Keep each edit as small as possible so
+the conflict surface stays trivial.
+
 ### The complete 6 core touch-point inventory
 
 These are the ONLY files that may carry The1Studio edits. A rebase conflict outside this set

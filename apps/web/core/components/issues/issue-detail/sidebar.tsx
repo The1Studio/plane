@@ -83,7 +83,7 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
   const maxDate = issue.target_date ? getDate(issue.target_date) : null;
   maxDate?.setDate(maxDate.getDate());
 
-  // Workload estimate (SP2 — fork touch-point exception per docs/FORK.md §5.3)
+  // Workload estimate (SP2 — fork core-edit exception per docs/FORK.md §Frontend core-edit exceptions)
   const [estimatedHours, setEstimatedHours] = useState<number | "">("");
   const [estimateSaving, setEstimateSaving] = useState(false);
   const estimateFetchedRef = useRef(false);

@@ -6,8 +6,10 @@
 
 import React, { useMemo } from "react";
 import { observer } from "mobx-react";
-import { Ellipsis } from "lucide-react";
+import { Ellipsis, Timer } from "lucide-react";
 import { Disclosure, Transition } from "@headlessui/react";
+import Link from "next/link";
+import { useParams, usePathname } from "next/navigation";
 // plane imports
 import {
   WORKSPACE_SIDEBAR_DYNAMIC_NAVIGATION_ITEMS_LINKS,
@@ -17,7 +19,7 @@ import {
 } from "@plane/constants";
 import { useTranslation } from "@plane/i18n";
 import { ChevronRightIcon } from "@plane/propel/icons";
-import { cn } from "@plane/utils";
+import { cn, joinUrlPath } from "@plane/utils";
 // components
 import { SidebarNavItem } from "@/components/sidebar/sidebar-navigation";
 // store hooks
@@ -38,12 +40,21 @@ export const SidebarMenuItems = observer(function SidebarMenuItems() {
   );
 
   // store hooks
-  const { isExtendedSidebarOpened, toggleExtendedSidebar } = useAppTheme();
+  const { isExtendedSidebarOpened, toggleExtendedSidebar, toggleSidebar } = useAppTheme();
   // hooks
   const { preferences: personalPreferences } = usePersonalNavigationPreferences();
   const { preferences: workspacePreferences } = useWorkspaceNavigationPreferences();
   // translation
   const { t } = useTranslation();
+  // The1Studio fork (SP2 workload): slug + path for the custom Workload nav link
+  const pathname = usePathname();
+  const { workspaceSlug } = useParams();
+  const workloadSlug = workspaceSlug?.toString() || "";
+  const workloadHref = workloadSlug ? joinUrlPath(workloadSlug, "workload") : "";
+  const handleWorkloadClick = () => {
+    if (typeof window !== "undefined" && window.innerWidth < 768) toggleSidebar();
+    if (isExtendedSidebarOpened) toggleExtendedSidebar(false);
+  };
 
   const toggleListDisclosure = (isOpen: boolean) => {
     toggleWorkspaceMenu(isOpen);
@@ -100,6 +111,20 @@ export const SidebarMenuItems = observer(function SidebarMenuItems() {
         {filteredStaticNavigationItems.map((item, _index) => (
           <SidebarItem key={`static_${_index}`} item={item} />
         ))}
+        {/* The1Studio fork (SP2 workload) — Workload matrix nav link. The @plane/constants
+            nav arrays are a sealed package (no edit-in-place), so this custom item is
+            rendered here directly. Core-file edit; documented in docs/FORK.md §Frontend
+            core-edit exceptions. */}
+        {workloadHref && (
+          <Link href={workloadHref} onClick={handleWorkloadClick}>
+            <SidebarNavItem isActive={pathname?.includes(workloadHref) ?? false}>
+              <div className="flex items-center gap-1.5 py-[1px]">
+                <Timer className="size-4 flex-shrink-0" />
+                <p className="text-13 leading-5 font-medium">Workload</p>
+              </div>
+            </SidebarNavItem>
+          </Link>
+        )}
       </div>
       <Disclosure as="div" className="flex flex-col" defaultOpen={!!isWorkspaceMenuOpen}>
         <div className="group flex w-full items-center justify-between rounded-sm px-2 py-1.5 text-placeholder hover:bg-layer-transparent-hover">
