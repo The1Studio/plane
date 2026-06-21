@@ -19,7 +19,13 @@ from plane.db.models import Issue
 from .aggregation import ALLOWED_GRANULARITIES
 from .models import WorkloadEstimate
 from .serializers import WorkloadEstimateSerializer
-from .service import VALID_STATE_GROUPS, WorkloadTooLarge, compute_workload
+from .service import (
+    VALID_STATE_GROUPS,
+    WorkloadTooLarge,
+    compute_workload,
+    is_guest_restricted,
+    is_issue_assignee,
+)
 
 _SPAN_CAPS = {"day": 92, "week": 366, "month": 730}
 
@@ -107,7 +113,16 @@ def _run(request, slug, route_project_id=None):
 # Shared estimate handlers — reused by both the app API (this module) and the
 # public API (api_views.py), so the logic lives in exactly one place.
 
-def estimate_get(project_id, issue_id):
+def estimate_get(request, slug, project_id, issue_id):
+    # Flag-off guests may read an estimate only for issues assigned to them
+    # (mirrors core's per-issue guest gate in app/views/issue/base.py).
+    if is_guest_restricted(request.user, slug, project_id) and not is_issue_assignee(
+        request.user, project_id, issue_id
+    ):
+        return Response(
+            {"error": "You are not allowed to view this estimate"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
     obj = WorkloadEstimate.objects.filter(issue_id=issue_id, project_id=project_id).first()
     if obj is None:
         return Response({"hours": None}, status=status.HTTP_200_OK)
@@ -143,7 +158,7 @@ def estimate_delete(project_id, issue_id):
 class WorkspaceWorkloadEndpoint(BaseAPIView):
     """GET /api/workspaces/<slug>/workload/ — workspace-scoped matrix."""
 
-    @allow_permission([ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission([ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST], level="WORKSPACE")
     def get(self, request, slug):
         return _run(request, slug, route_project_id=None)
 
@@ -151,7 +166,7 @@ class WorkspaceWorkloadEndpoint(BaseAPIView):
 class ProjectWorkloadEndpoint(BaseAPIView):
     """GET /api/workspaces/<slug>/projects/<project_id>/workload/."""
 
-    @allow_permission([ROLE.ADMIN, ROLE.MEMBER])
+    @allow_permission([ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST])
     def get(self, request, slug, project_id):
         # project_id already a UUID via the <uuid:project_id> URL converter.
         return _run(request, slug, route_project_id=project_id)
@@ -163,14 +178,14 @@ class WorkloadEstimateEndpoint(BaseAPIView):
     /api/workspaces/<slug>/projects/<project_id>/issues/<issue_id>/workload-estimate/
     """
 
-    @allow_permission([ROLE.ADMIN, ROLE.MEMBER])
+    @allow_permission([ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST])
     def get(self, request, slug, project_id, issue_id):
-        return estimate_get(project_id, issue_id)
+        return estimate_get(request, slug, project_id, issue_id)
 
     @allow_permission([ROLE.ADMIN, ROLE.MEMBER])
     def put(self, request, slug, project_id, issue_id):
         return estimate_put(request, slug, project_id, issue_id)
 
-    @allow_permission([ROLE.ADMIN, ROLE.MEMBER])
+    @allow_permission([ROLE.ADMIN])
     def delete(self, request, slug, project_id, issue_id):
         return estimate_delete(project_id, issue_id)

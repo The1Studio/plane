@@ -8,7 +8,7 @@
 
 from collections import defaultdict
 
-from django.db.models import Exists, OuterRef
+from django.db.models import Exists, OuterRef, Q
 
 from plane.db.models import (
     Issue,
@@ -24,6 +24,7 @@ from .models import WorkloadEstimate
 
 ROW_GUARD = 50_000
 ADMIN_ROLE = 20
+GUEST_ROLE = 5
 
 _DEFAULT_EXCLUDED_GROUPS = [StateGroup.COMPLETED.value, StateGroup.CANCELLED.value]
 VALID_STATE_GROUPS = {g.value for g in StateGroup}
@@ -72,12 +73,76 @@ def resolve_project_scope(user, slug, requested_ids, route_project_id=None):
     return scope
 
 
-def _base_queryset(slug, project_scope, state_groups):
+# Guest visibility — mirrors core Plane's issue gate (app/views/issue/base.py):
+# a GUEST in a project with guest_view_all_features=False may see only their
+# OWN content. Workload is assignee-attributed, so "own" = issues assigned to
+# the guest. Workspace admins are never restricted (core admin bypass).
+
+
+def is_guest_restricted(user, slug, project_id) -> bool:
+    """True if `user` is a GUEST in this project AND the project hides team-wide
+    data (guest_view_all_features=False). Workspace admins are never restricted."""
+    if _is_workspace_admin(user, slug):
+        return False
+    return ProjectMember.objects.filter(
+        member=user,
+        workspace__slug=slug,
+        project_id=project_id,
+        role=GUEST_ROLE,
+        is_active=True,
+        project__guest_view_all_features=False,
+    ).exists()
+
+
+def is_issue_assignee(user, project_id, issue_id) -> bool:
+    """True if `user` is an active (non-deleted) assignee of the issue."""
+    return IssueAssignee.objects.filter(
+        issue_id=issue_id,
+        project_id=project_id,
+        assignee_id=user.id,
+        deleted_at__isnull=True,
+    ).exists()
+
+
+def _guest_restricted_projects(user, slug, scope):
+    """Subset of `scope` where `user` is a flag-off GUEST (own-data only)."""
+    if not scope or _is_workspace_admin(user, slug):
+        return set()
+    return set(
+        ProjectMember.objects.filter(
+            member=user,
+            workspace__slug=slug,
+            project_id__in=scope,
+            role=GUEST_ROLE,
+            is_active=True,
+            project__guest_view_all_features=False,
+        ).values_list("project_id", flat=True)
+    )
+
+
+def _scope_filter(project_scope, restricted, user):
+    """Row filter Q: unrestricted projects in full; restricted (flag-off guest)
+    projects narrowed to issues the user is assigned to."""
+    if not restricted:
+        return Q(project_id__in=project_scope)
+    full = set(project_scope) - set(restricted)
+    own_issue_ids = IssueAssignee.objects.filter(
+        assignee_id=user.id,
+        deleted_at__isnull=True,
+        project_id__in=restricted,
+    ).values_list("issue_id", flat=True)
+    q = Q(project_id__in=restricted, issue_id__in=own_issue_ids)
+    if full:
+        q |= Q(project_id__in=full)
+    return q
+
+
+def _base_queryset(slug, scope_q, state_groups):
     qs = (
         WorkloadEstimate.objects.filter(
+            scope_q,
             workspace__slug=slug,
             hours__gt=0,
-            project_id__in=project_scope,
             issue__deleted_at__isnull=True,
             issue__archived_at__isnull=True,
             issue__is_draft=False,
@@ -141,7 +206,11 @@ def compute_workload(
     if not scope:
         return _empty_response(granularity, date_from, date_to)
 
-    qs = _base_queryset(slug, scope, state_groups)
+    # Flag-off guests see only their own assigned workload (core parity).
+    restricted = _guest_restricted_projects(user, slug, scope)
+    scope_q = _scope_filter(scope, restricted, user)
+
+    qs = _base_queryset(slug, scope_q, state_groups)
 
     # Row guard — bound memory regardless of how the request was narrowed
     # (an admin with an explicit large project list can still blow past it).
@@ -152,8 +221,8 @@ def compute_workload(
         qs.values_list("issue_id", "hours", "issue__start_date", "issue__target_date")
     )
     zero_estimate_count = WorkloadEstimate.objects.filter(
+        scope_q,
         workspace__slug=slug,
-        project_id__in=scope,
         hours__lte=0,
         issue__deleted_at__isnull=True,
         issue__archived_at__isnull=True,

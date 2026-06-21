@@ -216,6 +216,54 @@ class TestAccessBoundary(TransactionTestCase):
         self.assertEqual(data["rows"], [])
         self.assertEqual(data["meta"]["issues_counted"], 0)
 
+    def test_flag_off_guest_sees_only_own_workload(self):
+        """Core parity: a GUEST in a guest_view_all_features=False project sees
+        only their own assigned workload, not teammates'."""
+        ws = _ws()
+        proj = _project(ws)  # guest_view_all_features defaults to False
+        st = _state(ws, proj, "started")
+        guest = _user()
+        other = _user()
+        _pmember(ws, proj, guest, role=5)
+        _pmember(ws, proj, other, role=15)
+
+        i_self = _issue(ws, proj, st, guest, start=date(2026, 6, 1), target=date(2026, 6, 1))
+        _assign(ws, proj, i_self, guest, created_at=_t(1))
+        _estimate(ws, proj, i_self, 4.0)
+        i_other = _issue(ws, proj, st, other, start=date(2026, 6, 1), target=date(2026, 6, 1))
+        _assign(ws, proj, i_other, other, created_at=_t(1))
+        _estimate(ws, proj, i_other, 8.0)
+
+        data = compute_workload(guest, ws.slug, "week", WIN_FROM, WIN_TO)
+        self.assertEqual({r["assignee_id"] for r in data["rows"]}, {str(guest.id)})
+        self.assertEqual(data["meta"]["issues_counted"], 1)
+
+    def test_flag_on_guest_sees_all_workload(self):
+        """With guest_view_all_features=True the guest sees the whole team."""
+        ws = _ws()
+        proj = _project(ws)
+        proj.guest_view_all_features = True
+        proj.save()
+        st = _state(ws, proj, "started")
+        guest = _user()
+        other = _user()
+        _pmember(ws, proj, guest, role=5)
+        _pmember(ws, proj, other, role=15)
+
+        i_self = _issue(ws, proj, st, guest, start=date(2026, 6, 1), target=date(2026, 6, 1))
+        _assign(ws, proj, i_self, guest, created_at=_t(1))
+        _estimate(ws, proj, i_self, 4.0)
+        i_other = _issue(ws, proj, st, other, start=date(2026, 6, 1), target=date(2026, 6, 1))
+        _assign(ws, proj, i_other, other, created_at=_t(1))
+        _estimate(ws, proj, i_other, 8.0)
+
+        data = compute_workload(guest, ws.slug, "week", WIN_FROM, WIN_TO)
+        self.assertEqual(
+            {r["assignee_id"] for r in data["rows"]},
+            {str(guest.id), str(other.id)},
+        )
+        self.assertEqual(data["meta"]["issues_counted"], 2)
+
 
 class TestStateDefaults(TransactionTestCase):
     def _setup(self):
