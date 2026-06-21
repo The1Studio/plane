@@ -1,0 +1,33 @@
+--- a/apps/api/plane/settings/common.py
++++ b/apps/api/plane/settings/common.py
+@@ -91,6 +91,7 @@ INSTALLED_APPS = [
+     "plane.authentication",
++    "plane.workload",           # fork: workload hours tracking (touch-point 1, append-only)
+     # Third-party things
+     "rest_framework",
+--- a/apps/api/plane/ai_ext/models.py
++++ b/apps/api/plane/ai_ext/models.py
+@@ -0,0 +1,24 @@
++# Copyright (c) 2024-present The1Studio and contributors
++# Fork-owned model — lives in plane/ai_ext/, not plane/db/models/.
++
++import uuid
++from django.db import models
++
++
++class IssueEmbedding(models.Model):
++    """
++    Stores pgvector embeddings for Issue content (fork-owned table).
++    Related to upstream Issue via FK — no new columns added to Issue.
++    """
++
++    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
++    issue_id = models.UUIDField(db_index=True)
++    embedding = models.JSONField(help_text="BGE-M3 embedding vector (serialised as list[float])")
++    model_version = models.CharField(max_length=64, default="bge-m3")
++    created_at = models.DateTimeField(auto_now_add=True)
++    updated_at = models.DateTimeField(auto_now=True)
++
++    class Meta:
++        db_table = "ai_ext_issue_embedding"
++        indexes = [models.Index(fields=["issue_id"])]
