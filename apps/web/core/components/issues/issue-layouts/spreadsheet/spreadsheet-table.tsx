@@ -7,6 +7,7 @@
 import type { MutableRefObject } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { observer } from "mobx-react";
+import { useParams } from "next/navigation";
 // plane imports
 import type { IIssueDisplayFilterOptions, IIssueDisplayProperties, TIssue } from "@plane/types";
 // components
@@ -16,6 +17,8 @@ import { useIntersectionObserver } from "@/hooks/use-intersection-observer";
 import { useIssuesStore } from "@/hooks/use-issue-layout-store";
 import type { TSelectionHelper } from "@/hooks/use-multiple-select";
 import { useTableKeyboardNavigation } from "@/hooks/use-table-keyboard-navigation";
+// The1Studio fork (SP2 workload) — bulk fetch triggered once per page of rows
+import { useBulkWorkloadFetch } from "@/hooks/store/use-workload-estimate";
 // local imports
 import type { TRenderQuickActions } from "../list/list-view-types";
 import { getDisplayPropertiesCount } from "../utils";
@@ -62,6 +65,11 @@ export const SpreadsheetTable = observer(function SpreadsheetTable(props: Props)
   // states
   const isScrolled = useRef(false);
   const [intersectionElement, setIntersectionElement] = useState<HTMLTableSectionElement | null>(null);
+
+  // The1Studio fork (SP2 workload) — one bulk fetch per loaded page of issue ids.
+  // workspaceSlug from route params is always defined at this render level.
+  const { workspaceSlug } = useParams();
+  useBulkWorkloadFetch(workspaceSlug?.toString() ?? "", issueIds);
 
   const {
     issues: { getIssueLoader },

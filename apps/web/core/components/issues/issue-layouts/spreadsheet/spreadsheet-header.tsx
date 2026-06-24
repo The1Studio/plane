@@ -16,6 +16,8 @@ import { MultipleSelectGroupAction } from "@/components/core/multiple-select";
 // hooks
 import type { TSelectionHelper } from "@/hooks/use-multiple-select";
 import { SpreadsheetHeaderColumn } from "./spreadsheet-header-column";
+// The1Studio fork (SP2 workload) — fixed appended column header
+import { EstimatedHoursHeaderCell } from "./columns/estimated-hours-column";
 
 interface Props {
   displayProperties: IIssueDisplayProperties;
@@ -87,6 +89,8 @@ export const SpreadsheetHeader = observer(function SpreadsheetHeader(props: Prop
             isEpic={isEpic}
           />
         ))}
+        {/* The1Studio fork (SP2 workload) — fixed "Estimated hours" column appended after the property loop */}
+        <EstimatedHoursHeaderCell />
       </tr>
     </thead>
   );

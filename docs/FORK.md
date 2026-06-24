@@ -232,20 +232,34 @@ touch-point 6 (see table below).
 `extendedRoutes` (touch-point 6) only mounts whole **pages**. Upstream Plane has **no plugin
 slot** for injecting a single property row into the issue-detail sidebar, nor for adding an
 item to the workspace nav menu (the nav arrays live in the sealed `@plane/constants` package,
-which we must not edit in place). The SP2 workload feature therefore carries two **minimal,
-clearly-marked in-place edits** to core web components. Each is the documented exception for
-its integration point:
+which we must not edit in place), nor for adding a column to the list/spreadsheet grid (the
+column registry is typed to `keyof IIssueDisplayProperties` in `@plane/types`/`@plane/constants`).
+The SP2 workload feature therefore carries a set of **minimal, clearly-marked in-place edits**
+to core web components. Each is the documented exception for its integration point. Every edit
+is fenced with a `The1Studio fork (SP2 workload)` comment.
 
 | File | What | Why no seam |
 | --- | --- | --- |
-| `apps/web/core/components/issues/issue-detail/sidebar.tsx` | "Estimated hours" property field (read/write `…/workload-estimate/`) | No upstream API to add an issue-property row; must render inside the core properties list |
+| `apps/web/core/components/issues/issue-detail/sidebar.tsx` | "Estimated hours" property field (now reads/writes via the shared workload store) | No upstream API to add an issue-property row; must render inside the core properties list |
 | `apps/web/core/components/workspace/sidebar/sidebar-menu-items.tsx` | "Workload" nav link → `/:workspaceSlug/workload` | Nav items come from `@plane/constants` (sealed package, no edit-in-place) |
+| `apps/web/core/hooks/store/use-workload-estimate.ts` (NEW) | `useWorkloadEstimate` + `useBulkWorkloadFetch` selector hooks | Package hooks are context-agnostic; selector hooks must read core's `useWorkload()` |
+| `apps/web/core/components/issues/issue-layouts/spreadsheet/columns/estimated-hours-column.tsx` (NEW) | Editable "Estimated hours" grid column (header + body cell) | New file; the column is appended, not registered in the sealed column registry |
+| `apps/web/core/components/issues/issue-layouts/spreadsheet/spreadsheet-header.tsx` | Appends the fixed `<th>` after the property loop | No registry seam for an always-on column without a `keyof IIssueDisplayProperties` key |
+| `apps/web/core/components/issues/issue-layouts/spreadsheet/issue-row.tsx` | Appends the fixed `<td>` in `IssueRowDetails` | Same — body half of the appended column |
+| `apps/web/core/components/issues/issue-layouts/spreadsheet/spreadsheet-table.tsx` | Hosts the page-level `useBulkWorkloadFetch` | Needs the full visible `issueIds` to warm the store in one request |
+| `apps/web/ce/components/issues/issue-layouts/additional-properties.tsx` | Inline hours pill (list + kanban) | The `ce/` stub seam (`WorkItemLayoutAdditionalProperties`) is the intended injection point |
+| `apps/web/core/components/issues/issue-layouts/list/blocks-list.tsx` | `useBulkWorkloadFetch` warm-up for list groups | Pill reads the store; the list view must warm it for visible ids |
+| `apps/web/core/components/issues/issue-layouts/kanban/blocks-list.tsx` | `useBulkWorkloadFetch` warm-up for kanban groups | Same; the kanban pill is accepted in-scope and shares the seam |
 
-**Rebase handling:** these two files ARE expected conflict points (unlike the abort-on-conflict
+**Rebase handling:** these files ARE expected conflict points (unlike the abort-on-conflict
 rule for everything else). On conflict, re-apply the fork block — each is fenced by a
 `The1Studio fork (SP2 workload)` comment — and keep upstream's changes around it. Do NOT abort
-the rebase for a conflict confined to these two files. Keep each edit as small as possible so
-the conflict surface stays trivial.
+the rebase for a conflict confined to this set. Keep each edit as small as possible so the
+conflict surface stays trivial.
+
+**`plane-isolation-audit` note:** `packages/workload-ext` uses the `@plane/` npm scope but is
+**fork-owned** (not upstream) — editing it is NOT an `@plane/*` violation. Allowlist
+`@plane/workload-ext` in the isolation audit so it isn't false-flagged as a sealed-package edit.
 
 ### The complete 6 core touch-point inventory
 

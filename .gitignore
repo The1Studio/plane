@@ -110,3 +110,7 @@ build/
 .react-router/
 temp/
 scripts/
+
+# The1Studio fork — local-only dev artifacts
+.playwright-mcp/
+docker-compose.local.yml

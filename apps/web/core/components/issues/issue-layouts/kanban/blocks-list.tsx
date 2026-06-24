@@ -6,9 +6,12 @@
 
 import type { MutableRefObject } from "react";
 import { observer } from "mobx-react";
+import { useParams } from "next/navigation";
 // plane imports
 import type { TIssue, IIssueDisplayProperties, IIssueMap } from "@plane/types";
 // local imports
+// The1Studio fork (SP2 workload) — warm the estimate store so the inline hours pill populates
+import { useBulkWorkloadFetch } from "@/hooks/store/use-workload-estimate";
 import type { TRenderQuickActions } from "../list/list-view-types";
 import { KanbanIssueBlock } from "./block";
 
@@ -42,6 +45,11 @@ export const KanbanIssueBlocksList = observer(function KanbanIssueBlocksList(pro
     scrollableContainerRef,
     isEpic = false,
   } = props;
+
+  // The1Studio fork (SP2 workload) — one bulk fetch per group warms the store
+  // for this group's visible issues so the hours pill renders without N+1.
+  const { workspaceSlug } = useParams();
+  useBulkWorkloadFetch(workspaceSlug?.toString() ?? "", Array.isArray(issueIds) ? issueIds : []);
 
   return (
     <>

@@ -37,6 +37,8 @@ import { IssueIdentifier } from "@/plane-web/components/issues/issue-details/iss
 import type { TRenderQuickActions } from "../list/list-view-types";
 import { isIssueNew } from "../utils";
 import { IssueColumn } from "./issue-column";
+// The1Studio fork (SP2 workload) — fixed appended column body cell
+import { EstimatedHoursBodyCell } from "./columns/estimated-hours-column";
 
 interface Props {
   displayProperties: IIssueDisplayProperties;
@@ -398,6 +400,17 @@ const IssueRowDetails = observer(function IssueRowDetails(props: IssueRowDetails
           isEstimateEnabled={isEstimateEnabled}
         />
       ))}
+      {/* The1Studio fork (SP2 workload) — fixed "Estimated hours" cell appended after the property loop.
+          Renders only in the non-placeholder branch (RenderIfVisible) so the colSpan={100}
+          placeholder already covers the extra column width when the row is off-screen.
+          project_id sourced from issueDetail.project_id (per-row) — never useParams() projectId,
+          which is undefined at the workspace-level spreadsheet. */}
+      <EstimatedHoursBodyCell
+        issueId={issueDetail.id}
+        projectId={issueDetail.project_id}
+        workspaceSlug={workspaceSlug?.toString() ?? ""}
+        disableUserActions={disableUserActions}
+      />
     </>
   );
 });

@@ -21,7 +21,9 @@ from .models import WorkloadEstimate
 from .serializers import WorkloadEstimateSerializer
 from .service import (
     VALID_STATE_GROUPS,
+    BulkEstimatesError,
     WorkloadTooLarge,
+    bulk_estimates,
     compute_workload,
     is_guest_restricted,
     is_issue_assignee,
@@ -153,6 +155,36 @@ def estimate_put(request, slug, project_id, issue_id):
 def estimate_delete(project_id, issue_id):
     WorkloadEstimate.objects.filter(issue_id=issue_id, project_id=project_id).delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+def estimate_bulk(request, slug):
+    """Shared handler for the bulk estimates endpoint.
+
+    Parses `issue_ids` CSV from query params, delegates to
+    service.bulk_estimates, and returns the result dict.
+    Maps BulkEstimatesError (empty/oversize list) → 400.
+    Other exceptions are not caught here and propagate to DRF's 500 handler.
+    """
+    raw = request.GET.get("issue_ids", "")
+    ids = _split_uuids(raw)
+    try:
+        data = bulk_estimates(request.user, slug, ids)
+    except BulkEstimatesError as exc:
+        return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(data, status=status.HTTP_200_OK)
+
+
+class WorkloadEstimatesBulkEndpoint(BaseAPIView):
+    """GET /api/workspaces/<slug>/workload-estimates/?issue_ids=a,b,c
+
+    Returns {<issue_uuid>: <hours>} for all in-scope stored estimates.
+    Missing issue ids (no estimate row) are omitted from the response.
+    level="WORKSPACE" is mandatory — no project_id in the URL.
+    """
+
+    @allow_permission([ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST], level="WORKSPACE")
+    def get(self, request, slug):
+        return estimate_bulk(request, slug)
 
 
 class WorkspaceWorkloadEndpoint(BaseAPIView):

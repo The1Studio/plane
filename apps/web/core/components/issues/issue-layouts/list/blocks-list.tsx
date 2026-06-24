@@ -5,10 +5,13 @@
  */
 
 import type { MutableRefObject } from "react";
+import { useParams } from "next/navigation";
 // components
 import type { TIssue, IIssueDisplayProperties, TIssueMap, TGroupedIssues } from "@plane/types";
 // hooks
 import type { TSelectionHelper } from "@/hooks/use-multiple-select";
+// The1Studio fork (SP2 workload) — warm the estimate store so the inline hours pill populates
+import { useBulkWorkloadFetch } from "@/hooks/store/use-workload-estimate";
 // types
 import { IssueBlockRoot } from "./block-root";
 import type { TRenderQuickActions } from "./list-view-types";
@@ -43,6 +46,11 @@ export function IssueBlocksList(props: Props) {
     canDropOverIssue,
     isEpic = false,
   } = props;
+
+  // The1Studio fork (SP2 workload) — one bulk fetch per group warms the store
+  // for this group's visible issues so the hours pill renders without N+1.
+  const { workspaceSlug } = useParams();
+  useBulkWorkloadFetch(workspaceSlug?.toString() ?? "", Array.isArray(issueIds) ? issueIds : []);
 
   return (
     <div className="relative h-full w-full">

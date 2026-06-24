@@ -2,6 +2,14 @@ import type { TWorkloadEstimate, TWorkloadFilters, TWorkloadResponse } from "./t
 
 const API_BASE = "/api";
 
+/**
+ * Maximum number of issue IDs per bulk-estimates chunk.
+ * This is a client-side split limit; the backend cap is 500.
+ * The two values are independent — the client uses 400 to stay safely under
+ * the server limit while keeping chunks a manageable size.
+ */
+const BULK_CHUNK_SIZE = 400;
+
 export class WorkloadService {
   // ── Estimate CRUD ──────────────────────────────────────────────────────────
 
@@ -35,6 +43,36 @@ export class WorkloadService {
     const url = `${API_BASE}/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/workload-estimate/`;
     const res = await fetch(url, { method: "DELETE", credentials: "include" });
     if (!res.ok) throw new Error(await res.text());
+  }
+
+  /**
+   * Fetch estimated hours for many issues in one (or more) requests.
+   *
+   * Contract: GET /api/workspaces/<slug>/workload-estimates/?issue_ids=a,b,c
+   * → { "<uuid>": <hours number> }   (missing issue = absent key)
+   *
+   * If `issueIds.length` exceeds BULK_CHUNK_SIZE the list is split into chunks
+   * and the results are merged client-side.
+   */
+  async getEstimatesBulk(workspaceSlug: string, issueIds: string[]): Promise<Record<string, number>> {
+    if (issueIds.length === 0) return {};
+
+    // Split into chunks to stay under the backend cap.
+    const chunks: string[][] = [];
+    for (let i = 0; i < issueIds.length; i += BULK_CHUNK_SIZE) {
+      chunks.push(issueIds.slice(i, i + BULK_CHUNK_SIZE));
+    }
+
+    const results = await Promise.all(
+      chunks.map(async (chunk) => {
+        const url = `${API_BASE}/workspaces/${workspaceSlug}/workload-estimates/?issue_ids=${chunk.join(",")}`;
+        const res = await fetch(url, { credentials: "include" });
+        if (!res.ok) throw new Error(await res.text());
+        return res.json() as Promise<Record<string, number>>;
+      })
+    );
+
+    return Object.assign({}, ...results) as Record<string, number>;
   }
 
   // ── Workload matrix ────────────────────────────────────────────────────────

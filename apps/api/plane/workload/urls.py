@@ -9,6 +9,7 @@ from django.urls import path
 from .views import (
     ProjectWorkloadEndpoint,
     WorkloadEstimateEndpoint,
+    WorkloadEstimatesBulkEndpoint,
     WorkspaceWorkloadEndpoint,
 )
 
@@ -27,5 +28,10 @@ urlpatterns = [
         "workspaces/<str:slug>/projects/<uuid:project_id>/issues/<uuid:issue_id>/workload-estimate/",
         WorkloadEstimateEndpoint.as_view(),
         name="workload-estimate",
+    ),
+    path(
+        "workspaces/<str:slug>/workload-estimates/",
+        WorkloadEstimatesBulkEndpoint.as_view(),
+        name="workload-estimates-bulk",
     ),
 ]

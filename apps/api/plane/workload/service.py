@@ -307,6 +307,56 @@ def compute_workload(
     }
 
 
+BULK_ESTIMATES_CAP = 500
+
+
+class BulkEstimatesError(Exception):
+    """Raised by bulk_estimates for caller-correctable input errors (empty or
+    oversize issue_ids list).  Caught by the view and mapped to HTTP 400.
+
+    Using a dedicated type — NOT bare ValueError — ensures that unexpected
+    ValueErrors from deeper ORM/Python code propagate as 500 instead of
+    being silently swallowed as a 400 response.
+    """
+
+
+def bulk_estimates(user, slug, issue_ids):
+    """Return {str(issue_id): hours} for all in-scope stored estimates.
+
+    AuthZ reuses the SAME scope primitives as compute_workload — one ORM
+    query enforces project membership AND the flag-off guest restriction
+    (no per-issue loop, no cross-project leak).
+
+    Returns ALL stored rows including hours == 0 (the grid needs the zero).
+    Issues with no row are omitted (caller can treat them as unset).
+
+    Raises:
+        BulkEstimatesError: on empty or oversize issue_ids list (→ HTTP 400).
+        Any other exception propagates uncaught (→ HTTP 500 from DRF handler).
+    """
+    if not issue_ids:
+        raise BulkEstimatesError("issue_ids must not be empty")
+    if len(issue_ids) > BULK_ESTIMATES_CAP:
+        raise BulkEstimatesError(
+            f"Too many issue_ids (max {BULK_ESTIMATES_CAP}, got {len(issue_ids)})"
+        )
+
+    scope = resolve_project_scope(user, slug, requested_ids=None, route_project_id=None)
+    if not scope:
+        return {}
+
+    restricted = _guest_restricted_projects(user, slug, scope)
+    scope_q = _scope_filter(scope, restricted, user)
+
+    rows = WorkloadEstimate.objects.filter(
+        scope_q,
+        workspace__slug=slug,
+        issue_id__in=issue_ids,
+    ).values_list("issue_id", "hours")
+
+    return {str(issue_id): hours for issue_id, hours in rows}
+
+
 def _empty_response(granularity, date_from, date_to):
     return {
         "granularity": granularity,

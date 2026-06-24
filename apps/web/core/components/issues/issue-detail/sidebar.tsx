@@ -36,6 +36,8 @@ import { useIssueDetail } from "@/hooks/store/use-issue-detail";
 import { useMember } from "@/hooks/store/use-member";
 import { useProject } from "@/hooks/store/use-project";
 import { useProjectState } from "@/hooks/store/use-project-state";
+// The1Studio fork (SP2 workload) — shared estimate store (SSOT with the list/spreadsheet column)
+import { useWorkload } from "@/hooks/store/use-workload";
 // plane web components
 // components
 import { WorkItemAdditionalSidebarProperties } from "@/plane-web/components/issues/issue-details/additional-properties";
@@ -84,45 +86,52 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
   maxDate?.setDate(maxDate.getDate());
 
   // Workload estimate (SP2 — fork core-edit exception per docs/FORK.md §Frontend core-edit exceptions)
-  const [estimatedHours, setEstimatedHours] = useState<number | "">("");
+  // Backed by the shared workload store so this field and the list/spreadsheet hours column
+  // read/write one source of truth. The displayed value reflects the live store value unless
+  // the user is actively editing — so a grid edit shows here without reopening the panel.
+  const workloadStore = useWorkload();
+  const storeHours = workloadStore.estimateData[issueId]?.hours ?? null;
+  const [estimateDraft, setEstimateDraft] = useState<number | "">("");
+  const [estimateFocused, setEstimateFocused] = useState(false);
   const [estimateSaving, setEstimateSaving] = useState(false);
   const estimateFetchedRef = useRef(false);
 
   useEffect(() => {
     if (!workspaceSlug || !projectId || !issueId || estimateFetchedRef.current) return;
     estimateFetchedRef.current = true;
-    fetch(`/api/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/workload-estimate/`, {
-      credentials: "include",
-    })
-      .then((r) => r.json())
-      .then((data: { hours: number | null }) => {
-        if (data.hours !== null && data.hours !== undefined) {
-          setEstimatedHours(data.hours);
-        }
-        return data.hours;
-      })
-      .catch(() => {
+    void (async () => {
+      try {
+        await workloadStore.fetchEstimate(workspaceSlug.toString(), projectId.toString(), issueId);
+      } catch {
         // silently ignore — estimate may not exist
-      });
-  }, [workspaceSlug, projectId, issueId]);
+      }
+    })();
+  }, [workspaceSlug, projectId, issueId, workloadStore]);
+
+  // Live store value when idle; local draft while the user is typing.
+  const estimatedHoursValue = estimateFocused ? estimateDraft : (storeHours ?? "");
+
+  const handleEstimateFocus = () => {
+    setEstimateDraft(storeHours ?? "");
+    setEstimateFocused(true);
+  };
 
   const handleEstimateChange = (val: number | "") => {
-    setEstimatedHours(val);
+    setEstimateDraft(val);
   };
 
   const handleEstimateBlur = async () => {
+    setEstimateFocused(false);
     if (!workspaceSlug || !projectId || !issueId) return;
-    if (estimatedHours === "" || Number(estimatedHours) < 0) return;
+    if (estimateDraft === "" || Number(estimateDraft) < 0) return;
     setEstimateSaving(true);
     try {
-      await fetch(`/api/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/workload-estimate/`, {
-        method: "PUT",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hours: Number(estimatedHours) }),
-      });
-    } catch {
-      // silently ignore save errors
+      await workloadStore.updateEstimate(
+        workspaceSlug.toString(),
+        projectId.toString(),
+        issueId,
+        Number(estimateDraft)
+      );
     } finally {
       setEstimateSaving(false);
     }
@@ -263,7 +272,8 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
                   min={0}
                   max={10000}
                   step={0.5}
-                  value={estimatedHours}
+                  value={estimatedHoursValue}
+                  onFocus={handleEstimateFocus}
                   onChange={(e) => handleEstimateChange(e.target.value === "" ? "" : Number(e.target.value))}
                   onBlur={handleEstimateBlur}
                   disabled={!isEditable || estimateSaving}
