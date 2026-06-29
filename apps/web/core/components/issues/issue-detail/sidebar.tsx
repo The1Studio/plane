@@ -37,6 +37,7 @@ import { useMember } from "@/hooks/store/use-member";
 import { useProject } from "@/hooks/store/use-project";
 import { useProjectState } from "@/hooks/store/use-project-state";
 // The1Studio fork (SP2 workload) — shared estimate store (SSOT with the list/spreadsheet column)
+import { wlt } from "@plane/workload-ext";
 import { useWorkload } from "@/hooks/store/use-workload";
 // plane web components
 // components
@@ -265,7 +266,7 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
             )}
 
             {/* SP2 workload estimate — fork touch-point exception (docs/FORK.md §5.3) */}
-            <SidebarPropertyListItem icon={EstimatePropertyIcon} label="Estimated hours">
+            <SidebarPropertyListItem icon={EstimatePropertyIcon} label={wlt("estimate.label")}>
               <div className="flex h-7.5 items-center gap-1 px-2">
                 <input
                   type="number"
@@ -277,10 +278,10 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
                   onChange={(e) => handleEstimateChange(e.target.value === "" ? "" : Number(e.target.value))}
                   onBlur={handleEstimateBlur}
                   disabled={!isEditable || estimateSaving}
-                  placeholder="None"
+                  placeholder={wlt("common.none")}
                   className="w-full bg-transparent text-body-xs-regular text-primary outline-none placeholder:text-placeholder"
                 />
-                {estimateSaving && <span className="text-xs text-secondary">saving…</span>}
+                {estimateSaving && <span className="text-xs text-secondary">{wlt("common.saving")}</span>}
               </div>
             </SidebarPropertyListItem>
 

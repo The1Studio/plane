@@ -12,6 +12,7 @@
 import React from "react";
 import { Timer } from "lucide-react";
 import type { IIssueDisplayProperties, TIssue } from "@plane/types";
+import { wlt } from "@plane/workload-ext";
 import { useWorkloadEstimate } from "@/hooks/store/use-workload-estimate";
 
 export type TWorkItemLayoutAdditionalProperties = {
@@ -28,7 +29,7 @@ export function WorkItemLayoutAdditionalProperties({ issue }: TWorkItemLayoutAdd
   return (
     <div
       className="flex h-5 flex-shrink-0 items-center justify-center gap-2 overflow-hidden rounded-sm border-[0.5px] border-strong px-2.5 py-1"
-      title={`Estimated: ${hours}h`}
+      title={wlt("estimate.tooltip", { hours })}
     >
       <Timer className="h-3 w-3 flex-shrink-0" strokeWidth={2} />
       <div className="text-caption-sm-regular">{hours}h</div>

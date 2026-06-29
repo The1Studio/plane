@@ -1,6 +1,7 @@
 import React from "react";
 import { observer } from "mobx-react";
 
+import { wlt } from "./i18n";
 import type { IWorkloadStore } from "./store";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -47,7 +48,7 @@ export const WorkloadFilters = observer(function WorkloadFilters({
       {/* Date from */}
       <div className="flex flex-col gap-1">
         <label htmlFor="wl-filter-from" className="text-xs text-gray-500 font-medium">
-          From
+          {wlt("common.from")}
         </label>
         <input
           id="wl-filter-from"
@@ -61,7 +62,7 @@ export const WorkloadFilters = observer(function WorkloadFilters({
       {/* Date to */}
       <div className="flex flex-col gap-1">
         <label htmlFor="wl-filter-to" className="text-xs text-gray-500 font-medium">
-          To
+          {wlt("common.to")}
         </label>
         <input
           id="wl-filter-to"
@@ -76,7 +77,7 @@ export const WorkloadFilters = observer(function WorkloadFilters({
       {/* Project multi-select */}
       <div className="flex flex-col gap-1">
         <label htmlFor="wl-filter-projects" className="text-xs text-gray-500 font-medium">
-          Projects
+          {wlt("filters.projects")}
         </label>
         <select
           id="wl-filter-projects"
@@ -88,7 +89,7 @@ export const WorkloadFilters = observer(function WorkloadFilters({
         >
           {availableProjects.length === 0 ? (
             <option disabled value="">
-              No projects available
+              {wlt("filters.no_projects")}
             </option>
           ) : (
             availableProjects.map((project) => (
@@ -103,7 +104,7 @@ export const WorkloadFilters = observer(function WorkloadFilters({
       {/* Assignee multi-select */}
       <div className="flex flex-col gap-1">
         <label htmlFor="wl-filter-assignees" className="text-xs text-gray-500 font-medium">
-          Assignees
+          {wlt("filters.assignees")}
         </label>
         <select
           id="wl-filter-assignees"
@@ -115,7 +116,7 @@ export const WorkloadFilters = observer(function WorkloadFilters({
         >
           {availableAssignees.length === 0 ? (
             <option disabled value="">
-              No assignees available
+              {wlt("filters.no_assignees")}
             </option>
           ) : (
             availableAssignees.map((assignee) => (
@@ -134,7 +135,7 @@ export const WorkloadFilters = observer(function WorkloadFilters({
         disabled={store.isLoading}
         className="bg-custom-primary-100 text-sm rounded px-4 py-1.5 font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
       >
-        {store.isLoading ? "Loading…" : "Refresh"}
+        {store.isLoading ? wlt("common.loading") : wlt("common.refresh")}
       </button>
     </div>
   );

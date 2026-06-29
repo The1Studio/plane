@@ -23,6 +23,8 @@ Workload response: `{granularity, date_from, date_to, periods[], rows[{assignee_
 
 - [x] `plane` backend — expose endpoints on the public API (`/api/v1/`, API-key auth). _(done)_
 - [x] `plane-mcp-server` — tools `get_workload`, `get/set/delete_issue_workload_estimate`. _(done)_
+- [x] `plane-mcp-server` — bulk tool `get_issue_workload_estimates_bulk` for the
+      `/workload-estimates/?issue_ids=…` endpoint. _(PR The1Studio/plane-mcp-server#1)_
 - [ ] `plane-node-sdk` — add client bindings for the 3 endpoints.
 - [ ] `plane-python-sdk` — add client bindings for the 3 endpoints.
 - [ ] `developer-docs` / `docs` — document the endpoints + the workload tab.

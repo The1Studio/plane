@@ -2,6 +2,7 @@ import React from "react";
 import { observer } from "mobx-react";
 import { Table, TableHeader, TableBody, TableFooter, TableRow, TableHead, TableCell } from "@plane/propel/table";
 
+import { wlt } from "./i18n";
 import type { IWorkloadStore } from "./store";
 import type { TWorkloadGranularity } from "./types";
 
@@ -83,7 +84,7 @@ export const WorkloadMatrix = observer(function WorkloadMatrix({ store, workspac
     return (
       <div className="flex flex-col gap-4">
         {renderToolbar()}
-        <div className="text-sm text-gray-500 py-8 text-center">Loading…</div>
+        <div className="text-sm text-gray-500 py-8 text-center">{wlt("common.loading")}</div>
       </div>
     );
   }
@@ -101,7 +102,7 @@ export const WorkloadMatrix = observer(function WorkloadMatrix({ store, workspac
     return (
       <div className="flex flex-col gap-4">
         {renderToolbar()}
-        <div className="text-sm text-gray-400 py-8 text-center">No data loaded yet.</div>
+        <div className="text-sm text-gray-400 py-8 text-center">{wlt("matrix.no_data_loaded")}</div>
       </div>
     );
   }
@@ -113,9 +114,11 @@ export const WorkloadMatrix = observer(function WorkloadMatrix({ store, workspac
       <div className="flex flex-col gap-4">
         {renderToolbar()}
         <div className="text-sm text-gray-400 py-8 text-center">
-          No workload data.
+          {wlt("matrix.no_workload_data")}
           {meta.unscheduled_ratio > 0 && (
-            <span className="ml-1">{Math.round(meta.unscheduled_ratio * 100)}% of issues have no target date.</span>
+            <span className="ml-1">
+              {wlt("matrix.no_target_date", { percent: Math.round(meta.unscheduled_ratio * 100) })}
+            </span>
           )}
         </div>
       </div>
@@ -152,14 +155,14 @@ export const WorkloadMatrix = observer(function WorkloadMatrix({ store, workspac
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="min-w-[160px] text-left">Assignee</TableHead>
+            <TableHead className="min-w-[160px] text-left">{wlt("matrix.assignee")}</TableHead>
             {visiblePeriods.map((period) => (
               <TableHead key={period} className="min-w-[80px] text-right">
                 {period}
               </TableHead>
             ))}
-            <TableHead className="min-w-[90px] text-right">Unscheduled</TableHead>
-            <TableHead className="min-w-[80px] text-right">Total</TableHead>
+            <TableHead className="min-w-[90px] text-right">{wlt("matrix.unscheduled")}</TableHead>
+            <TableHead className="min-w-[80px] text-right">{wlt("common.total")}</TableHead>
           </TableRow>
         </TableHeader>
 
@@ -183,7 +186,7 @@ export const WorkloadMatrix = observer(function WorkloadMatrix({ store, workspac
 
         <TableFooter>
           <TableRow>
-            <TableCell className="font-semibold">Total</TableCell>
+            <TableCell className="font-semibold">{wlt("common.total")}</TableCell>
             {visiblePeriods.map((period) => (
               <TableCell key={period} className="text-right font-semibold tabular-nums">
                 {formatHours(periodTotals[period] ?? 0)}
@@ -197,10 +200,8 @@ export const WorkloadMatrix = observer(function WorkloadMatrix({ store, workspac
 
       {/* Meta info */}
       <div className="text-xs text-gray-500 space-y-0.5">
-        <p>
-          {meta.issues_counted} issues counted · {meta.zero_estimate_count} with 0h estimate
-        </p>
-        {meta.truncated && <p className="text-amber-600">Results truncated. Narrow your date range.</p>}
+        <p>{wlt("matrix.issues_summary", { counted: meta.issues_counted, zero: meta.zero_estimate_count })}</p>
+        {meta.truncated && <p className="text-amber-600">{wlt("matrix.truncated")}</p>}
       </div>
     </div>
   );
@@ -209,9 +210,9 @@ export const WorkloadMatrix = observer(function WorkloadMatrix({ store, workspac
 
   function renderToolbar() {
     const granularities: Array<{ value: TWorkloadGranularity; label: string }> = [
-      { value: "day", label: "Day" },
-      { value: "week", label: "Week" },
-      { value: "month", label: "Month" },
+      { value: "day", label: wlt("granularity.day") },
+      { value: "week", label: wlt("granularity.week") },
+      { value: "month", label: wlt("granularity.month") },
     ];
 
     return (
@@ -238,7 +239,7 @@ export const WorkloadMatrix = observer(function WorkloadMatrix({ store, workspac
         {/* Date range */}
         <div className="text-sm flex items-center gap-2">
           <label htmlFor="wl-matrix-from" className="text-gray-500">
-            From
+            {wlt("common.from")}
           </label>
           <input
             id="wl-matrix-from"
@@ -248,7 +249,7 @@ export const WorkloadMatrix = observer(function WorkloadMatrix({ store, workspac
             className="border-gray-200 text-sm focus:ring-custom-primary-100 rounded border px-2 py-1 focus:ring-1 focus:outline-none"
           />
           <label htmlFor="wl-matrix-to" className="text-gray-500">
-            To
+            {wlt("common.to")}
           </label>
           <input
             id="wl-matrix-to"

@@ -14,6 +14,8 @@
 
 import { useState } from "react";
 import { observer } from "mobx-react";
+// workload i18n (fork-owned strings — no @plane/i18n edit)
+import { wlt } from "@plane/workload-ext";
 // hooks
 import { useWorkload } from "@/hooks/store/use-workload";
 import { useWorkloadEstimate } from "@/hooks/store/use-workload-estimate";
@@ -33,7 +35,7 @@ export const EstimatedHoursHeaderCell = observer(function EstimatedHoursHeaderCe
       tabIndex={0}
     >
       <div className="flex h-full items-center px-page-x">
-        <span className="truncate text-secondary">Estimated hours</span>
+        <span className="truncate text-secondary">{wlt("estimate.label")}</span>
       </div>
     </th>
   );
@@ -126,10 +128,10 @@ export const EstimatedHoursBodyCell = observer(function EstimatedHoursBodyCell(p
           onChange={handleChange}
           onBlur={handleBlur}
           disabled={disableUserActions || saving || !projectId}
-          placeholder="None"
+          placeholder={wlt("common.none")}
           className="w-full bg-transparent text-13 text-primary outline-none placeholder:text-placeholder disabled:cursor-not-allowed disabled:opacity-60"
         />
-        {saving && <span className="text-xs shrink-0 text-secondary">saving…</span>}
+        {saving && <span className="text-xs shrink-0 text-secondary">{wlt("common.saving")}</span>}
       </div>
     </td>
   );
