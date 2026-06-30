@@ -205,6 +205,10 @@ def _run_triage(workspace_id: str, project_id: str, source_text: str, created_by
             color="#4E5355",
             sequence=65000,
             default=False,
+            # crum has no user in a Celery task; set authorship explicitly so the
+            # AI-created Triage state is not written with created_by=NULL (matches
+            # the created_by_id threaded through the Issue/label/assignee writes).
+            created_by_id=created_by_id,
         )
 
     # ------------------------------------------------------------------
