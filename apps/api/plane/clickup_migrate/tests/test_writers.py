@@ -296,9 +296,11 @@ class TestMappingCache(TestCase):
 
 class TestWriteIssueAuthorship(TestCase):
     """H3(a): write_issue must set created_by_id to the resolved author,
-    not NULL.  This is a regression guard for C1 (BaseModel.save() clobbers
-    created_by via crum in management commands unless disable_auto_set_user=True
-    is passed as a save kwarg).
+    not NULL.  This is a regression guard for C1: BaseModel.save() assigns
+    created_by_id only inside `if not disable_auto_set_user:`, so authorship
+    is set by calling .save(created_by_id=author.id) with disable_auto_set_user
+    left at its default of False.  Passing disable_auto_set_user=True skips the
+    assignment and leaves created_by NULL (crum has no user in a mgmt command).
     """
 
     def setUp(self):

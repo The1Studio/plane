@@ -12,13 +12,15 @@
 #
 # CRITICAL constraints (verified against Plane source):
 #
-# C1 — AUTHORSHIP: BaseModel.save() (db/models/base.py:23-44) clears
-#   created_by/updated_by when crum.get_current_user() returns None (which
-#   it always does in management commands). The only correct pattern is:
-#     instance.save(created_by_id=author.id, disable_auto_set_user=True)
+# C1 — AUTHORSHIP: BaseModel.save() (db/models/base.py:23) assigns
+#   created_by_id ONLY inside `if not disable_auto_set_user:`. Passing
+#   disable_auto_set_user=True therefore SKIPS the assignment and leaves
+#   authorship NULL (crum.get_current_user() is always None in a management
+#   command, so there is no fallback). The correct pattern is to pass
+#   created_by_id and let disable_auto_set_user default to False:
+#     instance.save(created_by_id=author.id)
 #   NEVER put created_by_id/updated_by_id in update_or_create(defaults={}).
-#   For update_or_create we must post-save re-call .save() with the flags.
-#   Canonical source: bgtasks/workspace_seed_task.py:112,205,238,292,471.
+#   For update_or_create we must post-save re-call .save(created_by_id=...).
 #
 # C2 — State.unique(name, project, deleted_at IS NULL): upsert by
 #   (project, name, group) not per-list external_id to avoid collisions.
@@ -243,8 +245,8 @@ class MappingCache:
 def write_project(run, workspace, clickup_folder_or_list: dict, user_cache: UserCache, dry_run: bool) -> Optional[object]:
     """Write a single Project.
 
-    C1 fix: removed created_by_id from defaults; post-save .save() with
-    disable_auto_set_user=True (pattern from workspace_seed_task.py:112).
+    C1 fix: removed created_by_id from defaults; post-save .save(created_by_id=...)
+    with disable_auto_set_user left False so the assignment is honored.
     """
     from plane.clickup_migrate.models import MigrationRecord
     from plane.db.models import Project, ProjectIdentifier
@@ -270,7 +272,6 @@ def write_project(run, workspace, clickup_folder_or_list: dict, user_cache: User
         # C1: set authorship via save kwargs, not defaults.
         project.save(
             created_by_id=user_cache.bot_user.id,
-            disable_auto_set_user=True,
         )
         ProjectIdentifier.objects.get_or_create(
             project=project,
@@ -335,7 +336,6 @@ def write_state(
         # C1: authorship via save kwargs.
         state.save(
             created_by_id=user_cache.bot_user.id,
-            disable_auto_set_user=True,
         )
         status_str = MigrationRecord.STATUS_CREATED if created else MigrationRecord.STATUS_UPDATED
         _record_upsert(run, "status", per_list_ext_id, "State", str(state.id), status_str)
@@ -372,7 +372,6 @@ def write_label(run, workspace, project, clickup_tag: dict, user_cache: UserCach
         # C1: authorship via save kwargs.
         label.save(
             created_by_id=user_cache.bot_user.id,
-            disable_auto_set_user=True,
         )
         status = MigrationRecord.STATUS_CREATED if created else MigrationRecord.STATUS_UPDATED
         _record_upsert(run, "tag", src_id, "Label", str(label.id), status)
@@ -408,7 +407,6 @@ def write_module(run, project, workspace, clickup_list: dict, user_cache: UserCa
         # C1: authorship via save kwargs.
         module.save(
             created_by_id=user_cache.bot_user.id,
-            disable_auto_set_user=True,
         )
         status = MigrationRecord.STATUS_CREATED if created else MigrationRecord.STATUS_UPDATED
         _record_upsert(run, "list", src_id, "Module", str(module.id), status)
@@ -434,7 +432,7 @@ def write_issue(
     NEVER bulk_create Issue — Issue.save() holds an advisory lock and
     creates IssueSequence (issue.py:205-235).
 
-    C1 fix: authorship via .save(created_by_id=..., disable_auto_set_user=True).
+    C1 fix: authorship via .save(created_by_id=...).
     H2 fix: always write completed_at in the post-save .update(), backdated
       or explicitly None, so the timestamp reflects ClickUp not migration time.
     """
@@ -486,7 +484,6 @@ def write_issue(
         # C1: set authorship after upsert via save kwargs (mixins.py:23-44).
         issue.save(
             created_by_id=author.id,
-            disable_auto_set_user=True,
         )
 
         # H2 + C5: always backdate created_at, updated_at, AND completed_at.
@@ -514,7 +511,7 @@ def write_issue(
 # ─────────────────────────────────────────────────────────────────────
 # Junction writers
 # C1 fix applied to all: get_or_create returns (obj, created); if created,
-#   we call obj.save(created_by_id=..., disable_auto_set_user=True).
+#   we call obj.save(created_by_id=...) (disable_auto_set_user left False).
 # ─────────────────────────────────────────────────────────────────────
 
 def write_issue_assignee(issue, assignee_user, dry_run: bool) -> None:
@@ -530,7 +527,7 @@ def write_issue_assignee(issue, assignee_user, dry_run: bool) -> None:
         },
     )
     if created:
-        obj.save(created_by_id=assignee_user.id, disable_auto_set_user=True)
+        obj.save(created_by_id=assignee_user.id)
 
 
 def write_issue_label(issue, label, bot_user, dry_run: bool) -> None:
@@ -546,7 +543,7 @@ def write_issue_label(issue, label, bot_user, dry_run: bool) -> None:
         },
     )
     if created:
-        obj.save(created_by_id=bot_user.id, disable_auto_set_user=True)
+        obj.save(created_by_id=bot_user.id)
 
 
 def write_module_issue(module, issue, bot_user, dry_run: bool) -> None:
@@ -562,7 +559,7 @@ def write_module_issue(module, issue, bot_user, dry_run: bool) -> None:
         },
     )
     if created:
-        obj.save(created_by_id=bot_user.id, disable_auto_set_user=True)
+        obj.save(created_by_id=bot_user.id)
 
 
 def write_issue_subscriber(issue, subscriber_user, bot_user, dry_run: bool) -> None:
@@ -579,7 +576,7 @@ def write_issue_subscriber(issue, subscriber_user, bot_user, dry_run: bool) -> N
         },
     )
     if created:
-        obj.save(created_by_id=bot_user.id, disable_auto_set_user=True)
+        obj.save(created_by_id=bot_user.id)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -644,7 +641,6 @@ def write_comment(
         # the auto-created Description's created_by (issue.py:488).
         comment.save(
             created_by_id=author.id,
-            disable_auto_set_user=True,
         )
 
         # Backdate comment timestamp (mixins.py:19-20).
@@ -759,7 +755,7 @@ def write_issue_relation(
         )
         if created:
             # C1: authorship via save kwargs.
-            obj.save(created_by_id=bot_user.id, disable_auto_set_user=True)
+            obj.save(created_by_id=bot_user.id)
     return True
 
 
@@ -846,7 +842,8 @@ def write_attachment(
 
         with transaction.atomic():
             # FileAsset inherits BaseModel; .create() calls .save() which clears
-            # authorship via crum.  Re-call .save() with disable_auto_set_user=True.
+            # authorship via crum.  Re-call .save(created_by_id=...) to set it
+            # (disable_auto_set_user left False so the assignment is honored).
             asset = FileAsset.all_objects.create(
                 workspace=workspace,
                 project=issue.project,
@@ -859,7 +856,7 @@ def write_attachment(
                 external_source=EXTERNAL_SOURCE,
                 external_id=att_id,
             )
-            asset.save(created_by_id=bot_user.id, disable_auto_set_user=True)
+            asset.save(created_by_id=bot_user.id)
             _record_upsert(
                 run, "attachment", att_id, "FileAsset", str(asset.id),
                 MigrationRecord.STATUS_CREATED, bytes_val=stored_size,
