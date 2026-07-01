@@ -945,7 +945,3 @@ def write_custom_fields_to_description(
         logger.warning("Failed to append custom fields to issue %s: %s", issue.pk, exc)
 
     return md_table
-
-
-# Late import — MigrationRecord used by module-level helpers above.
-from plane.clickup_migrate.models import MigrationRecord  # noqa: E402
