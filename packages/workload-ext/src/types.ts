@@ -39,6 +39,34 @@ export type TWorkloadEstimate = {
   updated_at: string;
 };
 
+/**
+ * Computed rollup for a parent issue — aggregated over its countable
+ * descendants. `percent` is a 0..1 fraction (round(done/hours, 4) server
+ * side), null when `hours` is 0. `due_date` is `YYYY-MM-DD` or null.
+ * See plan §1 "Semantics" for the exact aggregation rules.
+ */
+export type TWorkloadRollup = {
+  hours: number;
+  done_hours: number;
+  percent: number | null;
+  due_date: string | null;
+  leaf_count: number;
+};
+
+/**
+ * Raw shape of `GET .../workload-estimate/` (single-issue). For a parent
+ * issue `hours` is always `null` (the stored legacy value never leaks to the
+ * UI) and `rollup` carries the aggregated values instead.
+ */
+export type TWorkloadEstimateGetResponse = Partial<TWorkloadEstimate> & {
+  hours: number | null;
+  is_parent?: boolean;
+  rollup?: TWorkloadRollup | null;
+};
+
+/** `error_code` returned by `PUT .../workload-estimate/` when the target issue is a parent. */
+export const PARENT_HAS_CHILDREN_ERROR_CODE = "PARENT_HAS_CHILDREN";
+
 // Intersection type — do NOT extend @plane/types TBaseIssue directly
 export type TIssueWithWorkload = {
   workload_estimate?: { hours: number };

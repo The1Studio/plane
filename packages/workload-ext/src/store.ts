@@ -1,6 +1,12 @@
 import { action, computed, makeObservable, observable, runInAction } from "mobx";
 import { WorkloadService } from "./service";
-import type { TWorkloadEstimate, TWorkloadFilters, TWorkloadGranularity, TWorkloadResponse } from "./types";
+import type {
+  TWorkloadEstimate,
+  TWorkloadFilters,
+  TWorkloadGranularity,
+  TWorkloadResponse,
+  TWorkloadRollup,
+} from "./types";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -31,8 +37,28 @@ export interface IWorkloadStore {
   selectedStateGroups: string[];
   workloadData: TWorkloadResponse | null;
   estimateData: Record<string, TWorkloadEstimate | null>; // keyed by issueId
+  /**
+   * Computed rollup per issueId. `null` means the id has been fetched (via
+   * either the single-issue GET or the bulk rollups endpoint) and is
+   * confirmed NOT a parent — mirrors the estimateData null-recording
+   * convention so a subsequent read never re-triggers a redundant fetch.
+   * Presence of a non-null entry is the parent signal (plan §P4 item 3).
+   */
+  rollupData: Record<string, TWorkloadRollup | null>;
   isLoading: boolean;
   error: string | null;
+  /**
+   * Error state for the rollup fetch path — kept independent from `error`
+   * (the estimate fetch/write path) so one failing request never clobbers
+   * the other's error state (plan §P4 item 3).
+   */
+  rollupError: string | null;
+  /**
+   * Bumped whenever a successful updateEstimate/deleteEstimate invalidates
+   * rollupData. Consumers (e.g. useBulkWorkloadFetch) can `reaction()` on
+   * this to trigger a refetch even outside an `observer`-wrapped component.
+   */
+  rollupInvalidationVersion: number;
 
   // computed
   maxColumns: number;
@@ -46,8 +72,16 @@ export interface IWorkloadStore {
   fetchWorkload: (workspaceSlug: string) => Promise<void>;
   fetchEstimate: (workspaceSlug: string, projectId: string, issueId: string) => Promise<void>;
   fetchEstimatesBulk: (workspaceSlug: string, issueIds: string[]) => Promise<void>;
+  /** Updates the estimate for `issueId`. Re-throws on failure (e.g. a typed
+   *  `WorkloadEstimateApiError` with `errorCode === PARENT_HAS_CHILDREN_ERROR_CODE`)
+   *  after recording `error`, so callers can run the 400 UX backstop. */
   updateEstimate: (workspaceSlug: string, projectId: string, issueId: string, hours: number) => Promise<void>;
   deleteEstimate: (workspaceSlug: string, projectId: string, issueId: string) => Promise<void>;
+  /** Bulk-fetches rollups for ids not already in the rollup dedup set. */
+  fetchRollups: (workspaceSlug: string, issueIds: string[]) => Promise<void>;
+  /** Bypasses the rollup dedup set for a single id — used by the 400 UX
+   *  backstop when a PUT is rejected with PARENT_HAS_CHILDREN. */
+  forceRefetchRollup: (workspaceSlug: string, issueId: string) => Promise<void>;
 }
 
 // ── Store ─────────────────────────────────────────────────────────────────────
@@ -62,8 +96,17 @@ export class WorkloadStore implements IWorkloadStore {
   selectedStateGroups: string[] = [];
   workloadData: TWorkloadResponse | null = null;
   estimateData: Record<string, TWorkloadEstimate | null> = {};
+  rollupData: Record<string, TWorkloadRollup | null> = {};
   isLoading: boolean = false;
   error: string | null = null;
+  rollupError: string | null = null;
+  /**
+   * Bumped whenever a successful updateEstimate/deleteEstimate invalidates
+   * rollupData. `useBulkWorkloadFetch` (apps/web) subscribes to this via a
+   * direct mobx `reaction` so it can trigger a rollup refetch even when the
+   * calling component isn't wrapped in `observer` (e.g. list/blocks-list.tsx).
+   */
+  rollupInvalidationVersion: number = 0;
 
   private readonly service: WorkloadService;
   /**
@@ -72,6 +115,13 @@ export class WorkloadStore implements IWorkloadStore {
    * redundant bulk requests on repeated renders.
    */
   private readonly _fetchedIds: Set<string> = new Set();
+  /**
+   * Issue IDs whose rollup is already in rollupData OR currently in-flight.
+   * Deliberately SEPARATE from `_fetchedIds` — the estimate fetch marks every
+   * requested id, so reusing that set would permanently skip the rollup
+   * fetch for issues whose estimate was already fetched (plan §P4 item 3).
+   */
+  private readonly _fetchedRollupIds: Set<string> = new Set();
   /**
    * Issue IDs with a locally-initiated write that has not yet been confirmed
    * by the backend (PUT/DELETE in-flight).  A bulk GET response MUST NOT
@@ -108,8 +158,11 @@ export class WorkloadStore implements IWorkloadStore {
       selectedStateGroups: observable,
       workloadData: observable,
       estimateData: observable,
+      rollupData: observable,
       isLoading: observable,
       error: observable,
+      rollupError: observable,
+      rollupInvalidationVersion: observable,
 
       maxColumns: computed,
 
@@ -123,6 +176,8 @@ export class WorkloadStore implements IWorkloadStore {
       fetchEstimatesBulk: action,
       updateEstimate: action,
       deleteEstimate: action,
+      fetchRollups: action,
+      forceRefetchRollup: action,
     });
   }
 
@@ -193,9 +248,14 @@ export class WorkloadStore implements IWorkloadStore {
     // Mark as fetched upfront so concurrent bulk calls don't also request it.
     this._fetchedIds.add(issueId);
     try {
-      const estimate = await this.service.getEstimate(workspaceSlug, projectId, issueId);
+      const { estimate, rollup } = await this.service.getEstimate(workspaceSlug, projectId, issueId);
       runInAction(() => {
         this.estimateData[issueId] = estimate;
+        // The single-GET response carries the rollup inline (for a parent) —
+        // write it here too since the sidebar path doesn't use the bulk
+        // rollup fetch (plan §P4 item 3).
+        this.rollupData[issueId] = rollup;
+        this._fetchedRollupIds.add(issueId);
       });
     } catch (err) {
       // Remove from fetched so a retry is allowed.
@@ -289,11 +349,17 @@ export class WorkloadStore implements IWorkloadStore {
         // Bump epoch again on confirmed success so the epoch test stays current
         // after dirty is cleared in `finally`.
         this._lastWriteEpoch[issueId] = ++this._writeEpoch;
+        this._invalidateRollups();
       });
     } catch (err) {
       runInAction(() => {
         this.error = err instanceof Error ? err.message : String(err);
       });
+      // Re-throw (after recording `error`) so callers — sidebar.tsx and
+      // estimated-hours-column.tsx — can detect a typed WorkloadEstimateApiError
+      // with errorCode === PARENT_HAS_CHILDREN_ERROR_CODE and run the 400 UX
+      // backstop (refetch that id's rollup + toast). Plan §P4 item 4.
+      throw err;
     } finally {
       // Clear dirty regardless of success or failure — epoch guard now covers
       // the post-settlement window for any bulk GET fired before this write.
@@ -311,6 +377,7 @@ export class WorkloadStore implements IWorkloadStore {
       runInAction(() => {
         this.estimateData[issueId] = null;
         this._lastWriteEpoch[issueId] = ++this._writeEpoch;
+        this._invalidateRollups();
       });
     } catch (err) {
       runInAction(() => {
@@ -319,5 +386,69 @@ export class WorkloadStore implements IWorkloadStore {
     } finally {
       this._dirtyIds.delete(issueId);
     }
+  }
+
+  /**
+   * Bulk-fetch rollups for many issues at once.
+   *
+   * Only requests IDs not already fetched/in-flight (_fetchedRollupIds).
+   * IDs with no rollup (non-parents) are recorded as `null` — mirrors the
+   * estimate path's null-recording so a subsequent read doesn't retrigger a
+   * fetch. Independent try/catch from fetchEstimatesBulk: a rollup failure
+   * only ever touches _fetchedRollupIds/rollupError (plan §P4 item 3).
+   */
+  async fetchRollups(workspaceSlug: string, issueIds: string[]): Promise<void> {
+    const missing = issueIds.filter((id) => !this._fetchedRollupIds.has(id));
+    if (missing.length === 0) return;
+
+    for (const id of missing) this._fetchedRollupIds.add(id);
+
+    try {
+      const rollupMap = await this.service.getRollupsBulk(workspaceSlug, missing);
+      runInAction(() => {
+        for (const id of missing) {
+          this.rollupData[id] = Object.prototype.hasOwnProperty.call(rollupMap, id) ? rollupMap[id] : null;
+        }
+      });
+    } catch (err) {
+      // On failure, un-mark so retries are allowed.
+      for (const id of missing) this._fetchedRollupIds.delete(id);
+      runInAction(() => {
+        this.rollupError = err instanceof Error ? err.message : String(err);
+      });
+    }
+  }
+
+  /**
+   * Force a single id's rollup to be re-fetched, bypassing the dedup set.
+   * Used by the 400 UX backstop: a PUT rejected with PARENT_HAS_CHILDREN
+   * means the backend now considers this issue a parent, but its id may
+   * already be marked fetched (previously recorded as a leaf / null rollup).
+   */
+  async forceRefetchRollup(workspaceSlug: string, issueId: string): Promise<void> {
+    this._fetchedRollupIds.delete(issueId);
+    await this.fetchRollups(workspaceSlug, [issueId]);
+  }
+
+  /**
+   * Clears the rollup dedup set and bumps the invalidation version so the
+   * next `useBulkWorkloadFetch` (any currently-mounted page) refires and
+   * picks up fresh rollups. A single hours edit can change every ancestor's
+   * rollup up the parent chain; the store has no ancestry graph to target
+   * the affected ids precisely, so this invalidates broadly — one extra bulk
+   * request per edit (plan §P4 item 3). Must be called from within
+   * `runInAction` (both call sites already are).
+   *
+   * ACCEPTED v1 LIMITATION (plan §P4 item 3): this store only invalidates on
+   * a successful updateEstimate/deleteEstimate. Adding or removing a
+   * sub-issue (changing the parent/child relationship itself, not an
+   * estimate value) happens through the core issue-parent flow, which this
+   * store has no hook into — so a rollup can go stale until the next full
+   * page reload or an edit that happens to touch the affected issue's own
+   * hours. Not fixed in this pass; documented per plan.
+   */
+  private _invalidateRollups(): void {
+    this._fetchedRollupIds.clear();
+    this.rollupInvalidationVersion++;
   }
 }

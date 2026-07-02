@@ -11,31 +11,42 @@
  * package hooks cannot do (they are context-agnostic).
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { reaction } from "mobx";
+import type { TWorkloadRollup } from "@plane/workload-ext";
 import { useWorkload } from "./use-workload";
 
 // ── Per-issue selector ────────────────────────────────────────────────────────
 
 /**
- * Returns the estimated hours for a single issue from the shared workload store.
+ * Returns the estimated hours and (when the issue is a parent) the computed
+ * rollup for a single issue from the shared workload store.
  *
- * Returns `null` when no estimate exists (either not yet fetched or the backend
- * has no record).  The caller is responsible for triggering a fetch (e.g. via
- * useBulkWorkloadFetch) before this hook will return a non-null value.
+ * `hours` is `null` when no leaf estimate exists (either not yet fetched, the
+ * backend has no record, or the issue is a parent — parents never carry a
+ * leaf `hours` value). `rollup` presence is the parent signal: a non-null
+ * `rollup` means this issue is a parent and its estimate field must render
+ * read-only (plan §P4 item 5). The caller is responsible for triggering a
+ * fetch (e.g. via useBulkWorkloadFetch, or fetchEstimate for a single issue)
+ * before this hook will return non-null values.
  */
-export function useWorkloadEstimate(issueId: string): { hours: number | null } {
+export function useWorkloadEstimate(issueId: string): { hours: number | null; rollup: TWorkloadRollup | null } {
   const store = useWorkload();
   const entry = store.estimateData[issueId];
-  return { hours: entry?.hours ?? null };
+  const rollup = store.rollupData[issueId] ?? null;
+  return { hours: entry?.hours ?? null, rollup };
 }
 
 // ── Bulk fetch effect ─────────────────────────────────────────────────────────
 
 /**
  * Effect hook that triggers a single bulk fetch for all `issueIds` whose
- * estimates are not yet in the store.  The effect is guarded so it does not
- * refire on every render — it only re-runs when the stable join of issueIds
- * changes (or workspaceSlug changes).
+ * estimates (and rollups) are not yet in the store. The estimates fetch is
+ * guarded so it does not refire on every render — it only re-runs when the
+ * stable join of issueIds changes (or workspaceSlug changes). The rollups
+ * fetch additionally refires whenever the store's rollupInvalidationVersion
+ * bumps (after a successful updateEstimate/deleteEstimate elsewhere) — see
+ * plan §P4 item 3 "Invalidation".
  *
  * Intended usage: call once in the component that owns a page of rows (e.g.
  * SpreadsheetTable or a list-view container) passing the full set of visible
@@ -47,25 +58,42 @@ export function useBulkWorkloadFetch(workspaceSlug: string, issueIds: string[]):
   // Build a stable join-string key so the effect only fires when the actual
   // set of ids changes, not on every array identity change (common with derived
   // selectors that create a new array each render). Sort is on a copy — no mutation.
-  const joinedIds = [...issueIds].sort().join(",");
+  const joinedIds = [...issueIds].toSorted().join(",");
 
-  // Track the previous values so we can skip the fetch when nothing changed.
+  // Track the previous values so we can skip the redundant estimates fetch
+  // when nothing changed.
   const prevKey = useRef<string>("");
   const prevSlug = useRef<string>("");
+
+  // Subscribe to the store's rollup-invalidation counter via a direct mobx
+  // `reaction` rather than relying on the calling component being wrapped in
+  // `observer` — list/blocks-list.tsx (a caller) is a plain function
+  // component, so an observable read here would otherwise never trigger a
+  // re-render there. Mirroring the value into local React state makes it a
+  // normal effect dependency regardless of the caller's observer status.
+  const [rollupInvalidationVersion, setRollupInvalidationVersion] = useState(store.rollupInvalidationVersion);
+  useEffect(() => reaction(() => store.rollupInvalidationVersion, setRollupInvalidationVersion), [store]);
 
   useEffect(() => {
     if (!workspaceSlug || issueIds.length === 0) return;
 
-    // Skip if both slug and id-set are unchanged since the last run.
-    if (joinedIds === prevKey.current && workspaceSlug === prevSlug.current) return;
-
+    const isSameRequest = joinedIds === prevKey.current && workspaceSlug === prevSlug.current;
     prevKey.current = joinedIds;
     prevSlug.current = workspaceSlug;
 
-    // Fire-and-forget; the store handles deduplication and error state.
-    store.fetchEstimatesBulk(workspaceSlug, issueIds).catch(() => {
-      // Errors are written to store.error; no local handling needed.
+    // Estimates: unchanged dedup semantics — skip when nothing changed.
+    if (!isSameRequest) {
+      store.fetchEstimatesBulk(workspaceSlug, issueIds).catch(() => {
+        // Errors are written to store.error; no local handling needed.
+      });
+    }
+
+    // Rollups: dispatched every time this effect runs (id/slug change OR a
+    // rollupInvalidationVersion bump). fetchRollups no-ops per id already in
+    // its own dedup set, so this is cheap when nothing actually changed.
+    store.fetchRollups(workspaceSlug, issueIds).catch(() => {
+      // Errors are written to store.rollupError; no local handling needed.
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceSlug, joinedIds, store]);
+  }, [workspaceSlug, joinedIds, store, rollupInvalidationVersion]);
 }

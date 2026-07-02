@@ -37,7 +37,14 @@ import { useMember } from "@/hooks/store/use-member";
 import { useProject } from "@/hooks/store/use-project";
 import { useProjectState } from "@/hooks/store/use-project-state";
 // The1Studio fork (SP2 workload) — shared estimate store (SSOT with the list/spreadsheet column)
-import { wlt } from "@plane/workload-ext";
+import { setToast, TOAST_TYPE } from "@plane/propel/toast";
+import {
+  formatRollupPill,
+  formatRollupTooltip,
+  PARENT_HAS_CHILDREN_ERROR_CODE,
+  WorkloadEstimateApiError,
+  wlt,
+} from "@plane/workload-ext";
 import { useWorkload } from "@/hooks/store/use-workload";
 // plane web components
 // components
@@ -92,6 +99,7 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
   // the user is actively editing — so a grid edit shows here without reopening the panel.
   const workloadStore = useWorkload();
   const storeHours = workloadStore.estimateData[issueId]?.hours ?? null;
+  const rollup = workloadStore.rollupData[issueId] ?? null;
   const [estimateDraft, setEstimateDraft] = useState<number | "">("");
   const [estimateFocused, setEstimateFocused] = useState(false);
   const [estimateSaving, setEstimateSaving] = useState(false);
@@ -133,6 +141,19 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
         issueId,
         Number(estimateDraft)
       );
+    } catch (err) {
+      // 400 UX backstop (plan §P4 item 4): a sub-issue was likely added
+      // concurrently, so the backend now considers this issue a parent.
+      // Refetch its rollup (flips the field read-only) and explain why the
+      // edit didn't apply.
+      if (err instanceof WorkloadEstimateApiError && err.errorCode === PARENT_HAS_CHILDREN_ERROR_CODE) {
+        void workloadStore.forceRefetchRollup(workspaceSlug.toString(), issueId);
+        setToast({
+          type: TOAST_TYPE.ERROR,
+          title: wlt("estimate.parent_has_children_toast_title"),
+          message: wlt("estimate.parent_has_children_toast_message"),
+        });
+      }
     } finally {
       setEstimateSaving(false);
     }
@@ -268,19 +289,30 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
             {/* SP2 workload estimate — fork touch-point exception (docs/FORK.md §5.3) */}
             <SidebarPropertyListItem icon={EstimatePropertyIcon} label={wlt("estimate.label")}>
               <div className="flex h-7.5 items-center gap-1 px-2">
-                <input
-                  type="number"
-                  min={0}
-                  max={10000}
-                  step={0.5}
-                  value={estimatedHoursValue}
-                  onFocus={handleEstimateFocus}
-                  onChange={(e) => handleEstimateChange(e.target.value === "" ? "" : Number(e.target.value))}
-                  onBlur={handleEstimateBlur}
-                  disabled={!isEditable || estimateSaving}
-                  placeholder={wlt("common.none")}
-                  className="w-full bg-transparent text-body-xs-regular text-primary outline-none placeholder:text-placeholder"
-                />
+                {rollup ? (
+                  // Parent issue — read-only rollup summary, disable gate =
+                  // !isEditable || estimateSaving || rollup present (plan §P4 item 5).
+                  <span
+                    className="w-full truncate text-body-xs-regular text-secondary"
+                    title={formatRollupTooltip(rollup)}
+                  >
+                    {formatRollupPill(rollup)}
+                  </span>
+                ) : (
+                  <input
+                    type="number"
+                    min={0}
+                    max={10000}
+                    step={0.5}
+                    value={estimatedHoursValue}
+                    onFocus={handleEstimateFocus}
+                    onChange={(e) => handleEstimateChange(e.target.value === "" ? "" : Number(e.target.value))}
+                    onBlur={handleEstimateBlur}
+                    disabled={!isEditable || estimateSaving}
+                    placeholder={wlt("common.none")}
+                    className="w-full bg-transparent text-body-xs-regular text-primary outline-none placeholder:text-placeholder"
+                  />
+                )}
                 {estimateSaving && <span className="text-xs text-secondary">{wlt("common.saving")}</span>}
               </div>
             </SidebarPropertyListItem>

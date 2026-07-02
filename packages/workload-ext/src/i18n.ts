@@ -17,6 +17,8 @@
  *   wlt("matrix.no_target_date", { percent: 40 });   // "40% of issues have no target date."
  */
 
+import type { TWorkloadRollup } from "./types";
+
 export const WORKLOAD_STRINGS = {
   "common.from": "From",
   "common.to": "To",
@@ -27,6 +29,15 @@ export const WORKLOAD_STRINGS = {
   "common.saving": "saving…",
   "estimate.label": "Estimated hours",
   "estimate.tooltip": "Estimated: {hours}h",
+  // Parent rollup — read-only display (sidebar, spreadsheet cell, list/kanban pill).
+  // No ICU plurals: phrasing is written to read correctly for any count.
+  "estimate.rollup_pill": "Σ {hours}h · {percent}%",
+  "estimate.rollup_pill_no_percent": "Σ {hours}h",
+  "estimate.rollup_tooltip": "From {count} sub-item(s) · due {date}",
+  "estimate.rollup_tooltip_no_due": "From {count} sub-item(s)",
+  "estimate.parent_has_children_toast_title": "Can't edit estimate",
+  "estimate.parent_has_children_toast_message":
+    "This work item now has sub-items — its estimate is calculated automatically from them.",
   "matrix.assignee": "Assignee",
   "matrix.unscheduled": "Unscheduled",
   "matrix.no_data_loaded": "No data loaded yet.",
@@ -55,4 +66,30 @@ export function wlt(key: TWorkloadStringKey, params?: Record<string, string | nu
   return template.replace(/\{(\w+)\}/g, (_match, name: string) =>
     name in params ? String(params[name]) : `{${name}}`
   );
+}
+
+// ── Parent rollup display formatting ────────────────────────────────────────
+//
+// Shared by the sidebar estimate field, the spreadsheet estimated-hours
+// column, and the list/kanban hours pill (plan §P4 item 5) — kept here
+// (rather than duplicated three times) since the output is composed directly
+// from these wlt() templates.
+
+/** `rollup.percent` is a 0..1 fraction; round to a whole percent for display. */
+function toDisplayPercent(percent: number): number {
+  return Math.round(percent * 100);
+}
+
+/** "Σ 10h · 60%", or "Σ 10h" when percent is null (hours === 0). */
+export function formatRollupPill(rollup: TWorkloadRollup): string {
+  if (rollup.percent === null) return wlt("estimate.rollup_pill_no_percent", { hours: rollup.hours });
+  return wlt("estimate.rollup_pill", { hours: rollup.hours, percent: toDisplayPercent(rollup.percent) });
+}
+
+/** "From 3 sub-item(s) · due 2026-08-01", or without the due-date clause. */
+export function formatRollupTooltip(rollup: TWorkloadRollup): string {
+  if (rollup.due_date) {
+    return wlt("estimate.rollup_tooltip", { count: rollup.leaf_count, date: rollup.due_date });
+  }
+  return wlt("estimate.rollup_tooltip_no_due", { count: rollup.leaf_count });
 }

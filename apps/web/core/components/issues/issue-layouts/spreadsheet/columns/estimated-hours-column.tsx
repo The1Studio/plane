@@ -14,8 +14,15 @@
 
 import { useState } from "react";
 import { observer } from "mobx-react";
+import { setToast, TOAST_TYPE } from "@plane/propel/toast";
 // workload i18n (fork-owned strings — no @plane/i18n edit)
-import { wlt } from "@plane/workload-ext";
+import {
+  formatRollupPill,
+  formatRollupTooltip,
+  PARENT_HAS_CHILDREN_ERROR_CODE,
+  WorkloadEstimateApiError,
+  wlt,
+} from "@plane/workload-ext";
 // hooks
 import { useWorkload } from "@/hooks/store/use-workload";
 import { useWorkloadEstimate } from "@/hooks/store/use-workload-estimate";
@@ -67,7 +74,7 @@ export const EstimatedHoursBodyCell = observer(function EstimatedHoursBodyCell(p
   const { issueId, projectId, workspaceSlug, disableUserActions } = props;
 
   // Read current value from shared store via selector hook.
-  const { hours } = useWorkloadEstimate(issueId);
+  const { hours, rollup } = useWorkloadEstimate(issueId);
 
   // Local controlled value keeps the input responsive during typing.
   const [localValue, setLocalValue] = useState<string>("");
@@ -106,6 +113,19 @@ export const EstimatedHoursBodyCell = observer(function EstimatedHoursBodyCell(p
     setSaving(true);
     try {
       await store.updateEstimate(workspaceSlug, projectId, issueId, parsed);
+    } catch (err) {
+      // 400 UX backstop (plan §P4 item 4): a sub-issue was likely added
+      // concurrently, so the backend now considers this issue a parent.
+      // Refetch its rollup (flips the cell read-only) and explain why the
+      // edit didn't apply.
+      if (err instanceof WorkloadEstimateApiError && err.errorCode === PARENT_HAS_CHILDREN_ERROR_CODE) {
+        void store.forceRefetchRollup(workspaceSlug, issueId);
+        setToast({
+          type: TOAST_TYPE.ERROR,
+          title: wlt("estimate.parent_has_children_toast_title"),
+          message: wlt("estimate.parent_has_children_toast_message"),
+        });
+      }
     } finally {
       setSaving(false);
     }
@@ -118,19 +138,27 @@ export const EstimatedHoursBodyCell = observer(function EstimatedHoursBodyCell(p
       className="h-11 min-w-36 border-r-[1px] border-subtle text-13 after:absolute after:bottom-[-1px] after:w-full after:border after:border-subtle"
     >
       <div className="flex h-full items-center gap-1 border-b-[0.5px] border-subtle px-page-x">
-        <input
-          type="number"
-          min={0}
-          max={10000}
-          step={0.5}
-          value={displayValue}
-          onFocus={handleFocus}
-          onChange={handleChange}
-          onBlur={handleBlur}
-          disabled={disableUserActions || saving || !projectId}
-          placeholder={wlt("common.none")}
-          className="w-full bg-transparent text-13 text-primary outline-none placeholder:text-placeholder disabled:cursor-not-allowed disabled:opacity-60"
-        />
+        {rollup ? (
+          // Parent issue — read-only rollup summary, same disable intent as
+          // the sidebar field (plan §P4 item 5).
+          <span className="w-full truncate text-13 text-secondary" title={formatRollupTooltip(rollup)}>
+            {formatRollupPill(rollup)}
+          </span>
+        ) : (
+          <input
+            type="number"
+            min={0}
+            max={10000}
+            step={0.5}
+            value={displayValue}
+            onFocus={handleFocus}
+            onChange={handleChange}
+            onBlur={handleBlur}
+            disabled={disableUserActions || saving || !projectId}
+            placeholder={wlt("common.none")}
+            className="w-full bg-transparent text-13 text-primary outline-none placeholder:text-placeholder disabled:cursor-not-allowed disabled:opacity-60"
+          />
+        )}
         {saving && <span className="text-xs shrink-0 text-secondary">{wlt("common.saving")}</span>}
       </div>
     </td>
