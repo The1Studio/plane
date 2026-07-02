@@ -10,6 +10,7 @@ from .views import (
     ProjectWorkloadEndpoint,
     WorkloadEstimateEndpoint,
     WorkloadEstimatesBulkEndpoint,
+    WorkloadRollupsBulkEndpoint,
     WorkspaceWorkloadEndpoint,
 )
 
@@ -33,5 +34,10 @@ urlpatterns = [
         "workspaces/<str:slug>/workload-estimates/",
         WorkloadEstimatesBulkEndpoint.as_view(),
         name="workload-estimates-bulk",
+    ),
+    path(
+        "workspaces/<str:slug>/workload-rollups/",
+        WorkloadRollupsBulkEndpoint.as_view(),
+        name="workload-rollups-bulk",
     ),
 ]

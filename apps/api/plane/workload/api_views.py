@@ -9,7 +9,14 @@
 from plane.api.views.base import BaseAPIView  # APIKeyAuthentication
 from plane.app.permissions import ROLE, allow_permission
 
-from .views import _run, estimate_bulk, estimate_delete, estimate_get, estimate_put
+from .views import (
+    _run,
+    estimate_bulk,
+    estimate_delete,
+    estimate_get,
+    estimate_put,
+    rollups_bulk,
+)
 
 
 class WorkloadEstimatesBulkAPIEndpoint(BaseAPIView):
@@ -22,6 +29,18 @@ class WorkloadEstimatesBulkAPIEndpoint(BaseAPIView):
     @allow_permission([ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST], level="WORKSPACE")
     def get(self, request, slug):
         return estimate_bulk(request, slug)
+
+
+class WorkloadRollupsBulkAPIEndpoint(BaseAPIView):
+    """GET /api/v1/workspaces/<slug>/workload-rollups/?issue_ids=a,b,c
+
+    Public-API (/api/v1/) mirror of WorkloadRollupsBulkEndpoint.
+    API-key authenticated via plane.api.views.base.BaseAPIView.
+    """
+
+    @allow_permission([ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST], level="WORKSPACE")
+    def get(self, request, slug):
+        return rollups_bulk(request, slug)
 
 
 class WorkspaceWorkloadAPIEndpoint(BaseAPIView):

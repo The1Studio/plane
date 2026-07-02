@@ -11,6 +11,7 @@ from .api_views import (
     ProjectWorkloadAPIEndpoint,
     WorkloadEstimateAPIEndpoint,
     WorkloadEstimatesBulkAPIEndpoint,
+    WorkloadRollupsBulkAPIEndpoint,
     WorkspaceWorkloadAPIEndpoint,
 )
 
@@ -34,5 +35,10 @@ urlpatterns = [
         "workspaces/<str:slug>/workload-estimates/",
         WorkloadEstimatesBulkAPIEndpoint.as_view(),
         name="api-workload-estimates-bulk",
+    ),
+    path(
+        "workspaces/<str:slug>/workload-rollups/",
+        WorkloadRollupsBulkAPIEndpoint.as_view(),
+        name="api-workload-rollups-bulk",
     ),
 ]

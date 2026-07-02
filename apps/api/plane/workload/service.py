@@ -120,17 +120,45 @@ def _guest_restricted_projects(user, slug, scope):
     )
 
 
+def _materialize_own_issue_ids(user, restricted_project_ids):
+    """Issue ids the user is an active assignee of, within `restricted_project_ids`.
+
+    MATERIALIZED as a list (not a lazy queryset) — the rollup CTE needs a
+    Python list it can pass as a raw-SQL bound parameter (a Django queryset/Q
+    cannot be embedded in raw SQL). This is the SSOT for "what a flag-off
+    guest owns" — rollup.py must never re-derive this membership rule in SQL.
+    """
+    if not restricted_project_ids:
+        return []
+    return list(
+        IssueAssignee.objects.filter(
+            assignee_id=user.id,
+            deleted_at__isnull=True,
+            project_id__in=restricted_project_ids,
+        ).values_list("issue_id", flat=True)
+    )
+
+
+def resolve_guest_scope(user, slug, scope):
+    """Split `scope` into (full_project_ids, restricted_project_ids,
+    own_issue_ids) for raw-SQL callers (rollup.py) that cannot embed a Django
+    Q in SQL. `own_issue_ids` is materialized (see above). Mirrors the same
+    project/guest split `_scope_filter` uses for ORM queries — SSOT for guest
+    membership rules stays in this module either way.
+    """
+    restricted = _guest_restricted_projects(user, slug, scope)
+    full = set(scope) - restricted
+    own_issue_ids = _materialize_own_issue_ids(user, restricted)
+    return full, restricted, own_issue_ids
+
+
 def _scope_filter(project_scope, restricted, user):
     """Row filter Q: unrestricted projects in full; restricted (flag-off guest)
     projects narrowed to issues the user is assigned to."""
     if not restricted:
         return Q(project_id__in=project_scope)
     full = set(project_scope) - set(restricted)
-    own_issue_ids = IssueAssignee.objects.filter(
-        assignee_id=user.id,
-        deleted_at__isnull=True,
-        project_id__in=restricted,
-    ).values_list("issue_id", flat=True)
+    own_issue_ids = _materialize_own_issue_ids(user, restricted)
     q = Q(project_id__in=restricted, issue_id__in=own_issue_ids)
     if full:
         q |= Q(project_id__in=full)
@@ -138,6 +166,12 @@ def _scope_filter(project_scope, restricted, user):
 
 
 def _base_queryset(slug, scope_q, state_groups):
+    # Deferred import — rollup.py imports resolve_project_scope/resolve_guest_scope
+    # from THIS module at its top level; importing rollup.py at service.py's own
+    # top level would create a circular import. Both modules are fully loaded by
+    # the time any request handler runs, so a call-time import is safe here.
+    from .rollup import has_countable_children
+
     qs = (
         WorkloadEstimate.objects.filter(
             scope_q,
@@ -148,6 +182,10 @@ def _base_queryset(slug, scope_q, state_groups):
             issue__is_draft=False,
         )
         .exclude(issue__state__group=StateGroup.TRIAGE.value)
+        # Leaf-only counting (matrix double-count fix): an estimate whose
+        # issue has a countable child is a PARENT estimate — legacy/ignored,
+        # never surfaced in the matrix (rollups own parent totals instead).
+        .filter(~has_countable_children("issue_id"))
     )
     if state_groups:
         qs = qs.filter(issue__state__group__in=state_groups)
@@ -311,13 +349,27 @@ BULK_ESTIMATES_CAP = 500
 
 
 class BulkEstimatesError(Exception):
-    """Raised by bulk_estimates for caller-correctable input errors (empty or
-    oversize issue_ids list).  Caught by the view and mapped to HTTP 400.
+    """Raised by bulk_estimates AND validate_bulk_issue_ids for caller-correctable
+    input errors (empty or oversize issue_ids list). Caught by the view and
+    mapped to HTTP 400.
 
     Using a dedicated type — NOT bare ValueError — ensures that unexpected
     ValueErrors from deeper ORM/Python code propagate as 500 instead of
     being silently swallowed as a 400 response.
     """
+
+
+def validate_bulk_issue_ids(issue_ids):
+    """Shared cap/empty validation for every bulk `issue_ids` endpoint
+    (estimates AND rollups) — SSOT so the two endpoints can't drift on the
+    cap value or error wording. Raises BulkEstimatesError; never returns
+    a value (callers just call it for its side effect: raise-or-pass)."""
+    if not issue_ids:
+        raise BulkEstimatesError("issue_ids must not be empty")
+    if len(issue_ids) > BULK_ESTIMATES_CAP:
+        raise BulkEstimatesError(
+            f"Too many issue_ids (max {BULK_ESTIMATES_CAP}, got {len(issue_ids)})"
+        )
 
 
 def bulk_estimates(user, slug, issue_ids):
@@ -328,18 +380,23 @@ def bulk_estimates(user, slug, issue_ids):
     (no per-issue loop, no cross-project leak).
 
     Returns ALL stored rows including hours == 0 (the grid needs the zero).
-    Issues with no row are omitted (caller can treat them as unset).
+    Issues with no row are omitted (caller can treat them as unset). Rows
+    whose issue is a PARENT (>=1 countable child) are also omitted — keep-
+    but-ignore means ignored everywhere; returning a parent's legacy hours
+    here while single-GET nulls it would leak the ignored value into the
+    spreadsheet (round-5 plan MAJOR-B.1). A parent now looks like "no
+    estimate" here, same as the matrix's leaf-only treatment.
 
     Raises:
         BulkEstimatesError: on empty or oversize issue_ids list (→ HTTP 400).
         Any other exception propagates uncaught (→ HTTP 500 from DRF handler).
     """
-    if not issue_ids:
-        raise BulkEstimatesError("issue_ids must not be empty")
-    if len(issue_ids) > BULK_ESTIMATES_CAP:
-        raise BulkEstimatesError(
-            f"Too many issue_ids (max {BULK_ESTIMATES_CAP}, got {len(issue_ids)})"
-        )
+    # Deferred import — see the matching note in _base_queryset (circular
+    # import: rollup.py imports resolve_project_scope/resolve_guest_scope
+    # from this module at its top level).
+    from .rollup import has_countable_children
+
+    validate_bulk_issue_ids(issue_ids)
 
     scope = resolve_project_scope(user, slug, requested_ids=None, route_project_id=None)
     if not scope:
@@ -348,11 +405,15 @@ def bulk_estimates(user, slug, issue_ids):
     restricted = _guest_restricted_projects(user, slug, scope)
     scope_q = _scope_filter(scope, restricted, user)
 
-    rows = WorkloadEstimate.objects.filter(
-        scope_q,
-        workspace__slug=slug,
-        issue_id__in=issue_ids,
-    ).values_list("issue_id", "hours")
+    rows = (
+        WorkloadEstimate.objects.filter(
+            scope_q,
+            workspace__slug=slug,
+            issue_id__in=issue_ids,
+        )
+        .filter(~has_countable_children("issue_id"))
+        .values_list("issue_id", "hours")
+    )
 
     return {str(issue_id): hours for issue_id, hours in rows}
 
