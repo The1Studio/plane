@@ -238,18 +238,18 @@ The SP2 workload feature therefore carries a set of **minimal, clearly-marked in
 to core web components. Each is the documented exception for its integration point. Every edit
 is fenced with a `The1Studio fork (SP2 workload)` comment.
 
-| File | What | Why no seam |
-| --- | --- | --- |
-| `apps/web/core/components/issues/issue-detail/sidebar.tsx` | "Estimated hours" property field (now reads/writes via the shared workload store) | No upstream API to add an issue-property row; must render inside the core properties list |
-| `apps/web/core/components/workspace/sidebar/sidebar-menu-items.tsx` | "Workload" nav link → `/:workspaceSlug/workload` | Nav items come from `@plane/constants` (sealed package, no edit-in-place) |
-| `apps/web/core/hooks/store/use-workload-estimate.ts` (NEW) | `useWorkloadEstimate` + `useBulkWorkloadFetch` selector hooks | Package hooks are context-agnostic; selector hooks must read core's `useWorkload()` |
-| `apps/web/core/components/issues/issue-layouts/spreadsheet/columns/estimated-hours-column.tsx` (NEW) | Editable "Estimated hours" grid column (header + body cell) | New file; the column is appended, not registered in the sealed column registry |
-| `apps/web/core/components/issues/issue-layouts/spreadsheet/spreadsheet-header.tsx` | Appends the fixed `<th>` after the property loop | No registry seam for an always-on column without a `keyof IIssueDisplayProperties` key |
-| `apps/web/core/components/issues/issue-layouts/spreadsheet/issue-row.tsx` | Appends the fixed `<td>` in `IssueRowDetails` | Same — body half of the appended column |
-| `apps/web/core/components/issues/issue-layouts/spreadsheet/spreadsheet-table.tsx` | Hosts the page-level `useBulkWorkloadFetch` | Needs the full visible `issueIds` to warm the store in one request |
-| `apps/web/ce/components/issues/issue-layouts/additional-properties.tsx` | Inline hours pill (list + kanban) | The `ce/` stub seam (`WorkItemLayoutAdditionalProperties`) is the intended injection point |
-| `apps/web/core/components/issues/issue-layouts/list/blocks-list.tsx` | `useBulkWorkloadFetch` warm-up for list groups | Pill reads the store; the list view must warm it for visible ids |
-| `apps/web/core/components/issues/issue-layouts/kanban/blocks-list.tsx` | `useBulkWorkloadFetch` warm-up for kanban groups | Same; the kanban pill is accepted in-scope and shares the seam |
+| File                                                                                                 | What                                                                              | Why no seam                                                                                |
+| ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `apps/web/core/components/issues/issue-detail/sidebar.tsx`                                           | "Estimated hours" property field (now reads/writes via the shared workload store) | No upstream API to add an issue-property row; must render inside the core properties list  |
+| `apps/web/core/components/workspace/sidebar/sidebar-menu-items.tsx`                                  | "Workload" nav link → `/:workspaceSlug/workload`                                  | Nav items come from `@plane/constants` (sealed package, no edit-in-place)                  |
+| `apps/web/core/hooks/store/use-workload-estimate.ts` (NEW)                                           | `useWorkloadEstimate` + `useBulkWorkloadFetch` selector hooks                     | Package hooks are context-agnostic; selector hooks must read core's `useWorkload()`        |
+| `apps/web/core/components/issues/issue-layouts/spreadsheet/columns/estimated-hours-column.tsx` (NEW) | Editable "Estimated hours" grid column (header + body cell)                       | New file; the column is appended, not registered in the sealed column registry             |
+| `apps/web/core/components/issues/issue-layouts/spreadsheet/spreadsheet-header.tsx`                   | Appends the fixed `<th>` after the property loop                                  | No registry seam for an always-on column without a `keyof IIssueDisplayProperties` key     |
+| `apps/web/core/components/issues/issue-layouts/spreadsheet/issue-row.tsx`                            | Appends the fixed `<td>` in `IssueRowDetails`                                     | Same — body half of the appended column                                                    |
+| `apps/web/core/components/issues/issue-layouts/spreadsheet/spreadsheet-table.tsx`                    | Hosts the page-level `useBulkWorkloadFetch`                                       | Needs the full visible `issueIds` to warm the store in one request                         |
+| `apps/web/ce/components/issues/issue-layouts/additional-properties.tsx`                              | Inline hours pill (list + kanban)                                                 | The `ce/` stub seam (`WorkItemLayoutAdditionalProperties`) is the intended injection point |
+| `apps/web/core/components/issues/issue-layouts/list/blocks-list.tsx`                                 | `useBulkWorkloadFetch` warm-up for list groups                                    | Pill reads the store; the list view must warm it for visible ids                           |
+| `apps/web/core/components/issues/issue-layouts/kanban/blocks-list.tsx`                               | `useBulkWorkloadFetch` warm-up for kanban groups                                  | Same; the kanban pill is accepted in-scope and shares the seam                             |
 
 **Rebase handling:** these files ARE expected conflict points (unlike the abort-on-conflict
 rule for everything else). On conflict, re-apply the fork block — each is fenced by a
@@ -260,6 +260,17 @@ conflict surface stays trivial.
 **`plane-isolation-audit` note:** `packages/workload-ext` uses the `@plane/` npm scope but is
 **fork-owned** (not upstream) — editing it is NOT an `@plane/*` violation. Allowlist
 `@plane/workload-ext` in the isolation audit so it isn't false-flagged as a sealed-package edit.
+
+### Fork bugfix exceptions (upstream bugs, fenced, upstream-PR candidates)
+
+Minimal fenced fixes for bugs that exist in upstream itself (verified unfixed at
+makeplane/plane `preview` HEAD when added). Each is expected to disappear once upstream
+fixes it — on a rebase conflict, check whether upstream's version still has the bug; if
+fixed upstream, DROP our hunk.
+
+| File                    | What                                                                                                                                                                                                                            | Fence                             |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| `apps/web/app/root.tsx` | `HydrateFallback` mounted-gate — SPA-mode prerender emits an empty `<div />` but the first client render resolved the theme synchronously and rendered the spinner, throwing React #418 (hydration mismatch) on every page load | `The1Studio fork (hydration fix)` |
 
 ### The complete 6 core touch-point inventory
 

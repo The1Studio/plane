@@ -5,6 +5,8 @@
  */
 
 import type { ReactNode } from "react";
+// The1Studio fork (hydration fix) — mounted gate for HydrateFallback, see below
+import { useEffect, useState } from "react";
 import Script from "next/script";
 import { Links, Meta, Outlet, Scripts } from "react-router";
 import type { LinksFunction } from "react-router";
@@ -28,9 +30,15 @@ import { LogoSpinner } from "@/components/common/logo-spinner";
 import { CustomErrorComponent } from "./error";
 import { AppProvider } from "./provider";
 // fonts
+// The1Studio fork: side-effect font imports are intentional; the repo-root
+// pre-commit lint (import/no-unassigned-import + --deny-warnings) would
+// otherwise block ANY commit touching this file.
+// oxlint-disable-next-line import/no-unassigned-import
 import "@fontsource-variable/inter";
 import interVariableWoff2 from "@fontsource-variable/inter/files/inter-latin-wght-normal.woff2?url";
+// oxlint-disable-next-line import/no-unassigned-import
 import "@fontsource/material-symbols-rounded";
+// oxlint-disable-next-line import/no-unassigned-import
 import "@fontsource/ibm-plex-mono";
 
 const APP_TITLE = "Plane | Simple, extensible, open-source project management tool.";
@@ -135,8 +143,18 @@ export default function Root() {
 export function HydrateFallback() {
   const { resolvedTheme } = useTheme();
 
-  // if we are on the server or the theme is not resolved, return an empty div
-  if (typeof window === "undefined" || resolvedTheme === undefined) return <div />;
+  // The1Studio fork (hydration fix): the SPA-mode build prerenders this
+  // component with `typeof window === "undefined"` → an empty <div />. On the
+  // first client render next-themes resolves the theme SYNCHRONOUSLY from
+  // localStorage, so the original guard fell through to the spinner tree and
+  // every page load threw React #418 (hydration mismatch) and re-rendered the
+  // shell client-side. Gate on `mounted` so the hydration pass renders the
+  // SAME empty <div /> as the prerender; the spinner appears right after
+  // mount. Not yet fixed upstream (verified against makeplane/plane preview).
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  if (!mounted || resolvedTheme === undefined) return <div />;
 
   return (
     <div className="relative flex h-screen w-full items-center justify-center bg-canvas">
