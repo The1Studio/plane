@@ -268,9 +268,10 @@ makeplane/plane `preview` HEAD when added). Each is expected to disappear once u
 fixes it — on a rebase conflict, check whether upstream's version still has the bug; if
 fixed upstream, DROP our hunk.
 
-| File                    | What                                                                                                                                                                                                                            | Fence                             |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
-| `apps/web/app/root.tsx` | `HydrateFallback` mounted-gate — SPA-mode prerender emits an empty `<div />` but the first client render resolved the theme synchronously and rendered the spinner, throwing React #418 (hydration mismatch) on every page load | `The1Studio fork (hydration fix)` |
+| File                    | What                                                                                                                                                                                                                                                                                                                           | Fence                                      |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------ |
+| `apps/web/app/root.tsx` | `HydrateFallback` mounted-gate — SPA-mode prerender emits an empty `<div />` but the first client render resolved the theme synchronously and rendered the spinner, throwing React #418 (hydration mismatch) on every page load                                                                                                | `The1Studio fork (hydration fix)`          |
+| `.oxlintrc.json`        | `overrides` block scoping `unicorn/no-array-sort: off` to `apps/web`/`admin`/`space` — those apps compile with lib:ES2022, so the rule's autofix (`.sort()` → `.toSorted()`, ES2023) produces code tsc rejects, and the lint-staged pre-commit applies it AFTER local typechecks ran (CI went red unseen, incident 2026-07-03) | none (JSON — this table row is the marker) |
 
 ### The complete 6 core touch-point inventory
 

@@ -49,5 +49,13 @@
         "ignoreRestSiblings": true
       }
     ]
-  }
+  },
+  "overrides": [
+    {
+      "files": ["apps/web/**", "apps/admin/**", "apps/space/**"],
+      "rules": {
+        "unicorn/no-array-sort": "off"
+      }
+    }
+  ]
 }
