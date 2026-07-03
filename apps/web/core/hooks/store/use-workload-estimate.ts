@@ -58,7 +58,11 @@ export function useBulkWorkloadFetch(workspaceSlug: string, issueIds: string[]):
   // Build a stable join-string key so the effect only fires when the actual
   // set of ids changes, not on every array identity change (common with derived
   // selectors that create a new array each render). Sort is on a copy — no mutation.
-  const joinedIds = [...issueIds].toSorted().join(",");
+  // NOTE: .sort() on the spread copy, NOT .toSorted() — the repo tsconfig lib
+  // predates ES2023, so tsc rejects toSorted (oxlint --fix rewrites it back if
+  // allowed, which is how a type error once reached the branch unnoticed).
+  // oxlint-disable-next-line unicorn/no-array-sort
+  const joinedIds = [...issueIds].sort().join(",");
 
   // Track the previous values so we can skip the redundant estimates fetch
   // when nothing changed.
