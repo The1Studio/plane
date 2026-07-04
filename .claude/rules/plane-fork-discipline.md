@@ -29,18 +29,19 @@ Operational tools: `plane-rebase`, `plane-isolation-audit`, `plane-scaffold-feat
 - Mount routes via touch-point 6 only: append entries to `extendedRoutes` in
   `apps/web/app/routes/extended.ts`. **Never edit** `apps/web/app/routes/core.ts`.
 
-## The 6 touch-points
+## The 7 touch-points
 
 Only these files may carry fork edits:
 
-| #   | File(s)                                                                            |
-| --- | ---------------------------------------------------------------------------------- |
-| 1   | `apps/api/plane/settings/common.py` — `INSTALLED_APPS`                             |
-| 2   | `apps/api/plane/urls.py` — `urlpatterns`                                           |
-| 3   | `apps/api/plane/celery.py` — **zero edit**; `autodiscover_tasks()` covers new apps |
-| 4   | `apps/api/plane/app/views/external/base.py` — documented exception for God-mode AI |
-| 5   | `apps/api/requirements/base.txt`, `apps/api/Dockerfile.api` — avoid; use overlay   |
-| 6   | `apps/web/app/routes/extended.ts`, `apps/web/package.json` — designed seam         |
+| #   | File(s)                                                                                                                                              |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `apps/api/plane/settings/common.py` — `INSTALLED_APPS`                                                                                               |
+| 2   | `apps/api/plane/urls.py` — `urlpatterns`                                                                                                             |
+| 3   | `apps/api/plane/celery.py` — **zero edit**; `autodiscover_tasks()` covers new apps                                                                   |
+| 4   | `apps/api/plane/app/views/external/base.py` — documented exception for God-mode AI                                                                   |
+| 5   | `apps/api/requirements/base.txt`, `apps/api/Dockerfile.api` — avoid; use overlay                                                                     |
+| 6   | `apps/web/app/routes/extended.ts`, `apps/web/package.json` — designed seam                                                                           |
+| 7   | `apps/web/app/root.tsx`, `apps/admin/app/root.tsx`, `apps/web/Dockerfile.web`, `apps/admin/Dockerfile.admin` — white-label branding (VITE_APP_TITLE) |
 
 A rebase conflict **outside** this set = a customization leaked into core →
 `git rebase --abort` and relocate the edit.

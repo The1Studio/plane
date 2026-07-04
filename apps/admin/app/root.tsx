@@ -16,12 +16,20 @@ import globalStyles from "@/styles/globals.css?url";
 import { AppProviders } from "@/providers";
 import type { Route } from "./+types/root";
 // fonts
+// The1Studio fork: side-effect font imports are intentional; the repo-root
+// pre-commit lint (import/no-unassigned-import + --deny-warnings) would
+// otherwise block ANY commit touching this file.
+// oxlint-disable-next-line import/no-unassigned-import
 import "@fontsource-variable/inter";
 import interVariableWoff2 from "@fontsource-variable/inter/files/inter-latin-wght-normal.woff2?url";
+// oxlint-disable-next-line import/no-unassigned-import
 import "@fontsource/material-symbols-rounded";
+// oxlint-disable-next-line import/no-unassigned-import
 import "@fontsource/ibm-plex-mono";
 
-const APP_TITLE = "Plane | Simple, extensible, open-source project management tool.";
+// The1Studio fork (touch-point 7) — white-label branding: VITE_APP_TITLE build-time
+// override (e.g. "The One Game Studio"); falls back to the upstream Plane title.
+const APP_TITLE = process.env.VITE_APP_TITLE || "Plane | Simple, extensible, open-source project management tool.";
 const APP_DESCRIPTION =
   "Open-source project management tool to manage work items, sprints, and product roadmaps with peace of mind.";
 

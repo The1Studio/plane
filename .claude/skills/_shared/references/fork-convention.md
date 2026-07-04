@@ -5,19 +5,20 @@
 > reverse. `plane-fork-doctor` diffs this file's touch-point list against `docs/FORK.md` and fails on drift.
 
 The fork survives monthly upstream rebases only if customizations stay isolated. There are exactly
-**6 core touch-points** that may carry fork edits. A rebase conflict in any other core file = a leak →
+**7 core touch-points** that may carry fork edits. A rebase conflict in any other core file = a leak →
 `git rebase --abort` and relocate the edit into a new app/package.
 
-## The 6 touch-points (mirror of `docs/FORK.md` §The complete 6 core touch-point inventory)
+## The 7 touch-points (mirror of `docs/FORK.md` §The complete 7 core touch-point inventory)
 
-| #   | File(s)                                                     | Why touched                  | Rebase-safe approach                                                                                                  |
-| --- | ----------------------------------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| 1   | `apps/api/plane/settings/common.py`                         | Register new apps            | Append 1 line per app to the in-house `INSTALLED_APPS` block                                                          |
-| 2   | `apps/api/plane/urls.py`                                    | Mount new app URLs           | Append `path("api/<name>/", include("plane.<name>.urls")),` after existing includes                                   |
-| 3   | `apps/api/plane/celery.py`                                  | Scheduled tasks              | **Zero edit** — `autodiscover_tasks()` + `DatabaseScheduler` already pick up new-app `tasks.py` / `PeriodicTask` rows |
-| 4   | `apps/api/plane/app/views/external/base.py`                 | Claude/Anthropic God-mode AI | Documented in-place **exception** — prefer a new `ai_ext` endpoint; the core button must keep working                 |
-| 5   | `apps/api/requirements/base.txt`, `apps/api/Dockerfile.api` | New pip deps                 | **Avoid** — pin in the new app's own requirements fragment + a Dockerfile overlay, never in place                     |
-| 6   | `apps/web/app/routes/extended.ts`, `apps/web/package.json`  | Mount UI routes              | Append entries to the empty `extendedRoutes` array — never edit `routes/core.ts`                                      |
+| #   | File(s)                                                                                                      | Why touched                           | Rebase-safe approach                                                                                                  |
+| --- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| 1   | `apps/api/plane/settings/common.py`                                                                          | Register new apps                     | Append 1 line per app to the in-house `INSTALLED_APPS` block                                                          |
+| 2   | `apps/api/plane/urls.py`                                                                                     | Mount new app URLs                    | Append `path("api/<name>/", include("plane.<name>.urls")),` after existing includes                                   |
+| 3   | `apps/api/plane/celery.py`                                                                                   | Scheduled tasks                       | **Zero edit** — `autodiscover_tasks()` + `DatabaseScheduler` already pick up new-app `tasks.py` / `PeriodicTask` rows |
+| 4   | `apps/api/plane/app/views/external/base.py`                                                                  | Claude/Anthropic God-mode AI          | Documented in-place **exception** — prefer a new `ai_ext` endpoint; the core button must keep working                 |
+| 5   | `apps/api/requirements/base.txt`, `apps/api/Dockerfile.api`                                                  | New pip deps                          | **Avoid** — pin in the new app's own requirements fragment + a Dockerfile overlay, never in place                     |
+| 6   | `apps/web/app/routes/extended.ts`, `apps/web/package.json`                                                   | Mount UI routes                       | Append entries to the empty `extendedRoutes` array — never edit `routes/core.ts`                                      |
+| 7   | `apps/web/app/root.tsx`, `apps/admin/app/root.tsx`, `apps/web/Dockerfile.web`, `apps/admin/Dockerfile.admin` | White-label branding (VITE_APP_TITLE) | Re-apply the `VITE_APP_TITLE` fallback prefix; never rename the constant or remove the upstream fallback string       |
 
 ## Core models — NO new columns (new tables only)
 
@@ -47,7 +48,16 @@ Keep paths in sync with the table above (the doctor's drift check enforces it).
     { "id": 3, "paths": ["apps/api/plane/celery.py"] },
     { "id": 4, "paths": ["apps/api/plane/app/views/external/base.py"] },
     { "id": 5, "paths": ["apps/api/requirements/base.txt", "apps/api/Dockerfile.api"] },
-    { "id": 6, "paths": ["apps/web/app/routes/extended.ts", "apps/web/package.json"] }
+    { "id": 6, "paths": ["apps/web/app/routes/extended.ts", "apps/web/package.json"] },
+    {
+      "id": 7,
+      "paths": [
+        "apps/web/app/root.tsx",
+        "apps/admin/app/root.tsx",
+        "apps/web/Dockerfile.web",
+        "apps/admin/Dockerfile.admin"
+      ]
+    }
   ],
   "forkApps": ["ai_ext", "clickup_migrate", "workload"],
   "forkAppRoot": "apps/api/plane/",
