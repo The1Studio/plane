@@ -12,7 +12,7 @@ Entries written by `plane-scaffold-feature` / `plane-propagate`; processed entri
 - Changed shapes: single estimate GET (`hours: null` + `is_parent` + `rollup` for parents);
   PUT 400 `{"error","error_code"}`; matrix + bulk estimates semantic shifts.
 - Source commits: 94b5a3d14a (backend), 5812f185bd (frontend), 9205dc46e2 (plans).
-- Propagated: 2026-07-03
+- Propagated: 2026-07-03 · **All 6 implemented & merged 2026-07-04** (mcp-server#3, node-sdk#2, python-sdk#2, plane-claude-plugin#2, docs#2, developer-docs#2 — every issue auto-closed)
   - The1Studio/plane-mcp-server#2 — https://github.com/The1Studio/plane-mcp-server/issues/2
   - The1Studio/plane-node-sdk#1 — https://github.com/The1Studio/plane-node-sdk/issues/1
   - The1Studio/plane-python-sdk#1 — https://github.com/The1Studio/plane-python-sdk/issues/1
