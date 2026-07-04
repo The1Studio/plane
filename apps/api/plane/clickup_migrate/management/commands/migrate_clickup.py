@@ -270,7 +270,11 @@ class Command(BaseCommand):
             write_issue_relation,
             write_attachment,
             write_custom_fields_to_description,
+            write_workload_estimate,
+            _parse_ms_estimate,
         )
+        from plane.workload.rollup import parent_issue_ids
+        from plane.workload.aggregation import MAX_HOURS
         from plane.db.models import Issue
 
         # ── gate check ────────────────────────────────────────────────
@@ -303,7 +307,9 @@ class Command(BaseCommand):
             "issue": 0, "assignee": 0, "label_link": 0,
             "module_issue": 0, "subscriber": 0, "comment": 0,
             "attachment": 0, "relation": 0, "parent_link": 0,
+            "estimate": 0, "estimate_parent_skip": 0,
         }
+        total_hours = 0.0
 
         # Map ClickUp task_id → Plane Issue (for pass-2 + junctions).
         task_to_issue: dict[str, object] = {}
@@ -438,6 +444,38 @@ class Command(BaseCommand):
                     )
                     counts["relation"] += 1
 
+        # ── pass-3: workload estimates (leaf-only) ────────────────────
+        # Blocked-by pass-2 parent-linking above: leaf-ness is only correct
+        # once Issue.parent has been committed. Batch-compute the parent
+        # set once (REUSE workload/rollup.py::parent_issue_ids) instead of
+        # querying is_parent() per issue.
+        #
+        # C3-style caveat (mirrors the pass-2 relations loop above): on a
+        # resumed run, `task_to_issue` may be a partial in-memory map (only
+        # tasks processed in THIS invocation are present). Tasks migrated by
+        # an earlier invocation of the same run are skipped here rather than
+        # re-resolved via the ledger — acceptable for the common single-run
+        # path; a full resumed-run fix would need a ledger-backed
+        # task_id -> Issue lookup, out of scope for this pass.
+        self.stdout.write(f"Pass-3: writing workload estimates for {len(all_tasks_raw)} task(s) …")
+        migrated_issues = list(task_to_issue.values())
+        parent_ids = set(parent_issue_ids([iss.id for iss in migrated_issues])) if migrated_issues else set()
+
+        for task_id, task in all_tasks_raw.items():
+            issue = task_to_issue.get(task_id)
+            if issue is None:
+                continue
+            raw_ms = task.get("time_estimate")
+            is_leaf = issue.id not in parent_ids
+            token = write_workload_estimate(run, issue, task_id, raw_ms, is_leaf, user_cache, dry_run)
+            if token in ("created", "updated", "clamped"):
+                counts["estimate"] += 1
+                ms = _parse_ms_estimate(raw_ms)
+                if ms and is_leaf:
+                    total_hours += min(round(ms / 3_600_000, 2), MAX_HOURS)
+            elif token == "skipped-parent":
+                counts["estimate_parent_skip"] += 1
+
         run.status = "done" if not dry_run else "pending"
         if not dry_run:
             run.save(update_fields=["status"])
@@ -445,6 +483,13 @@ class Command(BaseCommand):
         self.stdout.write("\n=== Migration summary ===")
         for k, v in counts.items():
             self.stdout.write(f"  {k}: {v}")
+        estimates_written = counts["estimate"]
+        estimate_parent_skip = counts["estimate_parent_skip"]
+        total_hours = round(total_hours, 2)
+        self.stdout.write(
+            f"Estimates: {estimates_written} issues written, total {total_hours} hours, "
+            f"{estimate_parent_skip} parent estimates rolled-up (not written)"
+        )
         if dry_run:
             self.stdout.write("[DRY RUN — no data written]")
         else:

@@ -945,3 +945,138 @@ def write_custom_fields_to_description(
         logger.warning("Failed to append custom fields to issue %s: %s", issue.pk, exc)
 
     return md_table
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Pass-3: workload estimates (leaf-only)
+#
+# `time_estimate` is ClickUp's planned-hours field (ms). Reuses the fork's
+# native workload.models.WorkloadEstimate — no new model, no new migration.
+# Leaf-ness is batch-computed by the caller via
+# workload.rollup.parent_issue_ids() (pass-2 parent links must already be
+# committed — see migrate_clickup.py pass ordering). A parent's own
+# time_estimate is intentionally NOT migrated (rolled up from leaves at read
+# time instead); it is only recorded in the ledger as SKIPPED so operators
+# can see it was seen and deliberately not written.
+# ─────────────────────────────────────────────────────────────────────
+
+def _parse_ms_estimate(raw) -> Optional[int]:
+    """Defensively coerce a ClickUp `time_estimate` value to positive int ms.
+
+    The ClickUp OpenAPI spec declares `time_estimate` as `string|null` but
+    the live API returns an integer (ms). Accept an `int` or a numeric
+    `str`; treat `None`, `0`, negative, or unparseable values as "no
+    estimate" (skip). Never raises.
+    """
+    if raw is None:
+        return None
+    try:
+        ms = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if ms <= 0:
+        return None
+    return ms
+
+
+def write_workload_estimate(
+    run,
+    issue,
+    task_id: str,
+    raw_ms,
+    is_leaf: bool,
+    user_cache: UserCache,
+    dry_run: bool,
+) -> str:
+    """Write one WorkloadEstimate for a LEAF issue.
+
+    Returns a status token: "created" | "updated" | "skipped-zero" |
+    "skipped-parent" | "clamped". dry_run never writes to the DB but still
+    returns the would-be token so the caller's --plan summary tallies
+    correctly (mirrors write_subtask_parent's dry-run-returns-True idiom).
+
+    NOTE: leaf-ness is passed IN as `is_leaf` (bool) — the caller
+    batch-computes it (workload.rollup.parent_issue_ids()) over the whole
+    migrated-issue set. This function does NOT call is_parent() itself
+    (avoids a per-issue query).
+
+    created_by distinction (do NOT cargo-cult C1 above): WorkloadEstimate is
+    a PLAIN models.Model with no auto-set-user save hook (unlike BaseModel,
+    see C1). Authorship is therefore set DIRECTLY in
+    update_or_create(defaults=...) below — the core-model post-save
+    re-save(created_by_id=...) workaround does not apply here and would be
+    wrong.
+    """
+    from plane.clickup_migrate.models import MigrationRecord
+    from plane.workload.aggregation import MAX_HOURS
+    from plane.workload.models import WorkloadEstimate
+
+    ms = _parse_ms_estimate(raw_ms)
+    if ms is None:
+        return "skipped-zero"
+
+    if not is_leaf:
+        logger.warning(
+            "Issue %s (task %s) carries its own time_estimate but is a "
+            "parent — rolled up from leaves, not migrated as its own "
+            "estimate",
+            issue.pk if issue else "?",
+            task_id,
+        )
+        if not dry_run:
+            MigrationRecord.objects.update_or_create(
+                run=run,
+                source_type="task",
+                source_id=str(task_id),
+                defaults={
+                    "plane_type": "WorkloadEstimate",
+                    "plane_id": "",
+                    "status": MigrationRecord.STATUS_SKIPPED,
+                    "bytes": 0,
+                    "error": "parent own-estimate rolled up from leaves",
+                },
+            )
+        return "skipped-parent"
+
+    hours = round(ms / 3_600_000, 2)
+    clamped = False
+    if hours > MAX_HOURS:
+        logger.warning(
+            "Issue %s (task %s) time_estimate %s ms exceeds MAX_HOURS "
+            "(%s) — clamped",
+            issue.pk if issue else "?",
+            task_id,
+            raw_ms,
+            MAX_HOURS,
+        )
+        hours = MAX_HOURS
+        clamped = True
+
+    if dry_run:
+        logger.info(
+            "[dry-run] would create/update workload estimate: issue=%s hours=%s",
+            issue.pk if issue else "?",
+            hours,
+        )
+        return "clamped" if clamped else "created"
+
+    with transaction.atomic():
+        est, created = WorkloadEstimate.objects.update_or_create(
+            issue=issue,
+            defaults={
+                "workspace": issue.workspace,
+                "project": issue.project,
+                "hours": hours,
+                "created_by": user_cache.bot_user,
+            },
+        )
+        _record_upsert(
+            run,
+            "task",
+            str(task_id),
+            "WorkloadEstimate",
+            str(est.id),
+            MigrationRecord.STATUS_CREATED if created else MigrationRecord.STATUS_UPDATED,
+        )
+
+    return "clamped" if clamped else ("created" if created else "updated")
