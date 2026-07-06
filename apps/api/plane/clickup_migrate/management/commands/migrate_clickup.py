@@ -18,6 +18,7 @@
 import logging
 import os
 import sys
+import time
 from datetime import date
 
 from django.core.management.base import BaseCommand, CommandError
@@ -36,6 +37,12 @@ class Command(BaseCommand):
         parser.add_argument("--space", dest="space_ids", action="append", default=[], metavar="SPACE_ID",
                             help="Scope to one or more ClickUp Space IDs (repeatable)")
         parser.add_argument("--dry-run", action="store_true", help="No .save() calls; emit counts only")
+        parser.add_argument("--since-days", type=int, default=None, metavar="N",
+                            help="Only migrate tasks updated in the last N days "
+                                 "(ClickUp date_updated_gt). Out-of-window parents "
+                                 "and dependency targets of in-window tasks are still "
+                                 "pulled in (ancestor backfill), so hierarchy/relations "
+                                 "stay intact. Omit for full history.")
         parser.add_argument("--run-id", type=int, default=None,
                             help="Resume an existing MigrationRun by ID (else creates a new one)")
         parser.add_argument("--review-dir", default=".", metavar="DIR",
@@ -55,6 +62,19 @@ class Command(BaseCommand):
         space_ids: list[str] = options["space_ids"]
         run_id: int | None = options["run_id"]
         review_dir: str = options["review_dir"]
+        since_days: int | None = options["since_days"]
+
+        # "Last N days" window → ClickUp date_updated_gt (Unix ms).
+        # None means full history.
+        date_updated_gt: int | None = None
+        if since_days is not None:
+            if since_days <= 0:
+                raise CommandError("--since-days must be a positive integer.")
+            date_updated_gt = int((time.time() - since_days * 86400) * 1000)
+            self.stdout.write(
+                f"Window: tasks updated in the last {since_days} day(s) "
+                f"(date_updated_gt={date_updated_gt})"
+            )
 
         from plane.clickup_migrate.client import ClickUpClient
         from plane.clickup_migrate.models import EmailCoverage, MigrationRun
@@ -97,18 +117,17 @@ class Command(BaseCommand):
 
         # ── dispatch ──────────────────────────────────────────────────
         if options["plan"]:
-            self._run_plan(run, client, workspace, bot_user, space_ids, dry_run, review_dir)
+            self._run_plan(run, client, workspace, bot_user, space_ids, dry_run, review_dir, date_updated_gt)
         else:
-            self._run_apply(run, client, workspace, bot_user, space_ids, dry_run)
+            self._run_apply(run, client, workspace, bot_user, space_ids, dry_run, date_updated_gt)
 
     # ─────────────────────────────────────────────────────────────────
     # Phase 3 — --plan
     # ─────────────────────────────────────────────────────────────────
 
-    def _run_plan(self, run, client, workspace, bot_user, space_ids, dry_run, review_dir):
+    def _run_plan(self, run, client, workspace, bot_user, space_ids, dry_run, review_dir, date_updated_gt=None):
         import json
         import os
-        import anthropic as ant
 
         from plane.clickup_migrate.models import EmailCoverage, MappingTable
         from plane.clickup_migrate.normalize import (
@@ -121,8 +140,9 @@ class Command(BaseCommand):
             _make_field_batch_requests,
         )
 
-        run.status = "normalizing"
-        run.save(update_fields=["status"])
+        if run is not None:
+            run.status = "normalizing"
+            run.save(update_fields=["status"])
 
         self.stdout.write("Phase 3: extracting distinct values …")
 
@@ -167,40 +187,58 @@ class Command(BaseCommand):
             for lst in client.get_folderless_lists(sid):
                 lid = lst["id"]
                 field_defs_by_list[lid] = client.get_field_defs(lid)
-                for tasks_page, _ in client.iter_tasks(lid, archived=False):
+                for tasks_page, _ in client.iter_tasks(lid, archived=False, date_updated_gt=date_updated_gt):
                     all_tasks.extend(tasks_page)
-                for tasks_page, _ in client.iter_tasks(lid, archived=True):
+                for tasks_page, _ in client.iter_tasks(lid, archived=True, date_updated_gt=date_updated_gt):
                     all_tasks.extend(tasks_page)
             # Folders + their lists.
             for folder in client.get_folders(sid):
                 for lst in client.get_lists_in_folder(folder["id"]):
                     lid = lst["id"]
                     field_defs_by_list[lid] = client.get_field_defs(lid)
-                    for tasks_page, _ in client.iter_tasks(lid, archived=False):
+                    for tasks_page, _ in client.iter_tasks(lid, archived=False, date_updated_gt=date_updated_gt):
                         all_tasks.extend(tasks_page)
-                    for tasks_page, _ in client.iter_tasks(lid, archived=True):
+                    for tasks_page, _ in client.iter_tasks(lid, archived=True, date_updated_gt=date_updated_gt):
                         all_tasks.extend(tasks_page)
-
-        self.stdout.write(f"Collected {len(all_tasks)} tasks")
 
         # Deduplicate tasks by id.
-        seen_ids: set[str] = set()
-        deduped: list[dict] = []
-        for t in all_tasks:
-            tid = t.get("id", "")
-            if tid not in seen_ids:
-                seen_ids.add(tid)
-                deduped.append(t)
-        all_tasks = deduped
+        all_tasks = self._dedupe_tasks(all_tasks)
+        in_window = len(all_tasks)
+        self.stdout.write(f"Collected {in_window} in-window task(s)")
+
+        # Ancestor backfill: when a window is set, pull out-of-window
+        # parents + dependency targets so hierarchy/relations stay intact.
+        ancestors = 0
+        if date_updated_gt is not None:
+            all_tasks, ancestors = self._backfill_ancestors(client, all_tasks)
+            if ancestors:
+                self.stdout.write(f"Backfilled {ancestors} out-of-window ancestor/relation task(s)")
 
         distinct_statuses = collect_distinct_statuses(all_tasks)
         distinct_fields = collect_distinct_custom_field_defs(field_defs_by_list)
         self.stdout.write(f"Distinct statuses: {len(distinct_statuses)}, custom fields: {len(distinct_fields)}")
 
+        # ── dry-run: counts only, no AI, no writes ────────────────────
+        # The counts above are the whole point of a dry-run; the Anthropic
+        # normalization below is only needed to build the approval tables
+        # for a real --apply, so a dry-run needs no ANTHROPIC_API_KEY.
+        if dry_run:
+            self.stdout.write("\n=== Plan dry-run summary ===")
+            self.stdout.write(f"  spaces:            {len(spaces)}")
+            self.stdout.write(f"  members:           {len(members)}")
+            self.stdout.write(f"  in-window tasks:   {in_window}")
+            self.stdout.write(f"  ancestor backfill: {ancestors}")
+            self.stdout.write(f"  total tasks:       {len(all_tasks)}")
+            self.stdout.write(f"  distinct statuses: {len(distinct_statuses)}")
+            self.stdout.write(f"  custom fields:     {len(distinct_fields)}")
+            self.stdout.write("[DRY RUN — no AI call, no data written]")
+            return
+
         # ── Anthropic Batches ─────────────────────────────────────────
+        import anthropic as ant
         anthropic_key = os.environ.get("ANTHROPIC_API_KEY") or ""
         if not anthropic_key:
-            raise CommandError("ANTHROPIC_API_KEY environment variable required for --plan.")
+            raise CommandError("ANTHROPIC_API_KEY environment variable required for --plan (non-dry-run).")
 
         ai_client = ant.Anthropic(api_key=anthropic_key)
 
@@ -248,10 +286,83 @@ class Command(BaseCommand):
         )
 
     # ─────────────────────────────────────────────────────────────────
+    # Shared extraction helpers
+    # ─────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _dedupe_tasks(tasks):
+        """De-duplicate a task list by id, preserving first-seen order."""
+        seen: set[str] = set()
+        out: list[dict] = []
+        for t in tasks:
+            tid = str(t.get("id", ""))
+            if tid and tid not in seen:
+                seen.add(tid)
+                out.append(t)
+        return out
+
+    @staticmethod
+    def _referenced_task_ids(task) -> set[str]:
+        """Parent + dependency + linked task ids referenced by a task."""
+        ids: set[str] = set()
+        for key in ("parent", "top_level_parent"):
+            val = task.get(key)
+            if val:
+                ids.add(str(val))
+        for dep in (task.get("dependencies") or []):
+            tid = dep.get("task_id")
+            if tid:
+                ids.add(str(tid))
+        for ln in (task.get("linked_tasks") or []):
+            tid = ln.get("task_id") or ln.get("link_id")
+            if tid:
+                ids.add(str(tid))
+        return ids
+
+    def _backfill_ancestors(self, client, tasks, max_rounds: int = 10):
+        """Fetch out-of-window parents/dependency targets to closure.
+
+        Given an in-window task set, repeatedly fetch any referenced
+        parent / dependency / linked task not already present, until no
+        new ids appear (transitive closure) or ``max_rounds`` is reached.
+        A deleted/inaccessible reference (404 → None) is recorded so it is
+        not refetched; pass-2 later flags it as an orphan.
+
+        Returns ``(complete_task_list, backfilled_count)``.
+        """
+        by_id: dict[str, dict | None] = {
+            str(t.get("id", "")): t for t in tasks if t.get("id")
+        }
+
+        frontier: set[str] = set()
+        for t in tasks:
+            frontier |= self._referenced_task_ids(t)
+        frontier -= set(by_id)
+
+        backfilled = 0
+        rounds = 0
+        while frontier and rounds < max_rounds:
+            rounds += 1
+            next_frontier: set[str] = set()
+            for tid in sorted(frontier):
+                if tid in by_id:
+                    continue
+                fetched = client.get_task(tid)
+                by_id[tid] = fetched  # None marks deleted/visited
+                if fetched is None:
+                    continue
+                backfilled += 1
+                next_frontier |= self._referenced_task_ids(fetched)
+            frontier = {i for i in next_frontier if i not in by_id}
+
+        complete = [t for t in by_id.values() if t is not None]
+        return complete, backfilled
+
+    # ─────────────────────────────────────────────────────────────────
     # Phases 4a / 4b / 5 — --apply
     # ─────────────────────────────────────────────────────────────────
 
-    def _run_apply(self, run, client, workspace, bot_user, space_ids, dry_run):
+    def _run_apply(self, run, client, workspace, bot_user, space_ids, dry_run, date_updated_gt=None):
         from plane.clickup_migrate.writers import (
             UserCache,
             MappingCache,
@@ -376,6 +487,7 @@ class Command(BaseCommand):
                     run, client, lid, project, workspace, state_map, label_map,
                     field_defs, mapping_cache, user_cache, bot_user,
                     use_auth, dry_run, counts, task_to_issue, subtask_parents, all_tasks_raw,
+                    date_updated_gt=date_updated_gt,
                 )
 
             # ── folders → Project + Modules ───────────────────────────
@@ -419,6 +531,7 @@ class Command(BaseCommand):
                         field_defs, mapping_cache, user_cache, bot_user,
                         use_auth, dry_run, counts, task_to_issue, subtask_parents, all_tasks_raw,
                         module=module,
+                        date_updated_gt=date_updated_gt,
                     )
 
         # ── pass-2: subtask parents ───────────────────────────────────
@@ -502,6 +615,7 @@ class Command(BaseCommand):
         use_auth, dry_run, counts,
         task_to_issue, subtask_parents, all_tasks_raw,
         module=None,
+        date_updated_gt=None,
     ):
         """Extract and write all tasks from a single ClickUp list."""
         from plane.clickup_migrate.writers import (
@@ -511,7 +625,7 @@ class Command(BaseCommand):
         )
 
         for archived in (False, True):
-            for tasks_page, page_num in client.iter_tasks(list_id, archived=archived):
+            for tasks_page, page_num in client.iter_tasks(list_id, archived=archived, date_updated_gt=date_updated_gt):
                 for task in tasks_page:
                     task_id = str(task.get("id", ""))
                     all_tasks_raw[task_id] = task

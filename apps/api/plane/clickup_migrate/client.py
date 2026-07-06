@@ -143,10 +143,16 @@ class ClickUpClient:
         list_id: str,
         archived: bool = False,
         start_page: int = 0,
+        date_updated_gt: Optional[int] = None,
     ) -> Generator[list, None, None]:
         """Yield task batches for a single list, one page at a time.
 
         Caller may checkpoint the page number to resume on restart.
+
+        ``date_updated_gt`` (Unix ms) restricts the pull to tasks updated
+        strictly after that instant — the SP1 "last N days" window. When
+        None, all tasks are returned (full-history behaviour). Filtering
+        happens server-side, so it also shrinks the rate-limited pull.
 
         IMPORTANT: do NOT pass include_timl=true — it would duplicate
         multi-home tasks and corrupt the list→module mapping.
@@ -160,6 +166,8 @@ class ClickUpClient:
                 "archived": str(archived).lower(),
                 "page": page,
             }
+            if date_updated_gt is not None:
+                params["date_updated_gt"] = int(date_updated_gt)
             data = self._get(f"/list/{list_id}/task", params)
             tasks = data.get("tasks", [])
             last_page = data.get("last_page", False)
@@ -170,6 +178,24 @@ class ClickUpClient:
             if last_page or len(tasks) < self.PAGE_SIZE:
                 break
             page += 1
+
+    def get_task(self, task_id: str) -> Optional[dict]:
+        """Fetch a single task by id (ancestor backfill for the date window).
+
+        When a date-windowed pull excludes a task's parent or a
+        dependency target (because *it* was not updated in the window),
+        we still want the hierarchy/relations intact — so we fetch those
+        referenced tasks individually. Returns None on 404 (deleted).
+        """
+        try:
+            return self._get(
+                f"/task/{task_id}",
+                {"include_markdown_description": "true", "include_subtasks": "false"},
+            )
+        except ClickUpAPIError as exc:
+            if exc.status_code == 404:
+                return None
+            raise
 
     # ─────────────────────────────────────────────────────────────────
     # Comment extraction (cursor paging)
