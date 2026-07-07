@@ -69,6 +69,25 @@ class TestReferencedTaskIds(SimpleTestCase):
         self.assertEqual(Command._referenced_task_ids({"id": "solo"}), set())
 
 
+class TestHeuristicStatusGroup(SimpleTestCase):
+    def test_common_status_names(self):
+        m = Command._heuristic_status_group
+        self.assertEqual(m("Open"), "unstarted")
+        self.assertEqual(m("Closed"), "completed")
+        self.assertEqual(m("done"), "completed")
+        self.assertEqual(m("in progress"), "started")
+        self.assertEqual(m("qa-review"), "started")
+        self.assertEqual(m("code-review"), "started")
+        self.assertEqual(m("backlog"), "backlog")
+        self.assertEqual(m("pending"), "backlog")
+        self.assertEqual(m("Cancelled"), "cancelled")
+
+    def test_unknown_and_empty_return_none(self):
+        self.assertIsNone(Command._heuristic_status_group("Zzxqwv"))
+        self.assertIsNone(Command._heuristic_status_group(""))
+        self.assertIsNone(Command._heuristic_status_group(None))
+
+
 class _BackfillClient:
     """Minimal fake exposing get_task from an in-memory task graph."""
 

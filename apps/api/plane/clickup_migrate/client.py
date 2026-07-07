@@ -131,6 +131,22 @@ class ClickUpClient:
         data = self._get(f"/folder/{folder_id}/list", {"archived": str(archived).lower()})
         return data.get("lists", [])
 
+    def get_space_tags(self, space_id: str) -> list:
+        """Return tags defined in a Space (ClickUp tags are keyed by name).
+
+        ClickUp tags have no numeric id — {name, tag_fg, tag_bg}. Sourcing
+        labels from space.statuses (which lack a name) produced empty
+        external_ids and a partial-unique-index collision; this is the
+        correct source.
+        """
+        try:
+            data = self._get(f"/space/{space_id}/tag")
+            return data.get("tags", [])
+        except ClickUpAPIError as exc:
+            if exc.status_code == 404:
+                return []
+            raise
+
     def get_field_defs(self, list_id: str) -> list:
         """Return custom field definitions for a List."""
         try:

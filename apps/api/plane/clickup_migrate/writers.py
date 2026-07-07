@@ -351,8 +351,12 @@ def write_label(run, workspace, project, clickup_tag: dict, user_cache: UserCach
     from plane.db.models import Label
 
     src_id = str(clickup_tag.get("name", ""))
+    if not src_id:
+        # No name → no stable external_id; skip (avoids empty-key collision
+        # on the cu_label_ext_idx partial unique index).
+        return None
     name = src_id[:255]
-    color = clickup_tag.get("tag_bg", "#60646C")[:255]
+    color = (clickup_tag.get("tag_bg") or "#60646C")[:255]
 
     if dry_run:
         logger.info("[dry-run] would create/update label: %s", name)

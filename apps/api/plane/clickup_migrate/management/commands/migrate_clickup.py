@@ -43,6 +43,12 @@ class Command(BaseCommand):
                                  "and dependency targets of in-window tasks are still "
                                  "pulled in (ancestor backfill), so hierarchy/relations "
                                  "stay intact. Omit for full history.")
+        parser.add_argument("--auto-map", action="store_true",
+                            help="(--plan) Skip Anthropic; map statuses by keyword "
+                                 "heuristic, write MappingTable rows approved=True, and "
+                                 "auto-sign EmailCoverage. Lets --apply proceed with NO "
+                                 "ANTHROPIC_API_KEY. Unknown statuses default to 'backlog' "
+                                 "(logged).")
         parser.add_argument("--run-id", type=int, default=None,
                             help="Resume an existing MigrationRun by ID (else creates a new one)")
         parser.add_argument("--review-dir", default=".", metavar="DIR",
@@ -117,7 +123,8 @@ class Command(BaseCommand):
 
         # ── dispatch ──────────────────────────────────────────────────
         if options["plan"]:
-            self._run_plan(run, client, workspace, bot_user, space_ids, dry_run, review_dir, date_updated_gt)
+            self._run_plan(run, client, workspace, bot_user, space_ids, dry_run, review_dir,
+                           date_updated_gt, auto_map=options["auto_map"])
         else:
             self._run_apply(run, client, workspace, bot_user, space_ids, dry_run, date_updated_gt)
 
@@ -125,7 +132,8 @@ class Command(BaseCommand):
     # Phase 3 — --plan
     # ─────────────────────────────────────────────────────────────────
 
-    def _run_plan(self, run, client, workspace, bot_user, space_ids, dry_run, review_dir, date_updated_gt=None):
+    def _run_plan(self, run, client, workspace, bot_user, space_ids, dry_run, review_dir,
+                  date_updated_gt=None, auto_map=False):
         import json
         import os
 
@@ -170,11 +178,12 @@ class Command(BaseCommand):
                 plane_uid = None
 
             # H1: skip EmailCoverage writes entirely in dry-run.
+            # auto-map signs coverage so --apply's gate passes with no manual step.
             if not dry_run:
                 EmailCoverage.objects.get_or_create(
                     run=run,
                     clickup_email=email,
-                    defaults={"plane_user_id": plane_uid, "signed_off": False},
+                    defaults={"plane_user_id": plane_uid, "signed_off": bool(auto_map)},
                 )
 
         # ── collect tasks + field defs ─────────────────────────────────
@@ -232,6 +241,38 @@ class Command(BaseCommand):
             self.stdout.write(f"  distinct statuses: {len(distinct_statuses)}")
             self.stdout.write(f"  custom fields:     {len(distinct_fields)}")
             self.stdout.write("[DRY RUN — no AI call, no data written]")
+            return
+
+        # ── auto-map: heuristic status mapping, no Anthropic ──────────
+        if auto_map:
+            status_results = {}
+            unknown = []
+            for i, s in enumerate(distinct_statuses):
+                grp = self._heuristic_status_group(s["status_name"])
+                status_results[f"status-{i}"] = grp or "backlog"
+                if grp is None:
+                    unknown.append(s["status_name"])
+            mapping_rows, rejected_rows = build_mapping_rows(
+                run, distinct_statuses, status_results, distinct_fields, {}
+            )
+            all_rows = mapping_rows + rejected_rows
+            for r in all_rows:
+                r.approved = True
+            MappingTable.objects.bulk_create(all_rows, ignore_conflicts=True)
+            self.stdout.write(
+                f"[auto-map] wrote {len(all_rows)} approved MappingTable row(s); "
+                f"{len(unknown)} status(es) defaulted to 'backlog'"
+            )
+            if unknown:
+                sample = ", ".join(sorted(set(unknown))[:15])
+                self.stdout.write(f"[auto-map] defaulted statuses (sample): {sample}")
+            review_path = os.path.join(review_dir, f"clickup-migration-review-{date.today()}.md")
+            emit_review_file(review_path, distinct_statuses, mapping_rows, rejected_rows, distinct_fields)
+            self.stdout.write(f"Review file: {review_path}")
+            if run is not None:
+                run.status = "pending"
+                run.save(update_fields=["status"])
+            self.stdout.write("[auto-map] Mappings approved. Ready for --apply.")
             return
 
         # ── Anthropic Batches ─────────────────────────────────────────
@@ -300,6 +341,38 @@ class Command(BaseCommand):
                 seen.add(tid)
                 out.append(t)
         return out
+
+    @staticmethod
+    def _heuristic_status_group(status_name):
+        """Map a ClickUp status name → Plane state group by keyword.
+
+        Returns backlog/unstarted/started/completed/cancelled, or None when
+        no keyword matches (caller defaults to 'backlog'). Order matters:
+        cancelled/completed are checked before started/unstarted so that
+        e.g. 'review complete' resolves to completed, not started.
+        """
+        n = (status_name or "").strip().lower()
+        if not n:
+            return None
+        groups = [
+            ("cancelled", ("cancel", "won't", "wont", "reject", "duplicate",
+                           "invalid", "dropped", "abandon", "archive")),
+            ("completed", ("complete", "closed", "done", "resolved", "finished",
+                           "live", "published", "released", "shipped", "merged",
+                           "approved")),
+            ("started", ("progress", "doing", "wip", "develop", "dev", "coding",
+                         "code", "review", "qa", "test", "design", "art", "build",
+                         "fix", "implement", "feedback", "polish", "working",
+                         "started", "ongoing", "active")),
+            ("backlog", ("backlog", "icebox", "hold", "paused", "someday", "idea",
+                         "pending", "waiting", "block")),
+            ("unstarted", ("to do", "todo", "to-do", "open", "new", "not started",
+                           "ready", "planned", "unstarted", "queue")),
+        ]
+        for group, keywords in groups:
+            if any(kw in n for kw in keywords):
+                return group
+        return None
 
     @staticmethod
     def _referenced_task_ids(task) -> set[str]:
@@ -432,7 +505,7 @@ class Command(BaseCommand):
         # ── per-space traversal ───────────────────────────────────────
         for space in spaces:
             sid = space["id"]
-            space_tags = space.get("statuses") or []
+            space_tags = client.get_space_tags(sid)
 
             # ── folderless lists → Projects ───────────────────────────
             for lst in client.get_folderless_lists(sid):
@@ -461,13 +534,17 @@ class Command(BaseCommand):
                     from plane.db.models import State
                     # C1: BaseModel.save() clears created_by via crum in management
                     # commands. Use the post-save .save(disable_auto_set_user=True) pattern.
-                    fallback_state = State.all_state_objects.create(
+                    # Idempotent: update_or_create so a re-run heals instead of
+                    # colliding on state_unique_name_project_when_deleted_at_null.
+                    fallback_state, _ = State.all_state_objects.update_or_create(
                         project=project,
-                        workspace=workspace,
                         name="Backlog",
-                        color="#60646C",
-                        group="backlog",
-                        default=True,
+                        defaults={
+                            "workspace": workspace,
+                            "color": "#60646C",
+                            "group": "backlog",
+                            "default": True,
+                        },
                     )
                     fallback_state.save(
                         created_by_id=bot_user.id,
