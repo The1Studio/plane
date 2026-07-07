@@ -58,9 +58,11 @@ class Command(BaseCommand):
                                  "array (issue #6), so each task needs an extra single-task "
                                  "detail fetch (GET /task/{id}) — ~1 additional API call per "
                                  "task. Enable for a completeness run; leave off for a fast "
-                                 "metadata-only migration. Download auth defaults to sending "
-                                 "the ClickUp token; set CLICKUP_ATTACHMENT_NO_AUTH=1 if your "
-                                 "attachment URLs are pre-signed and reject the auth header.")
+                                 "metadata-only migration. ClickUp attachment URLs are "
+                                 "pre-signed (*.clickup-attachments.com) and REJECT the auth "
+                                 "header (verified: with-auth 401, without 206), so downloads "
+                                 "default to sending NO auth; set CLICKUP_ATTACHMENT_USE_AUTH=1 "
+                                 "to force the token header on for a workspace that needs it.")
         parser.add_argument("--run-id", type=int, default=None,
                             help="Resume an existing MigrationRun by ID (else creates a new one)")
         parser.add_argument("--review-dir", default=".", metavar="DIR",
@@ -521,10 +523,12 @@ class Command(BaseCommand):
         user_cache = UserCache(bot_user)
         mapping_cache = MappingCache(run)
 
-        # Attachment download auth: send the ClickUp token by default. Some
-        # ClickUp attachment URLs are pre-signed (S3) and reject the auth
-        # header — set CLICKUP_ATTACHMENT_NO_AUTH=1 to download without it.
-        use_auth: bool = os.environ.get("CLICKUP_ATTACHMENT_NO_AUTH", "").strip().lower() not in ("1", "true", "yes")
+        # Attachment download auth: ClickUp attachment URLs are pre-signed
+        # (*.clickup-attachments.com) and REJECT the Authorization header —
+        # verified against this workspace: with-auth → 401, without → 206.
+        # So default to NO auth header; set CLICKUP_ATTACHMENT_USE_AUTH=1 to
+        # force it on for a workspace whose URLs require the token.
+        use_auth: bool = os.environ.get("CLICKUP_ATTACHMENT_USE_AUTH", "").strip().lower() in ("1", "true", "yes")
         if migrate_attachments:
             self.stdout.write(
                 f"Attachments: ENABLED (per-task detail fetch; "
