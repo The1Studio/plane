@@ -14,6 +14,9 @@
 #            every MappingTable row is approved and EmailCoverage is signed.
 # --dry-run: No .save() calls; emit would-create counts only.
 # --space:   Scope to a single ClickUp Space (pilot run).
+# --attachments: (--apply) Also migrate task attachments. Off by default because
+#            ClickUp's list endpoint omits the attachments array (issue #6), so
+#            enabling it costs one extra GET /task/{id} detail fetch per task.
 
 import logging
 import os
@@ -49,6 +52,15 @@ class Command(BaseCommand):
                                  "auto-sign EmailCoverage. Lets --apply proceed with NO "
                                  "ANTHROPIC_API_KEY. Unknown statuses default to 'backlog' "
                                  "(logged).")
+        parser.add_argument("--attachments", action="store_true",
+                            help="(--apply) Migrate task attachments. Off by default "
+                                 "because ClickUp's list endpoint omits the attachments "
+                                 "array (issue #6), so each task needs an extra single-task "
+                                 "detail fetch (GET /task/{id}) — ~1 additional API call per "
+                                 "task. Enable for a completeness run; leave off for a fast "
+                                 "metadata-only migration. Download auth defaults to sending "
+                                 "the ClickUp token; set CLICKUP_ATTACHMENT_NO_AUTH=1 if your "
+                                 "attachment URLs are pre-signed and reject the auth header.")
         parser.add_argument("--run-id", type=int, default=None,
                             help="Resume an existing MigrationRun by ID (else creates a new one)")
         parser.add_argument("--review-dir", default=".", metavar="DIR",
@@ -126,7 +138,8 @@ class Command(BaseCommand):
             self._run_plan(run, client, workspace, bot_user, space_ids, dry_run, review_dir,
                            date_updated_gt, auto_map=options["auto_map"])
         else:
-            self._run_apply(run, client, workspace, bot_user, space_ids, dry_run, date_updated_gt)
+            self._run_apply(run, client, workspace, bot_user, space_ids, dry_run, date_updated_gt,
+                            migrate_attachments=options["attachments"])
 
     # ─────────────────────────────────────────────────────────────────
     # Phase 3 — --plan
@@ -434,11 +447,39 @@ class Command(BaseCommand):
         complete = [t for t in by_id.values() if t is not None]
         return complete, backfilled
 
+    @staticmethod
+    def _resolve_attachments(task, task_id, client, migrate_attachments, counts):
+        """Return the attachment list for a task, fetching detail when needed.
+
+        Issue #6: the extractor pulls tasks via ClickUp's LIST endpoint
+        (``GET /list/{id}/task``), whose task objects DO NOT carry the
+        ``attachments`` array. The single-task detail endpoint
+        (``GET /task/{id}``) does. So:
+
+          * ``migrate_attachments`` off → return [] (no attachments, no cost).
+          * on, list-view task already carries ``attachments`` → use it as-is.
+          * on, ``attachments`` absent → one detail fetch, count it, use the
+            detail's attachments (``[]`` if the task genuinely has none, or
+            the detail was a 404/None).
+
+        Pure and side-effect-free apart from bumping ``counts`` — unit-tested
+        without a DB or live ClickUp connection.
+        """
+        if not migrate_attachments:
+            return []
+        attachments = task.get("attachments")
+        if attachments is None:
+            detail = client.get_task(task_id)
+            counts["attachment_detail_fetch"] += 1
+            attachments = (detail or {}).get("attachments") or []
+        return attachments
+
     # ─────────────────────────────────────────────────────────────────
     # Phases 4a / 4b / 5 — --apply
     # ─────────────────────────────────────────────────────────────────
 
-    def _run_apply(self, run, client, workspace, bot_user, space_ids, dry_run, date_updated_gt=None):
+    def _run_apply(self, run, client, workspace, bot_user, space_ids, dry_run, date_updated_gt=None,
+                   migrate_attachments=False):
         from plane.clickup_migrate.writers import (
             UserCache,
             MappingCache,
@@ -480,7 +521,15 @@ class Command(BaseCommand):
         user_cache = UserCache(bot_user)
         mapping_cache = MappingCache(run)
 
-        use_auth: bool = True  # default; caller can override via env
+        # Attachment download auth: send the ClickUp token by default. Some
+        # ClickUp attachment URLs are pre-signed (S3) and reject the auth
+        # header — set CLICKUP_ATTACHMENT_NO_AUTH=1 to download without it.
+        use_auth: bool = os.environ.get("CLICKUP_ATTACHMENT_NO_AUTH", "").strip().lower() not in ("1", "true", "yes")
+        if migrate_attachments:
+            self.stdout.write(
+                f"Attachments: ENABLED (per-task detail fetch; "
+                f"download {'WITH' if use_auth else 'WITHOUT'} auth header)"
+            )
 
         all_spaces = client.get_spaces()
         if space_ids:
@@ -493,7 +542,7 @@ class Command(BaseCommand):
             "project": 0, "state": 0, "label": 0, "module": 0,
             "issue": 0, "assignee": 0, "label_link": 0,
             "module_issue": 0, "subscriber": 0, "comment": 0,
-            "attachment": 0, "relation": 0, "parent_link": 0,
+            "attachment": 0, "attachment_detail_fetch": 0, "relation": 0, "parent_link": 0,
             "estimate": 0, "estimate_parent_skip": 0,
         }
         total_hours = 0.0
@@ -568,6 +617,7 @@ class Command(BaseCommand):
                     field_defs, mapping_cache, user_cache, bot_user,
                     use_auth, dry_run, counts, task_to_issue, subtask_parents, all_tasks_raw,
                     date_updated_gt=date_updated_gt,
+                    migrate_attachments=migrate_attachments,
                 )
 
             # ── folders → Project + Modules ───────────────────────────
@@ -612,6 +662,7 @@ class Command(BaseCommand):
                         use_auth, dry_run, counts, task_to_issue, subtask_parents, all_tasks_raw,
                         module=module,
                         date_updated_gt=date_updated_gt,
+                        migrate_attachments=migrate_attachments,
                     )
 
         # ── pass-2: subtask parents ───────────────────────────────────
@@ -696,6 +747,7 @@ class Command(BaseCommand):
         task_to_issue, subtask_parents, all_tasks_raw,
         module=None,
         date_updated_gt=None,
+        migrate_attachments=False,
     ):
         """Extract and write all tasks from a single ClickUp list."""
         from plane.clickup_migrate.writers import (
@@ -783,8 +835,11 @@ class Command(BaseCommand):
                         issue, task, field_defs, mapping_cache, bot_user, dry_run
                     )
 
-                    # Attachments.
-                    for att in (task.get("attachments") or []):
+                    # Attachments (see _resolve_attachments for the issue-#6
+                    # list-endpoint detail-fetch rationale).
+                    for att in self._resolve_attachments(
+                        task, task_id, client, migrate_attachments, counts
+                    ):
                         write_attachment(run, issue, workspace, att, client, use_auth, bot_user, dry_run)
                         counts["attachment"] += 1
 

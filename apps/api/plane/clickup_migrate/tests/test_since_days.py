@@ -131,3 +131,77 @@ class TestBackfillAncestors(SimpleTestCase):
         self.assertEqual(backfilled, 0)
         self.assertEqual(client.fetched, [])
         self.assertEqual(sorted(t["id"] for t in complete), ["A", "B"])
+
+
+class _AttachmentClient:
+    """Fake exposing get_task, recording which task ids were detail-fetched."""
+
+    def __init__(self, detail_graph=None):
+        self.detail_graph = detail_graph or {}
+        self.fetched = []
+
+    def get_task(self, task_id):
+        self.fetched.append(task_id)
+        return self.detail_graph.get(task_id)  # None → 404/deleted
+
+
+class TestResolveAttachments(SimpleTestCase):
+    """Issue #6: list-view tasks omit `attachments`; detail fetch fills the gap."""
+
+    def _counts(self):
+        return {"attachment_detail_fetch": 0}
+
+    def test_disabled_returns_empty_and_never_fetches(self):
+        client = _AttachmentClient({"T1": {"attachments": [{"id": "a1"}]}})
+        counts = self._counts()
+        out = Command._resolve_attachments(
+            {"id": "T1"}, "T1", client, migrate_attachments=False, counts=counts
+        )
+        self.assertEqual(out, [])
+        self.assertEqual(client.fetched, [])  # no wasted API call when off
+        self.assertEqual(counts["attachment_detail_fetch"], 0)
+
+    def test_list_view_task_triggers_detail_fetch(self):
+        # List endpoint omits `attachments` entirely (the real bug).
+        client = _AttachmentClient({"T1": {"attachments": [{"id": "a1"}, {"id": "a2"}]}})
+        counts = self._counts()
+        out = Command._resolve_attachments(
+            {"id": "T1"}, "T1", client, migrate_attachments=True, counts=counts
+        )
+        self.assertEqual([a["id"] for a in out], ["a1", "a2"])
+        self.assertEqual(client.fetched, ["T1"])  # one detail fetch
+        self.assertEqual(counts["attachment_detail_fetch"], 1)
+
+    def test_detail_none_yields_empty_without_crashing(self):
+        # get_task 404 → None; must degrade to [] not raise.
+        client = _AttachmentClient({})  # T1 not present → None
+        counts = self._counts()
+        out = Command._resolve_attachments(
+            {"id": "T1"}, "T1", client, migrate_attachments=True, counts=counts
+        )
+        self.assertEqual(out, [])
+        self.assertEqual(client.fetched, ["T1"])
+        self.assertEqual(counts["attachment_detail_fetch"], 1)
+
+    def test_task_with_no_attachments_returns_empty(self):
+        # Detail fetched, task genuinely has zero attachments.
+        client = _AttachmentClient({"T1": {"attachments": []}})
+        counts = self._counts()
+        out = Command._resolve_attachments(
+            {"id": "T1"}, "T1", client, migrate_attachments=True, counts=counts
+        )
+        self.assertEqual(out, [])
+        self.assertEqual(counts["attachment_detail_fetch"], 1)
+
+    def test_preloaded_attachments_skip_detail_fetch(self):
+        # If a task already carries `attachments` (e.g. a detail-fetched
+        # ancestor), reuse it — no second round-trip.
+        client = _AttachmentClient({})
+        counts = self._counts()
+        out = Command._resolve_attachments(
+            {"id": "T1", "attachments": [{"id": "a1"}]}, "T1", client,
+            migrate_attachments=True, counts=counts,
+        )
+        self.assertEqual([a["id"] for a in out], ["a1"])
+        self.assertEqual(client.fetched, [])  # already had them
+        self.assertEqual(counts["attachment_detail_fetch"], 0)
