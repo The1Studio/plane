@@ -101,9 +101,17 @@ class ClickUpClient:
     # ─────────────────────────────────────────────────────────────────
 
     def get_team_members(self) -> list:
-        """Return all workspace members (for email → user mapping)."""
-        data = self._get(f"/team/{self._team_id}/member")
-        return data.get("members", [])
+        """Return all workspace members (for email → user mapping).
+
+        ClickUp API v2 has NO /team/<id>/member endpoint (404). The member
+        list is embedded in GET /team (authorized workspaces) — locate our
+        team by id and return its members.
+        """
+        data = self._get("/team")
+        for team in data.get("teams", []):
+            if str(team.get("id")) == str(self._team_id):
+                return team.get("members", [])
+        return []
 
     def get_spaces(self, archived: bool = False) -> list:
         """Return all Spaces in the workspace."""
