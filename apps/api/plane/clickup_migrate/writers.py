@@ -350,13 +350,17 @@ def write_label(run, workspace, project, clickup_tag: dict, user_cache: UserCach
     from plane.clickup_migrate.models import MigrationRecord
     from plane.db.models import Label
 
-    src_id = str(clickup_tag.get("name", ""))
-    if not src_id:
+    tag_name = str(clickup_tag.get("name", ""))
+    if not tag_name:
         # No name → no stable external_id; skip (avoids empty-key collision
         # on the cu_label_ext_idx partial unique index).
         return None
-    name = src_id[:255]
+    name = tag_name[:255]
     color = (clickup_tag.get("tag_bg") or "#60646C")[:255]
+    # cu_label_ext_idx is UNIQUE on external_id ALONE (not per-project), but a
+    # ClickUp tag (e.g. "3d") recurs across many projects → collision. Scope
+    # the external_id by project to keep it globally unique.
+    src_id = f"{project.id}_{tag_name}"
 
     if dry_run:
         logger.info("[dry-run] would create/update label: %s", name)
@@ -398,14 +402,17 @@ def write_module(run, project, workspace, clickup_list: dict, user_cache: UserCa
         return None
 
     with transaction.atomic():
+        # Key on (project, name) — mirrors module_unique_name_project_when_deleted_at_null.
+        # Two folder lists can share a name (ClickUp quirk, e.g. duplicate
+        # "Sprint 2" lists); collapse them to one module instead of colliding.
         module, created = Module.all_objects.update_or_create(
-            external_source=EXTERNAL_SOURCE,
-            external_id=src_id,
             project=project,
+            name=name,
             defaults={
                 "workspace": workspace,
-                "name": name,
                 "status": "planned",
+                "external_source": EXTERNAL_SOURCE,
+                "external_id": src_id,
             },
         )
         # C1: authorship via save kwargs.
