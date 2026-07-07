@@ -297,10 +297,15 @@ class ClickUpClient:
         return result
 
     def download_attachment(self, url: str, use_auth: bool = True) -> requests.Response:
-        """Stream-download an attachment, honouring the auth-spike result."""
-        headers = {}
-        if use_auth:
-            headers["Authorization"] = self._token
+        """Stream-download an attachment, honouring the auth-spike result.
+
+        NB: the shared session carries a global Authorization header (set in
+        __init__), so downloading WITHOUT auth requires explicitly removing it
+        — requests drops a header whose per-request value is None. Pre-signed
+        ClickUp attachment URLs (*.clickup-attachments.com) 401 when the token
+        header is present, so use_auth=False MUST actually strip it.
+        """
+        headers = {"Authorization": self._token} if use_auth else {"Authorization": None}
         resp = self._session.get(url, headers=headers, stream=True, timeout=60)
         resp.raise_for_status()
         return resp
