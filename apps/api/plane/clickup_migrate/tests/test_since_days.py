@@ -76,6 +76,8 @@ class TestHeuristicStatusGroup(SimpleTestCase):
         self.assertEqual(m("Closed"), "completed")
         self.assertEqual(m("done"), "completed")
         self.assertEqual(m("in progress"), "started")
+        self.assertEqual(m("not started"), "unstarted")  # not the 'started' substring
+        self.assertEqual(m("to do"), "unstarted")
         self.assertEqual(m("qa-review"), "started")
         self.assertEqual(m("code-review"), "started")
         self.assertEqual(m("backlog"), "backlog")

@@ -354,20 +354,23 @@ class Command(BaseCommand):
         n = (status_name or "").strip().lower()
         if not n:
             return None
+        # Order matters. cancelled/completed first; then unstarted BEFORE
+        # started so "not started"/"unstarted" don't match the "started"
+        # substring; backlog last as the catch-all for hold/pending states.
         groups = [
             ("cancelled", ("cancel", "won't", "wont", "reject", "duplicate",
                            "invalid", "dropped", "abandon", "archive")),
             ("completed", ("complete", "closed", "done", "resolved", "finished",
                            "live", "published", "released", "shipped", "merged",
                            "approved")),
+            ("unstarted", ("to do", "todo", "to-do", "not started", "unstarted",
+                           "open", "new", "ready", "planned", "queue")),
             ("started", ("progress", "doing", "wip", "develop", "dev", "coding",
                          "code", "review", "qa", "test", "design", "art", "build",
                          "fix", "implement", "feedback", "polish", "working",
                          "started", "ongoing", "active")),
             ("backlog", ("backlog", "icebox", "hold", "paused", "someday", "idea",
                          "pending", "waiting", "block")),
-            ("unstarted", ("to do", "todo", "to-do", "open", "new", "not started",
-                           "ready", "planned", "unstarted", "queue")),
         ]
         for group, keywords in groups:
             if any(kw in n for kw in keywords):
@@ -699,7 +702,9 @@ class Command(BaseCommand):
             write_issue, write_issue_assignee, write_issue_label,
             write_module_issue, write_issue_subscriber, write_comment,
             write_attachment, write_custom_fields_to_description,
+            write_state,
         )
+        from plane.db.models import State
 
         for archived in (False, True):
             for tasks_page, page_num in client.iter_tasks(list_id, archived=archived, date_updated_gt=date_updated_gt):
@@ -712,9 +717,27 @@ class Command(BaseCommand):
                     if parent_task_id:
                         subtask_parents[task_id] = parent_task_id
 
-                    # Resolve state.
-                    status_name = (task.get("status") or {}).get("status", "")
+                    # Resolve state — create lazily from the TASK's status.
+                    # This workspace exposes statuses at space/folder level, so
+                    # list defs carry none; deriving states from tasks is the
+                    # only way to preserve real Open/In-Progress/Done fidelity.
+                    status_obj = task.get("status") or {}
+                    status_name = status_obj.get("status", "")
                     state = state_map.get(status_name)
+                    if state is None and status_name and not dry_run:
+                        group = mapping_cache.status_group(list_id, status_name)
+                        has_default = State.all_state_objects.filter(
+                            project=project, default=True
+                        ).exists()
+                        state = write_state(
+                            run, project, workspace, list_id,
+                            {"status": status_name, "color": status_obj.get("color", "#60646C")},
+                            group, is_default=not has_default,
+                            user_cache=user_cache, dry_run=dry_run,
+                        )
+                        if state is not None:
+                            state_map[status_name] = state
+                            counts["state"] += 1
                     if state is None and state_map:
                         state = next(iter(state_map.values()))
 
