@@ -97,6 +97,8 @@ INSTALLED_APPS = [
     "plane.clickup_migrate",
     "plane.ai_ext",
     "plane.workload",
+    # The1Studio fork (github_ext) — docs/FORK.md touch-point 1
+    "plane.github_ext",
     # Third-party things
     "rest_framework",
     "corsheaders",
