@@ -35,13 +35,13 @@ DEFAULT_RULES = {
 EVENT_KEYS = tuple(DEFAULT_RULES.keys())
 
 
-def resolve_config(project):
-    """Return the effective event→state-name rules for `project`.
+def resolve_workspace_config(workspace_id):
+    """Return the effective event→state-name rules for a workspace, before any
+    per-project override.
 
-    Precedence (deterministic, phase-P2.md): a `scope="project"` row for this
-    project wins; else the `scope="global"` row; else the built-in
-    `DEFAULT_RULES`. A partial rules dict is merged over the defaults so an
-    override need only specify the events it changes.
+    Precedence: built-in `DEFAULT_RULES` → the instance-wide `scope="global"`
+    row → the `scope="workspace"` row for this workspace. Each partial rules
+    dict is merged over the lower tier.
     """
     from plane.github_ext.models import StateTransitionConfig
 
@@ -50,6 +50,28 @@ def resolve_config(project):
     global_row = StateTransitionConfig.objects.filter(scope="global").first()
     if global_row and global_row.rules:
         rules.update(global_row.rules)
+
+    workspace_row = StateTransitionConfig.objects.filter(
+        scope="workspace", workspace_id=workspace_id
+    ).first()
+    if workspace_row and workspace_row.rules:
+        rules.update(workspace_row.rules)
+
+    return rules
+
+
+def resolve_config(project):
+    """Return the effective event→state-name rules for `project`.
+
+    Three-tier precedence (deterministic): built-in `DEFAULT_RULES` → the
+    instance-wide `scope="global"` row → the `scope="workspace"` row for this
+    project's workspace → the `scope="project"` row for this project. Each
+    partial rules dict is merged over the lower tiers, so an override need only
+    specify the events it changes.
+    """
+    from plane.github_ext.models import StateTransitionConfig
+
+    rules = resolve_workspace_config(project.workspace_id)
 
     project_row = StateTransitionConfig.objects.filter(
         scope="project", project_id=project.id

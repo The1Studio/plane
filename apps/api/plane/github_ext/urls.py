@@ -11,15 +11,26 @@ from django.urls import path
 from plane.github_ext.views.config import (
     GithubGlobalConfigView,
     GithubProjectConfigView,
+    GithubWorkspaceConfigView,
 )
 from plane.github_ext.webhook.views import GithubWebhookView
 
 urlpatterns = [
     path("github/webhook/", GithubWebhookView.as_view(), name="github-webhook"),
-    # P2 — status-automation config CRUD (views/config.py).
-    path("github/config/", GithubGlobalConfigView.as_view(), name="github-global-config"),
+    # P2/P4 — status-automation config CRUD, three-tier scoping
+    # (views/config.py): instance-global -> per-workspace -> per-project.
     path(
-        "github/projects/<uuid:project_id>/config/",
+        "github/config/",
+        GithubGlobalConfigView.as_view(),
+        name="github-global-config",
+    ),
+    path(
+        "github/<str:slug>/config/",
+        GithubWorkspaceConfigView.as_view(),
+        name="github-workspace-config",
+    ),
+    path(
+        "github/<str:slug>/projects/<uuid:project_id>/config/",
         GithubProjectConfigView.as_view(),
         name="github-project-config",
     ),

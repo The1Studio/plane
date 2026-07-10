@@ -2,33 +2,40 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # See the LICENSE file for details.
 #
-# P2 — status-automation config CRUD (github_ext). Mirrors ai_ext's
-# BaseAPIView + @allow_permission pattern (ai_ext/views/config.py):
-# `from plane.app.views.base import BaseAPIView`,
-# `from plane.app.permissions import ROLE, allow_permission`, class-based
-# views with `@allow_permission([ROLE.ADMIN], level="WORKSPACE")` on writes.
+# P2/P4 — status-automation config CRUD (github_ext). Three-tier scoping,
+# resolved most-specific-wins by services/state_transition.py:
 #
-# URL-vs-permission note (deliberate deviation, documented for review): the
-# shared `@allow_permission(level="WORKSPACE")` decorator
-# (plane/app/permissions/base.py) reads `kwargs["slug"]` to scope its
-# WorkspaceMember lookup. Neither route here carries a `<str:slug>` path
-# segment (github/config/, github/projects/<uuid:project_id>/config/), so
-# `initial()` is overridden on both views to resolve/inject a `slug` kwarg
-# BEFORE the decorated handler runs (DRF's `APIView.dispatch()` reuses the
-# same `kwargs` dict for `self.kwargs` and the eventual `handler(...)` call,
-# so mutating `self.kwargs` inside `initial()` is visible to the decorator):
+#   instance-global  ->  per-workspace  ->  per-project
 #
-#   - GithubProjectConfigView: `project_id` is in the URL -> the project's
-#     workspace slug is looked up unambiguously and injected. A missing
-#     project raises `NotFound` (404) here, before the decorator runs.
-#   - GithubGlobalConfigView: `StateTransitionConfig(scope="global")` has no
-#     workspace FK at all (models.py) — it is a single instance-wide row, so
-#     there is no URL-derivable workspace. The acting workspace (whose
-#     role gates access) is instead taken from `?slug=` (GET) or the `slug`
-#     field of the PUT body. A missing slug raises `ValidationError` (400).
+# Each tier is a separate endpoint with the matching permission level:
+#
+#   GET/PUT /api/github/config/                              (INSTANCE admin)
+#       The single scope="global" row — the instance-wide default rules.
+#       Gated by InstanceAdminPermission because one row is shared by every
+#       workspace on the instance; a per-workspace admin must NOT be able to
+#       change what other workspaces inherit.
+#
+#   GET/PUT /api/github/<slug>/config/                       (workspace admin)
+#       The scope="workspace" row for <slug>. GET returns the resolved
+#       defaults->global->workspace rules; PUT upserts this workspace's
+#       override. Validated for shape only — a workspace override is
+#       project-agnostic (state NAMES, not a specific project's State rows),
+#       so state existence is checked at the project tier, not here.
+#
+#   GET/PUT /api/github/<slug>/projects/<uuid:project_id>/config/  (ws admin)
+#       The scope="project" row. GET returns the fully-resolved effective
+#       rules for the project; PUT upserts the override and validates each
+#       state NAME exists in the project. The <slug> in the path MUST own
+#       <project_id> (guarded in initial()) so the workspace-role gate can't
+#       be satisfied against an unrelated workspace.
+#
+# Workspace-tier views scope the shared @allow_permission(level="WORKSPACE")
+# decorator (plane/app/permissions/base.py) via a real <str:slug> path
+# segment — no more query-param slug injection. The global view uses DRF
+# permission_classes = [InstanceAdminPermission] directly (no slug at all).
 
 from rest_framework import status
-from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
 
 from plane.app.permissions import ROLE, allow_permission
@@ -39,7 +46,9 @@ from plane.github_ext.services.state_transition import (
     DEFAULT_RULES,
     EVENT_KEYS,
     resolve_config,
+    resolve_workspace_config,
 )
+from plane.license.api.permissions import InstanceAdminPermission
 
 
 def _validate_rules_shape(rules):
@@ -58,33 +67,24 @@ def _validate_rules_shape(rules):
 
 
 class GithubGlobalConfigView(BaseAPIView):
-    """Read + upsert the scope="global" StateTransitionConfig row (the
-    instance-wide default rules, overridable per-project via
-    `GithubProjectConfigView`).
+    """Read + upsert the scope="global" StateTransitionConfig row — the
+    instance-wide default rules, overridable per-workspace
+    (`GithubWorkspaceConfigView`) then per-project (`GithubProjectConfigView`).
 
-    GET /api/github/config/?slug=<workspace-slug> — any workspace member
-    PUT /api/github/config/ ({"slug": "...", "rules": {...}}) — admin only
+    GET /api/github/config/ — instance admin
+    PUT /api/github/config/ ({"rules": {...}}) — instance admin
     """
 
-    def initial(self, request, *args, **kwargs):
-        slug = request.query_params.get("slug") or request.data.get("slug")
-        if not slug:
-            raise ValidationError(
-                {"slug": "slug query param (GET) or body field (PUT) is required"}
-            )
-        self.kwargs["slug"] = slug
-        super().initial(request, *args, **kwargs)
+    permission_classes = [InstanceAdminPermission]
 
-    @allow_permission([ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST], level="WORKSPACE")
-    def get(self, request, slug):
+    def get(self, request):
         rules = dict(DEFAULT_RULES)
         row = StateTransitionConfig.objects.filter(scope="global").first()
         if row and row.rules:
             rules.update(row.rules)
         return Response({"rules": rules}, status=status.HTTP_200_OK)
 
-    @allow_permission([ROLE.ADMIN], level="WORKSPACE")
-    def put(self, request, slug):
+    def put(self, request):
         rules = request.data.get("rules")
         error = _validate_rules_shape(rules)
         if error:
@@ -98,32 +98,79 @@ class GithubGlobalConfigView(BaseAPIView):
         return Response({"rules": row.rules}, status=status.HTTP_200_OK)
 
 
-class GithubProjectConfigView(BaseAPIView):
-    """Read the effective (merged) config for a project + upsert its
-    scope="project" override row.
+class GithubWorkspaceConfigView(BaseAPIView):
+    """Read the resolved (defaults→global→workspace) rules + upsert this
+    workspace's scope="workspace" override row.
 
-    GET /api/github/projects/<uuid:project_id>/config/ — any workspace member
-    PUT /api/github/projects/<uuid:project_id>/config/ ({"rules": {...}}) — admin only
+    GET /api/github/<slug>/config/ — any workspace member
+    PUT /api/github/<slug>/config/ ({"rules": {...}}) — workspace admin
+
+    Shape-only validation: a workspace override is project-agnostic, so state
+    NAMES are not checked against any project's State rows here (that happens
+    at the project tier).
     """
 
     def initial(self, request, *args, **kwargs):
-        project_id = kwargs.get("project_id")
-        project = (
-            Project.objects.filter(id=project_id).select_related("workspace").first()
-        )
-        if project is None:
-            raise NotFound("project not found")
-        self._project = project
-        self.kwargs["slug"] = project.workspace.slug
+        from plane.db.models import Workspace
+
+        workspace = Workspace.objects.filter(slug=kwargs.get("slug")).first()
+        if workspace is None:
+            raise NotFound("workspace not found")
+        self._workspace = workspace
         super().initial(request, *args, **kwargs)
 
     @allow_permission([ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST], level="WORKSPACE")
-    def get(self, request, project_id, slug):
+    def get(self, request, slug):
+        rules = resolve_workspace_config(self._workspace.id)
+        return Response({"rules": rules}, status=status.HTTP_200_OK)
+
+    @allow_permission([ROLE.ADMIN], level="WORKSPACE")
+    def put(self, request, slug):
+        rules = request.data.get("rules")
+        error = _validate_rules_shape(rules)
+        if error:
+            return Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
+
+        row = StateTransitionConfig.objects.filter(
+            scope="workspace", workspace_id=self._workspace.id
+        ).first()
+        if row is None:
+            row = StateTransitionConfig(scope="workspace", workspace=self._workspace)
+        row.rules = rules
+        row.save()
+        return Response({"rules": row.rules}, status=status.HTTP_200_OK)
+
+
+class GithubProjectConfigView(BaseAPIView):
+    """Read the fully-resolved effective config for a project + upsert its
+    scope="project" override row.
+
+    GET /api/github/<slug>/projects/<uuid:project_id>/config/ — any ws member
+    PUT /api/github/<slug>/projects/<uuid:project_id>/config/ — workspace admin
+
+    The <slug> in the path MUST own <project_id>; a mismatch is a 404 (before
+    the role gate runs) so the workspace-role check can't be satisfied against
+    an unrelated workspace.
+    """
+
+    def initial(self, request, *args, **kwargs):
+        project = (
+            Project.objects.filter(id=kwargs.get("project_id"))
+            .select_related("workspace")
+            .first()
+        )
+        if project is None or project.workspace.slug != kwargs.get("slug"):
+            raise NotFound("project not found")
+        self._project = project
+        super().initial(request, *args, **kwargs)
+
+    @allow_permission([ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST], level="WORKSPACE")
+    def get(self, request, slug, project_id):
         rules = resolve_config(self._project)
         return Response({"rules": rules}, status=status.HTTP_200_OK)
 
     @allow_permission([ROLE.ADMIN], level="WORKSPACE")
-    def put(self, request, project_id, slug):
+    def put(self, request, slug, project_id):
         rules = request.data.get("rules")
         error = _validate_rules_shape(rules)
         if error:

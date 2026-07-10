@@ -125,15 +125,29 @@ class StateTransitionConfig(models.Model):
 
     Defined in P0; consumed by the P2 status-automation pipeline. `rules` is
     an opaque JSON blob owned by P2 (e.g. {"pr_opened": "in_progress", ...}).
+
+    Three scope tiers, resolved most-specific-wins (services/state_transition.py
+    `resolve_config`): `global` (instance-wide default, workspace+project null) →
+    `workspace` (per-workspace override, workspace set) → `project` (per-project
+    override, project set). A partial `rules` dict at any tier is merged over the
+    lower tiers, so an override need only carry the events it changes.
     """
 
     SCOPE_CHOICES = (
         ("global", "Global"),
+        ("workspace", "Workspace"),
         ("project", "Project"),
     )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     scope = models.CharField(max_length=16, choices=SCOPE_CHOICES, default="global")
+    workspace = models.ForeignKey(
+        "db.Workspace",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="github_state_transition_configs",
+    )
     project = models.ForeignKey(
         "db.Project",
         null=True,
