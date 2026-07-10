@@ -75,29 +75,18 @@ def write_links(
     """
     from plane.db.models import Issue, IssueLink
 
-    from plane.github_ext.models import RepoProjectMap, WorkItemGithubLink
+    from plane.github_ext.models import WorkItemGithubLink
+    from plane.github_ext.services.repo_scope import resolve_mapped_project
 
-    try:
-        repo_map = RepoProjectMap.objects.select_related("project").get(
-            installation=installation, repo_full_name=repo_full_name
-        )
-    except RepoProjectMap.DoesNotExist:
+    # Repo -> project scope resolution is shared with P2's transition_task
+    # (services/repo_scope.py) — never duplicated, never guessed.
+    project = resolve_mapped_project(installation, repo_full_name)
+    if project is None:
         logger.info(
-            "write_links: repo=%s is unmapped (installation=%s) - dropping %s link "
+            "write_links: repo=%s has no mapped project (installation=%s) - dropping %s link "
             "(external_id=%s), no guess",
             repo_full_name,
             installation.installation_id,
-            link_type,
-            external_id,
-        )
-        return []
-
-    project = repo_map.project
-    if project is None:
-        logger.info(
-            "write_links: repo=%s has no confident project match - dropping %s link "
-            "(external_id=%s), no guess",
-            repo_full_name,
             link_type,
             external_id,
         )

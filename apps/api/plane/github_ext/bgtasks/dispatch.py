@@ -59,6 +59,13 @@ def route_event(self, delivery_id, payload=None):
             # bgtasks/link_task.py module docstring for why (mirrors the
             # installation-handling pattern immediately above).
             process_refs(event_type, payload=payload)
+
+            # P2 — pull_request lifecycle also drives state automation
+            # (independent of the P1 link write above).
+            if event_type == "pull_request":
+                from plane.github_ext.bgtasks.transition_task import process_pr_transition
+
+                process_pr_transition(payload=payload)
         elif event_type in _NOOP_EVENTS:
             logger.debug(
                 "route_event: %s is a no-op in P0 (delivery=%s)", event_type, delivery_id

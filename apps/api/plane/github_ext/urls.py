@@ -8,8 +8,19 @@
 
 from django.urls import path
 
+from plane.github_ext.views.config import (
+    GithubGlobalConfigView,
+    GithubProjectConfigView,
+)
 from plane.github_ext.webhook.views import GithubWebhookView
 
 urlpatterns = [
     path("github/webhook/", GithubWebhookView.as_view(), name="github-webhook"),
+    # P2 — status-automation config CRUD (views/config.py).
+    path("github/config/", GithubGlobalConfigView.as_view(), name="github-global-config"),
+    path(
+        "github/projects/<uuid:project_id>/config/",
+        GithubProjectConfigView.as_view(),
+        name="github-project-config",
+    ),
 ]
