@@ -111,6 +111,11 @@ build/
 temp/
 scripts/
 
+# The1Studio fork — skill helper scripts must be versioned (override the
+# blanket `scripts/` ignore above; skill scripts are part of the deliverable).
+!.claude/skills/**/scripts/
+!.claude/skills/**/scripts/**
+
 # The1Studio fork — local-only dev artifacts
 .playwright-mcp/
 docker-compose.local.yml
