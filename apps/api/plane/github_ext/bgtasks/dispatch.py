@@ -14,9 +14,11 @@ from celery import shared_task
 logger = logging.getLogger("plane.github_ext")
 
 _INSTALLATION_EVENTS = ("installation", "installation_repositories")
-# P0 ingests these but does no work yet — P1 (links) and P2 (state
-# transitions) fill these handlers in.
-_NOOP_EVENTS = ("push", "pull_request", "issues", "issue_comment")
+# P1 — dev-workflow link parsing (branch/PR/commit -> WorkItemGithubLink).
+_LINK_EVENTS = ("push", "pull_request")
+# P0 ingests these but does no work yet — P2 (state transitions) and P3
+# (comment sync) fill these handlers in.
+_NOOP_EVENTS = ("issues", "issue_comment")
 
 
 @shared_task(
@@ -50,6 +52,13 @@ def route_event(self, delivery_id, payload=None):
             installation = handle_installation_event(event_type, payload)
             if installation is not None:
                 seed_repo_project_map(installation, event_type, payload)
+        elif event_type in _LINK_EVENTS:
+            from plane.github_ext.bgtasks.link_task import process_refs
+
+            # Direct synchronous call, not `.apply_async()` — see
+            # bgtasks/link_task.py module docstring for why (mirrors the
+            # installation-handling pattern immediately above).
+            process_refs(event_type, payload=payload)
         elif event_type in _NOOP_EVENTS:
             logger.debug(
                 "route_event: %s is a no-op in P0 (delivery=%s)", event_type, delivery_id

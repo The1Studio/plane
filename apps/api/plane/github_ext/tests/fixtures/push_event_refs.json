@@ -1,0 +1,12 @@
+{
+  "ref": "refs/heads/feature/PROJ-3-add-webhook",
+  "before": "0000000000000000000000000000000000000000",
+  "after": "abc123def4560000000000000000000000000000",
+  "repository": {
+    "full_name": "the1studio/plane-core"
+  },
+  "installation": {
+    "id": 12345
+  },
+  "commits": []
+}
