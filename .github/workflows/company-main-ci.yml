@@ -143,7 +143,112 @@ jobs:
         timeout-minutes: 5
 
   # ---------------------------------------------------------------------------
-  # Job 3 — Smoke placeholder (Phase 5)
+  # Job 3 — Backend pytest suite (fork-owned apps)
+  # Runs the actual Python test suite for The1Studio's fork-owned Django apps.
+  # Job 1 above only checks that the apps IMPORT cleanly and that migrations
+  # are complete — it never executes a single test. This job is the real
+  # regression gate for github_ext / workload / clickup_migrate / ai_ext
+  # behavior (hundreds of tests previously never gated a PR — see PR #14,
+  # which merged 47 github_ext tests only because a human ran pytest by hand).
+  #
+  # Scope: fork-owned apps ONLY. Upstream Plane's own test suite is NOT run
+  # here — it is not maintained on this fork and would fail for unrelated
+  # reasons.
+  #
+  # KNOWN RED AT INTRODUCTION: plane/ai_ext/tests/test_rag_access.py is
+  # broken on company-main; PR #15 fixes it (16/16 green). Merge #15 FIRST,
+  # then this PR. No continue-on-error / `|| true` / app exclusion is used
+  # to mask this — a CI job that hides failures is worse than no CI job.
+  # ---------------------------------------------------------------------------
+  backend-pytest:
+    name: Backend — pytest (fork-owned apps)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_DB: plane
+          POSTGRES_USER: plane
+          POSTGRES_PASSWORD: plane_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U plane"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      # redis:7-alpine — deployment (plane-deploy compose) runs
+      # valkey/valkey:7.2.11-alpine, a Redis-protocol-compatible fork. The
+      # official redis image is used here instead: its `redis-cli`-based
+      # healthcheck is guaranteed present, which is not independently
+      # verified for the valkey image from this sandbox. Major version (7)
+      # matches the deployment target.
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # Same minimal env as job 1, plus REDIS_URL is load-bearing here (not
+      # just an import-time check) — plane/ai_ext exercises the Django cache
+      # backend (django_redis), which needs a real Redis connection.
+      DATABASE_URL: postgresql://plane:plane_ci@localhost:5432/plane
+      REDIS_URL: redis://localhost:6379/0
+      SECRET_KEY: ci-only-not-a-real-secret-key-generated-for-tests-only
+      DJANGO_SETTINGS_MODULE: plane.settings.test
+      # LLM keys — placeholders, not real; tests that touch the LLM client
+      # mock it rather than making network calls.
+      LLM_PROVIDER: anthropic
+      LLM_API_KEY: sk-ci-placeholder
+      LLM_MODEL: claude-sonnet-4-6
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            apps/api/requirements/base.txt
+            apps/api/requirements/test.txt
+
+      - name: Install Python dependencies
+        working-directory: apps/api
+        # requirements/test.txt pulls in base.txt (`-r base.txt`) plus the
+        # pytest/factory-boy/freezegun test toolchain.
+        run: pip install -r requirements/test.txt
+        timeout-minutes: 8
+
+      - name: Enable pgvector extension on template1
+        # plane/ai_ext's VectorField-backed models need the `vector` Postgres
+        # type. pytest.ini runs with `--nomigrations`, which builds the test
+        # schema via syncdb and SKIPS the migration that would normally run
+        # `CREATE EXTENSION vector` — so the extension must be pre-enabled on
+        # template1 before pytest-django clones it into test_plane. Mirrors
+        # the established local-dev workaround for this same constraint.
+        run: |
+          PGPASSWORD=plane_ci psql -h localhost -U plane -d template1 \
+            -c "CREATE EXTENSION IF NOT EXISTS vector;"
+        timeout-minutes: 2
+
+      - name: Run backend test suite (fork-owned apps)
+        working-directory: apps/api
+        run: pytest plane/github_ext plane/workload plane/clickup_migrate plane/ai_ext
+        timeout-minutes: 15
+
+  # ---------------------------------------------------------------------------
+  # Job 4 — Smoke placeholder (Phase 5)
   # This job is a stub. Wire it to the staging VM and the Phase-5 smoke checklist
   # documented in plans/SP0-fork-selfhost-plane.md §Phase 5 once the VM is live.
   # ---------------------------------------------------------------------------
