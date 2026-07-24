@@ -31,20 +31,22 @@ def _sha(text):
     return hashlib.sha256(text.encode()).hexdigest()
 
 
-def _create_workspace(slug=None):
+def _create_user(email=None):
+    from plane.db.models import User
+    email = email or f"user-{uuid.uuid4().hex[:8]}@test.invalid"
+    return User.objects.create_user(email=email, username=email, password="x")
+
+
+def _create_workspace(slug=None, owner=None):
     from plane.db.models import Workspace
     slug = slug or f"ws-{uuid.uuid4().hex[:8]}"
+    owner = owner or _create_user()
     return Workspace.objects.create(
         name=slug,
         slug=slug,
         logo="",
+        owner=owner,
     )
-
-
-def _create_user(email=None):
-    from plane.db.models import User
-    email = email or f"user-{uuid.uuid4().hex[:8]}@test.invalid"
-    return User.objects.create_user(email=email, password="x")
 
 
 def _create_project(workspace, network=0):
@@ -70,26 +72,38 @@ def _add_member(workspace, project, user, role=15):
 
 
 def _create_issue(workspace, project, created_by):
+    # NOTE: BaseModel.save() auto-overwrites created_by from crum's
+    # get_current_user() (None in tests) unless disable_auto_set_user=True
+    # is passed — .objects.create() alone silently drops created_by to
+    # NULL. Build + save explicitly to preserve it (mirrors the idiom in
+    # clickup_migrate/tests/test_writers.py and github_ext/tests).
     from plane.db.models import Issue
-    return Issue.objects.create(
+    issue = Issue(
         workspace=workspace,
         project=project,
         name=f"issue-{uuid.uuid4().hex[:6]}",
         created_by=created_by,
         sequence_id=1,
     )
+    issue.save(disable_auto_set_user=True)
+    return issue
 
 
 def _create_page(workspace, project, creator, access=0):
-    """Create a Page linked to project via ProjectPage M2M."""
+    """Create a Page linked to project via ProjectPage M2M.
+
+    Same disable_auto_set_user note as _create_issue — created_by must
+    survive save() for the access=0|created_by=user filter to be testable.
+    """
     from plane.db.models import Page, ProjectPage
-    page = Page.objects.create(
+    page = Page(
         workspace=workspace,
         name=f"page-{uuid.uuid4().hex[:6]}",
         owned_by=creator,
         access=access,
         created_by=creator,
     )
+    page.save(disable_auto_set_user=True)
     ProjectPage.objects.create(
         workspace=workspace,
         project=project,
@@ -405,12 +419,8 @@ class TestCostTracker(SimpleTestCase):
         from plane.ai_ext.cost_tracker import CostTracker, CostCeilingExceeded
 
         with patch("plane.ai_ext.cost_tracker.redis_instance") as mock_ri:
-            mock_redis = patch("plane.ai_ext.cost_tracker.redis_instance").__class__()
-            mock_ri.return_value.__class__ = type(mock_ri.return_value)
             r = mock_ri.return_value
             r.get.return_value = b"6000000"
-            r.pipeline.return_value.__enter__ = lambda s: s
-            r.pipeline.return_value.__exit__ = lambda s, *a: None
 
             tracker = CostTracker("workspace-1")
             with self.assertRaises(CostCeilingExceeded):
@@ -438,7 +448,7 @@ class TestCostTracker(SimpleTestCase):
             pipe = r.pipeline.return_value
             pipe.incrby = lambda *a: None
             pipe.expire = lambda *a: None
-            pipe.execute = lambda: [4800000, True]
+            pipe.execute = lambda: [5100000, True]
             pipe.decrby = lambda *a: None
 
             tracker = CostTracker("workspace-1")
