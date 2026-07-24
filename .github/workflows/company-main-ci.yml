@@ -204,6 +204,12 @@ jobs:
       REDIS_URL: redis://localhost:6379/0
       SECRET_KEY: ci-only-not-a-real-secret-key-generated-for-tests-only
       DJANGO_SETTINGS_MODULE: plane.settings.test
+      # github_ext P3 inbound sync dispatches through the real issue-create
+      # view, which builds notification/webhook payloads from these URLs.
+      # A deployment always sets them; without them the service-token write
+      # 500s with "APP_BASE_URL or WEB_URL is not set".
+      WEB_URL: http://localhost
+      APP_BASE_URL: http://localhost
       # LLM keys — placeholders, not real; tests that touch the LLM client
       # mock it rather than making network calls.
       LLM_PROVIDER: anthropic
