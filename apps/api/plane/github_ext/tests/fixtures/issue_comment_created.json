@@ -1,0 +1,34 @@
+{
+  "action": "created",
+  "installation": {
+    "id": 555
+  },
+  "repository": {
+    "id": 700100200,
+    "full_name": "The1Studio/plane",
+    "name": "plane",
+    "owner": {
+      "login": "The1Studio"
+    }
+  },
+  "sender": {
+    "login": "a-dev",
+    "type": "User"
+  },
+  "issue": {
+    "id": 2100300400,
+    "number": 42,
+    "state": "open",
+    "title": "Crash when opening the workload matrix",
+    "body": "Steps to reproduce:\n1. Open the matrix\n2. Switch to month view",
+    "html_url": "https://github.com/The1Studio/plane/issues/42"
+  },
+  "comment": {
+    "id": 9900110022,
+    "body": "Reproduced on staging - the month view query times out.",
+    "html_url": "https://github.com/The1Studio/plane/issues/42#issuecomment-9900110022",
+    "user": {
+      "login": "a-dev"
+    }
+  }
+}

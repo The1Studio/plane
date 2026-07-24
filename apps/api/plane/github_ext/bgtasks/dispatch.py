@@ -16,9 +16,8 @@ logger = logging.getLogger("plane.github_ext")
 _INSTALLATION_EVENTS = ("installation", "installation_repositories")
 # P1 — dev-workflow link parsing (branch/PR/commit -> WorkItemGithubLink).
 _LINK_EVENTS = ("push", "pull_request")
-# P0 ingests these but does no work yet — P2 (state transitions) and P3
-# (comment sync) fill these handlers in.
-_NOOP_EVENTS = ("issues", "issue_comment")
+# P3 — bidirectional issue/comment mirror (was a P0 no-op).
+_ISSUE_SYNC_EVENTS = ("issues", "issue_comment")
 
 
 @shared_task(
@@ -66,10 +65,12 @@ def route_event(self, delivery_id, payload=None):
                 from plane.github_ext.bgtasks.transition_task import process_pr_transition
 
                 process_pr_transition(payload=payload)
-        elif event_type in _NOOP_EVENTS:
-            logger.debug(
-                "route_event: %s is a no-op in P0 (delivery=%s)", event_type, delivery_id
-            )
+        elif event_type in _ISSUE_SYNC_EVENTS:
+            from plane.github_ext.bgtasks.issue_sync_task import process_issue_sync
+
+            # Direct synchronous call, not `.apply_async()` — same rationale
+            # as the P1 branch above (bgtasks/link_task.py module docstring).
+            process_issue_sync(event_type, payload=payload)
         else:
             logger.debug(
                 "route_event: unhandled event_type=%s (delivery=%s)", event_type, delivery_id
