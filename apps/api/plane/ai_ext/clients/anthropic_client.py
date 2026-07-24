@@ -9,6 +9,7 @@
 
 import hashlib
 import logging
+import re
 import time
 from typing import Any
 
@@ -306,6 +307,15 @@ class AnthropicClient:
            false positives on common phrases ("you are a helpful assistant")
            while catching meaningful echoes.
 
+        C-FIX: word tokenization must strip punctuation before splitting.
+        The prior implementation used `str.split()`, which keeps trailing
+        punctuation attached to a word (e.g. "prompt." vs "prompt") — a
+        system prompt ending mid-sentence at the n-gram boundary, or an
+        output that merely rewords the surrounding punctuation, silently
+        defeated the overlap check even on a verbatim echo of the guarded
+        phrase. Tokenizing on word-character runs makes the match robust to
+        punctuation differences on both sides.
+
         This is a heuristic, not a cryptographic guarantee.  It catches the
         most common prompt-injection / system-leak patterns without an extra
         API call.
@@ -318,12 +328,13 @@ class AnthropicClient:
 
         # 2. 6-gram overlap check between system prompt and output.
         _NGRAM_SIZE = 6
-        output_lower = output.lower()
-        sys_words = system.lower().split()
+        sys_words = re.findall(r"\w+", system.lower())
+        output_words = re.findall(r"\w+", output.lower())
+        output_joined = " ".join(output_words)
         if len(sys_words) >= _NGRAM_SIZE:
             for i in range(len(sys_words) - _NGRAM_SIZE + 1):
                 ngram = " ".join(sys_words[i : i + _NGRAM_SIZE])
-                if ngram in output_lower:
+                if ngram in output_joined:
                     logger.error(
                         "ai_ext: output contains system-prompt n-gram %r — rejected", ngram
                     )
