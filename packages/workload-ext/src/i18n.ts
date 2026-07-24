@@ -38,6 +38,7 @@ export const WORKLOAD_STRINGS = {
   "estimate.parent_has_children_toast_title": "Can't edit estimate",
   "estimate.parent_has_children_toast_message":
     "This work item now has sub-items — its estimate is calculated automatically from them.",
+  "progress.label": "Progress",
   "matrix.assignee": "Assignee",
   "matrix.unscheduled": "Unscheduled",
   "matrix.no_data_loaded": "No data loaded yet.",
@@ -84,6 +85,15 @@ function toDisplayPercent(percent: number): number {
 export function formatRollupPill(rollup: TWorkloadRollup): string {
   if (rollup.percent === null) return wlt("estimate.rollup_pill_no_percent", { hours: rollup.hours });
   return wlt("estimate.rollup_pill", { hours: rollup.hours, percent: toDisplayPercent(rollup.percent) });
+}
+
+/**
+ * "Σ 10h" — hours only, no percent. Used by the hours surfaces (sidebar field,
+ * spreadsheet Estimated-hours column, list/kanban hours pill) now that progress
+ * has its own dedicated bar column/row; keeps hours and progress cleanly split.
+ */
+export function formatRollupHours(rollup: TWorkloadRollup): string {
+  return wlt("estimate.rollup_pill_no_percent", { hours: rollup.hours });
 }
 
 /** "From 3 sub-item(s) · due 2026-08-01", or without the due-date clause. */

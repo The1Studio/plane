@@ -39,9 +39,11 @@ import { useProjectState } from "@/hooks/store/use-project-state";
 // The1Studio fork (SP2 workload) — shared estimate store (SSOT with the list/spreadsheet column)
 import { setToast, TOAST_TYPE } from "@plane/propel/toast";
 import {
-  formatRollupPill,
+  formatRollupHours,
   formatRollupTooltip,
   PARENT_HAS_CHILDREN_ERROR_CODE,
+  ProgressBar,
+  resolveProgress,
   WorkloadEstimateApiError,
   wlt,
 } from "@plane/workload-ext";
@@ -296,7 +298,7 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
                     className="w-full truncate text-body-xs-regular text-secondary"
                     title={formatRollupTooltip(rollup)}
                   >
-                    {formatRollupPill(rollup)}
+                    {formatRollupHours(rollup)}
                   </span>
                 ) : (
                   <input
@@ -314,6 +316,14 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
                   />
                 )}
                 {estimateSaving && <span className="text-xs text-secondary">{wlt("common.saving")}</span>}
+              </div>
+            </SidebarPropertyListItem>
+
+            {/* SP2 workload progress — fork touch-point exception (docs/FORK.md).
+                Parent = hours-weighted rollup %, leaf = state-group-derived %. */}
+            <SidebarPropertyListItem icon={EstimatePropertyIcon} label={wlt("progress.label")}>
+              <div className="flex h-7.5 items-center px-2">
+                <ProgressBar value={resolveProgress(rollup, stateDetails?.group)} ariaLabel={wlt("progress.label")} />
               </div>
             </SidebarPropertyListItem>
 

@@ -22,7 +22,8 @@
 import React from "react";
 import { Timer } from "lucide-react";
 import type { IIssueDisplayProperties, TIssue } from "@plane/types";
-import { formatRollupPill, formatRollupTooltip, wlt } from "@plane/workload-ext";
+import { formatRollupHours, formatRollupTooltip, ProgressBar, resolveProgress, wlt } from "@plane/workload-ext";
+import { useProjectState } from "@/hooks/store/use-project-state";
 import { useWorkloadEstimate } from "@/hooks/store/use-workload-estimate";
 
 export type TWorkItemLayoutAdditionalProperties = {
@@ -32,23 +33,22 @@ export type TWorkItemLayoutAdditionalProperties = {
 
 export function WorkItemLayoutAdditionalProperties({ issue }: TWorkItemLayoutAdditionalProperties) {
   const { hours, rollup } = useWorkloadEstimate(issue.id);
+  const { getStateById } = useProjectState();
 
-  if (rollup) {
-    return (
-      <div
-        className="flex h-5 flex-shrink-0 items-center justify-center gap-2 truncate overflow-hidden rounded-sm border-[0.5px] border-strong px-2.5 py-1"
-        title={formatRollupTooltip(rollup)}
-      >
-        <Timer className="h-3 w-3 flex-shrink-0" strokeWidth={2} />
-        <div className="truncate text-caption-sm-regular">{formatRollupPill(rollup)}</div>
-      </div>
-    );
-  }
+  // Progress: parents use the rollup percent, leaves derive from state group.
+  const progress = resolveProgress(rollup, getStateById(issue.state_id)?.group);
 
-  // Render nothing when no estimate is recorded for this issue.
-  if (hours === null || hours === undefined) return null;
-
-  return (
+  // The hours pill: rollup summary for parents, plain hours for leaves, nothing
+  // when no estimate exists.
+  const hoursPill = rollup ? (
+    <div
+      className="flex h-5 flex-shrink-0 items-center justify-center gap-2 truncate overflow-hidden rounded-sm border-[0.5px] border-strong px-2.5 py-1"
+      title={formatRollupTooltip(rollup)}
+    >
+      <Timer className="h-3 w-3 flex-shrink-0" strokeWidth={2} />
+      <div className="truncate text-caption-sm-regular">{formatRollupHours(rollup)}</div>
+    </div>
+  ) : hours !== null && hours !== undefined ? (
     <div
       className="flex h-5 flex-shrink-0 items-center justify-center gap-2 overflow-hidden rounded-sm border-[0.5px] border-strong px-2.5 py-1"
       title={wlt("estimate.tooltip", { hours })}
@@ -56,5 +56,23 @@ export function WorkItemLayoutAdditionalProperties({ issue }: TWorkItemLayoutAdd
       <Timer className="h-3 w-3 flex-shrink-0" strokeWidth={2} />
       <div className="text-caption-sm-regular">{hours}h</div>
     </div>
+  ) : null;
+
+  // The progress pill: a compact bar; hidden when there is no meaningful value
+  // (cancelled / stateless leaf, or a 0-hour parent) to avoid dash-noise on cards.
+  const progressPill =
+    progress !== null ? (
+      <div className="flex h-5 flex-shrink-0 items-center rounded-sm border-[0.5px] border-strong px-2 py-1">
+        <ProgressBar value={progress} variant="pill" ariaLabel={wlt("progress.label")} />
+      </div>
+    ) : null;
+
+  if (!hoursPill && !progressPill) return null;
+
+  return (
+    <>
+      {hoursPill}
+      {progressPill}
+    </>
   );
 }
