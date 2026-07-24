@@ -1,4 +1,6 @@
 export * from "./i18n";
+export * from "./progress";
+export * from "./ProgressBar";
 export * from "./types";
 export * from "./service";
 export * from "./store";

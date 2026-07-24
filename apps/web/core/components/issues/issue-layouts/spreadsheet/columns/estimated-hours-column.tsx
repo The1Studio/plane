@@ -17,7 +17,7 @@ import { observer } from "mobx-react";
 import { setToast, TOAST_TYPE } from "@plane/propel/toast";
 // workload i18n (fork-owned strings — no @plane/i18n edit)
 import {
-  formatRollupPill,
+  formatRollupHours,
   formatRollupTooltip,
   PARENT_HAS_CHILDREN_ERROR_CODE,
   WorkloadEstimateApiError,
@@ -142,7 +142,7 @@ export const EstimatedHoursBodyCell = observer(function EstimatedHoursBodyCell(p
           // Parent issue — read-only rollup summary, same disable intent as
           // the sidebar field (plan §P4 item 5).
           <span className="w-full truncate text-13 text-secondary" title={formatRollupTooltip(rollup)}>
-            {formatRollupPill(rollup)}
+            {formatRollupHours(rollup)}
           </span>
         ) : (
           <input

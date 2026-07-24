@@ -37,8 +37,9 @@ import { IssueIdentifier } from "@/plane-web/components/issues/issue-details/iss
 import type { TRenderQuickActions } from "../list/list-view-types";
 import { isIssueNew } from "../utils";
 import { IssueColumn } from "./issue-column";
-// The1Studio fork (SP2 workload) — fixed appended column body cell
+// The1Studio fork (SP2 workload) — fixed appended column body cells
 import { EstimatedHoursBodyCell } from "./columns/estimated-hours-column";
+import { ProgressBodyCell } from "./columns/progress-column";
 
 interface Props {
   displayProperties: IIssueDisplayProperties;
@@ -411,6 +412,10 @@ const IssueRowDetails = observer(function IssueRowDetails(props: IssueRowDetails
         workspaceSlug={workspaceSlug?.toString() ?? ""}
         disableUserActions={disableUserActions}
       />
+      {/* The1Studio fork (SP2 workload) — fixed "Progress" cell appended after Estimated hours.
+          state_id sourced per-row from issueDetail; leaf progress derives from its state group,
+          parent progress from the workload rollup. */}
+      <ProgressBodyCell issueId={issueDetail.id} stateId={issueDetail.state_id} />
     </>
   );
 });
