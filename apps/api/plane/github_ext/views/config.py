@@ -33,6 +33,11 @@
 # decorator (plane/app/permissions/base.py) via a real <str:slug> path
 # segment — no more query-param slug injection. The global view uses DRF
 # permission_classes = [InstanceAdminPermission] directly (no slug at all).
+#
+# Shared handlers — reused by both the app API (this module, session-auth)
+# and the public API (../api_views.py, API-key auth), so the resolution +
+# validation + persistence logic lives in exactly one place. Mirrors the
+# workload/views.py + workload/api_views.py split.
 
 from rest_framework import status
 from rest_framework.exceptions import NotFound
@@ -66,6 +71,104 @@ def _validate_rules_shape(rules):
     return None
 
 
+def resolve_workspace_or_404(slug):
+    """Look up a `Workspace` by slug, or raise DRF `NotFound` (404)."""
+    from plane.db.models import Workspace
+
+    workspace = Workspace.objects.filter(slug=slug).first()
+    if workspace is None:
+        raise NotFound("workspace not found")
+    return workspace
+
+
+def resolve_project_or_404(slug, project_id):
+    """Look up a `Project` by id, requiring it belong to workspace `slug`
+    (cross-workspace guard), or raise DRF `NotFound` (404)."""
+    project = (
+        Project.objects.filter(id=project_id).select_related("workspace").first()
+    )
+    if project is None or project.workspace.slug != slug:
+        raise NotFound("project not found")
+    return project
+
+
+def global_config_get():
+    """Return the resolved scope="global" rules (DEFAULT_RULES merged with
+    the stored override, if any)."""
+    rules = dict(DEFAULT_RULES)
+    row = StateTransitionConfig.objects.filter(scope="global").first()
+    if row and row.rules:
+        rules.update(row.rules)
+    return rules
+
+
+def global_config_put(rules_payload):
+    """Validate + upsert the scope="global" row.
+
+    Returns `(rules, error)` — on success `error` is `None` and `rules` is
+    the saved dict; on validation failure `rules` is `None` and `error` is
+    the message string (caller maps it to HTTP 400).
+    """
+    error = _validate_rules_shape(rules_payload)
+    if error:
+        return None, error
+
+    row = StateTransitionConfig.objects.filter(scope="global").first()
+    if row is None:
+        row = StateTransitionConfig(scope="global")
+    row.rules = rules_payload
+    row.save()
+    return row.rules, None
+
+
+def workspace_config_get(workspace):
+    """Return the resolved (defaults→global→workspace) rules for `workspace`."""
+    return resolve_workspace_config(workspace.id)
+
+
+def workspace_config_put(workspace, rules_payload):
+    """Validate (shape-only) + upsert the scope="workspace" row for
+    `workspace`. Same `(rules, error)` contract as `global_config_put`."""
+    error = _validate_rules_shape(rules_payload)
+    if error:
+        return None, error
+
+    row = StateTransitionConfig.objects.filter(
+        scope="workspace", workspace_id=workspace.id
+    ).first()
+    if row is None:
+        row = StateTransitionConfig(scope="workspace", workspace=workspace)
+    row.rules = rules_payload
+    row.save()
+    return row.rules, None
+
+
+def project_config_get(project):
+    """Return the fully-resolved effective rules for `project`."""
+    return resolve_config(project)
+
+
+def project_config_put(project, rules_payload):
+    """Validate (shape + state-name existence) + upsert the scope="project"
+    row for `project`. Same `(rules, error)` contract as `global_config_put`."""
+    error = _validate_rules_shape(rules_payload)
+    if error:
+        return None, error
+
+    for key, value in rules_payload.items():
+        if not State.objects.filter(project_id=project.id, name__iexact=value).exists():
+            return None, f"state '{value}' not found in project"
+
+    row = StateTransitionConfig.objects.filter(
+        scope="project", project_id=project.id
+    ).first()
+    if row is None:
+        row = StateTransitionConfig(scope="project", project=project)
+    row.rules = rules_payload
+    row.save()
+    return row.rules, None
+
+
 class GithubGlobalConfigView(BaseAPIView):
     """Read + upsert the scope="global" StateTransitionConfig row — the
     instance-wide default rules, overridable per-workspace
@@ -78,24 +181,13 @@ class GithubGlobalConfigView(BaseAPIView):
     permission_classes = [InstanceAdminPermission]
 
     def get(self, request):
-        rules = dict(DEFAULT_RULES)
-        row = StateTransitionConfig.objects.filter(scope="global").first()
-        if row and row.rules:
-            rules.update(row.rules)
-        return Response({"rules": rules}, status=status.HTTP_200_OK)
+        return Response({"rules": global_config_get()}, status=status.HTTP_200_OK)
 
     def put(self, request):
-        rules = request.data.get("rules")
-        error = _validate_rules_shape(rules)
+        rules, error = global_config_put(request.data.get("rules"))
         if error:
             return Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
-
-        row = StateTransitionConfig.objects.filter(scope="global").first()
-        if row is None:
-            row = StateTransitionConfig(scope="global")
-        row.rules = rules
-        row.save()
-        return Response({"rules": row.rules}, status=status.HTTP_200_OK)
+        return Response({"rules": rules}, status=status.HTTP_200_OK)
 
 
 class GithubWorkspaceConfigView(BaseAPIView):
@@ -111,34 +203,21 @@ class GithubWorkspaceConfigView(BaseAPIView):
     """
 
     def initial(self, request, *args, **kwargs):
-        from plane.db.models import Workspace
-
-        workspace = Workspace.objects.filter(slug=kwargs.get("slug")).first()
-        if workspace is None:
-            raise NotFound("workspace not found")
-        self._workspace = workspace
+        self._workspace = resolve_workspace_or_404(kwargs.get("slug"))
         super().initial(request, *args, **kwargs)
 
     @allow_permission([ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST], level="WORKSPACE")
     def get(self, request, slug):
-        rules = resolve_workspace_config(self._workspace.id)
-        return Response({"rules": rules}, status=status.HTTP_200_OK)
+        return Response(
+            {"rules": workspace_config_get(self._workspace)}, status=status.HTTP_200_OK
+        )
 
     @allow_permission([ROLE.ADMIN], level="WORKSPACE")
     def put(self, request, slug):
-        rules = request.data.get("rules")
-        error = _validate_rules_shape(rules)
+        rules, error = workspace_config_put(self._workspace, request.data.get("rules"))
         if error:
             return Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
-
-        row = StateTransitionConfig.objects.filter(
-            scope="workspace", workspace_id=self._workspace.id
-        ).first()
-        if row is None:
-            row = StateTransitionConfig(scope="workspace", workspace=self._workspace)
-        row.rules = rules
-        row.save()
-        return Response({"rules": row.rules}, status=status.HTTP_200_OK)
+        return Response({"rules": rules}, status=status.HTTP_200_OK)
 
 
 class GithubProjectConfigView(BaseAPIView):
@@ -154,42 +233,18 @@ class GithubProjectConfigView(BaseAPIView):
     """
 
     def initial(self, request, *args, **kwargs):
-        project = (
-            Project.objects.filter(id=kwargs.get("project_id"))
-            .select_related("workspace")
-            .first()
-        )
-        if project is None or project.workspace.slug != kwargs.get("slug"):
-            raise NotFound("project not found")
-        self._project = project
+        self._project = resolve_project_or_404(kwargs.get("slug"), kwargs.get("project_id"))
         super().initial(request, *args, **kwargs)
 
     @allow_permission([ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST], level="WORKSPACE")
     def get(self, request, slug, project_id):
-        rules = resolve_config(self._project)
-        return Response({"rules": rules}, status=status.HTTP_200_OK)
+        return Response(
+            {"rules": project_config_get(self._project)}, status=status.HTTP_200_OK
+        )
 
     @allow_permission([ROLE.ADMIN], level="WORKSPACE")
     def put(self, request, slug, project_id):
-        rules = request.data.get("rules")
-        error = _validate_rules_shape(rules)
+        rules, error = project_config_put(self._project, request.data.get("rules"))
         if error:
             return Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
-
-        for key, value in rules.items():
-            if not State.objects.filter(
-                project_id=self._project.id, name__iexact=value
-            ).exists():
-                return Response(
-                    {"error": f"state '{value}' not found in project"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-        row = StateTransitionConfig.objects.filter(
-            scope="project", project_id=self._project.id
-        ).first()
-        if row is None:
-            row = StateTransitionConfig(scope="project", project=self._project)
-        row.rules = rules
-        row.save()
-        return Response({"rules": row.rules}, status=status.HTTP_200_OK)
+        return Response({"rules": rules}, status=status.HTTP_200_OK)
