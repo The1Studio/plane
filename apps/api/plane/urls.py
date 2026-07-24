@@ -26,6 +26,8 @@ urlpatterns = [
     # The1Studio fork add-on (append-only — docs/FORK.md touch-point 2)
     path("api/ai/", include("plane.ai_ext.urls")),
     path("api/", include("plane.workload.urls")),
+    # The1Studio fork (github_ext) — docs/FORK.md touch-point 2
+    path("api/", include("plane.github_ext.urls")),
     path("", include("plane.web.urls")),
 ]
 

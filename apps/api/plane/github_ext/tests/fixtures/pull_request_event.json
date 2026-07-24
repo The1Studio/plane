@@ -1,0 +1,22 @@
+{
+  "action": "opened",
+  "number": 42,
+  "pull_request": {
+    "number": 42,
+    "title": "Fixes PROJ-4",
+    "body": "Closes out the webhook signature bug.",
+    "html_url": "https://github.com/the1studio/plane-core/pull/42",
+    "head": {
+      "ref": "chore/misc-cleanup"
+    },
+    "base": {
+      "ref": "main"
+    }
+  },
+  "repository": {
+    "full_name": "the1studio/plane-core"
+  },
+  "installation": {
+    "id": 12345
+  }
+}

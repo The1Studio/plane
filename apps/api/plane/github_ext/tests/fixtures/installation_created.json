@@ -1,0 +1,22 @@
+{
+  "action": "created",
+  "installation": {
+    "id": 987654,
+    "account": {
+      "login": "the1studio",
+      "type": "Organization"
+    }
+  },
+  "repositories": [
+    {
+      "id": 1001,
+      "name": "plane-core",
+      "full_name": "the1studio/plane-core"
+    },
+    {
+      "id": 1002,
+      "name": "unmatched-repo",
+      "full_name": "the1studio/unmatched-repo"
+    }
+  ]
+}
