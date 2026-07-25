@@ -267,27 +267,6 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
               </div>
             </SidebarPropertyListItem>
 
-            {projectId && areEstimateEnabledByProjectId(projectId) && (
-              <SidebarPropertyListItem icon={EstimatePropertyIcon} label={t("common.estimate")}>
-                <EstimateDropdown
-                  value={issue?.estimate_point ?? undefined}
-                  onChange={(val: string | undefined) =>
-                    issueOperations.update(workspaceSlug, projectId, issueId, { estimate_point: val })
-                  }
-                  projectId={projectId}
-                  disabled={!isEditable}
-                  buttonVariant="transparent-with-text"
-                  className="group w-full grow"
-                  buttonContainerClassName="w-full text-left h-7.5"
-                  buttonClassName={`text-body-xs-regular ${issue?.estimate_point !== null ? "" : "text-placeholder"}`}
-                  placeholder={t("common.none")}
-                  hideIcon
-                  dropdownArrow
-                  dropdownArrowClassName="h-3.5 w-3.5 hidden group-hover:inline"
-                />
-              </SidebarPropertyListItem>
-            )}
-
             {/* SP2 workload estimate — fork touch-point exception (docs/FORK.md §5.3) */}
             <SidebarPropertyListItem icon={EstimatePropertyIcon} label={wlt("estimate.label")}>
               <div className="flex h-7.5 items-center gap-1 px-2">
@@ -318,6 +297,27 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
                 {estimateSaving && <span className="text-xs text-secondary">{wlt("common.saving")}</span>}
               </div>
             </SidebarPropertyListItem>
+
+            {projectId && areEstimateEnabledByProjectId(projectId) && (
+              <SidebarPropertyListItem icon={EstimatePropertyIcon} label={t("common.estimate")}>
+                <EstimateDropdown
+                  value={issue?.estimate_point ?? undefined}
+                  onChange={(val: string | undefined) =>
+                    issueOperations.update(workspaceSlug, projectId, issueId, { estimate_point: val })
+                  }
+                  projectId={projectId}
+                  disabled={!isEditable}
+                  buttonVariant="transparent-with-text"
+                  className="group w-full grow"
+                  buttonContainerClassName="w-full text-left h-7.5"
+                  buttonClassName={`text-body-xs-regular ${issue?.estimate_point !== null ? "" : "text-placeholder"}`}
+                  placeholder={t("common.none")}
+                  hideIcon
+                  dropdownArrow
+                  dropdownArrowClassName="h-3.5 w-3.5 hidden group-hover:inline"
+                />
+              </SidebarPropertyListItem>
+            )}
 
             {/* SP2 workload progress — fork touch-point exception (docs/FORK.md).
                 Parent = hours-weighted rollup %, leaf = state-group-derived %. */}
