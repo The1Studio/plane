@@ -5,6 +5,17 @@ export type TWorkloadRow = {
   assignee_name: string;
   buckets: Record<string, number>; // sparse: period key → hours
   total: number;
+  /**
+   * Per-person weekly capacity, prorated per period, keyed by the SAME period
+   * columns as `buckets` (spans every period in the response, not just the
+   * populated ones — so a capacity reference renders even on zero-hour
+   * periods). Members with no workspace-wide capacity row get `{}`.
+   */
+  capacity_buckets?: Record<string, number>;
+  /** Per-period overload flag, keyed identically to `capacity_buckets`. */
+  over?: Record<string, boolean>;
+  /** True when `total` exceeds the sum of this row's `capacity_buckets`. */
+  total_over?: boolean;
 };
 
 export type TWorkloadUnscheduled = {
@@ -80,3 +91,12 @@ export type TWorkloadFilters = {
   assignee_ids?: string[];
   state_group?: string[];
 };
+
+/** PUT body / echoed shape for `workspaces/<slug>/workload-capacity/`. */
+export type TWorkloadCapacity = {
+  member: string;
+  weekly_hours: number;
+};
+
+/** GET response for `workspaces/<slug>/workload-capacity/` — member id → weekly hours. */
+export type TWorkloadCapacityMap = Record<string, number>;
