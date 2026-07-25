@@ -128,6 +128,21 @@ export const WorkloadFilters = observer(function WorkloadFilters({
         </select>
       </div>
 
+      {/* Over capacity only */}
+      <div className="flex flex-col gap-1">
+        <span className="text-xs text-gray-500 font-medium">&nbsp;</span>
+        <label htmlFor="wl-filter-over-only" className="text-sm text-gray-700 flex h-[34px] items-center gap-2">
+          <input
+            id="wl-filter-over-only"
+            type="checkbox"
+            checked={store.showOverCapacityOnly}
+            onChange={(e) => store.setShowOverCapacityOnly(e.target.checked)}
+            className="focus:ring-custom-primary-100 rounded focus:ring-1 focus:outline-none"
+          />
+          {wlt("filters.over_only")}
+        </label>
+      </div>
+
       {/* Refresh button */}
       <button
         type="button"
