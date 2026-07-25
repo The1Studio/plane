@@ -19,8 +19,8 @@ from plane.db.models import (
 )
 from plane.db.models.state import StateGroup
 
-from .aggregation import from_cents, spread_estimate
-from .models import WorkloadEstimate
+from .aggregation import capacity_for_period, from_cents, spread_estimate
+from .models import WorkloadCapacity, WorkloadEstimate
 
 ROW_GUARD = 50_000
 ADMIN_ROLE = 20
@@ -226,6 +226,21 @@ def _resolve_owners(issue_ids):
     return owners
 
 
+def _resolve_capacities(owner_ids, slug):
+    """Map member_id -> weekly_hours for workspace-wide (project=None)
+    WorkloadCapacity rows in this workspace. Members with no capacity row are
+    absent (caller treats as "no capacity set" -> empty capacity_buckets,
+    over=False everywhere). Mirrors _resolve_owners' shape.
+    """
+    owner_ids = {oid for oid in owner_ids if oid is not None}
+    if not owner_ids:
+        return {}
+    rows = WorkloadCapacity.objects.filter(
+        workspace__slug=slug, project__isnull=True, member_id__in=owner_ids
+    ).values_list("member_id", "weekly_hours")
+    return dict(rows)
+
+
 def compute_workload(
     user,
     slug,
@@ -309,16 +324,40 @@ def compute_workload(
 
     rows = []
     owner_ids = set(buckets.keys()) | set(unscheduled.keys())
+    capacities = _resolve_capacities(owner_ids, slug)
     for owner_id in owner_ids:
         pm = buckets.get(owner_id, {})
         sparse = {k: from_cents(c) for k, c in pm.items() if c}
         total = from_cents(sum(pm.values()))
+
+        weekly_capacity = capacities.get(owner_id)
+        if weekly_capacity is not None:
+            # Prorated over every period column in the response (not just
+            # this row's populated buckets) so the matrix can render a
+            # capacity reference even for periods with zero hours logged.
+            capacity_buckets = {
+                period: capacity_for_period(weekly_capacity, period, granularity)
+                for period in periods
+            }
+            over = {
+                period: sparse.get(period, 0) > capacity_buckets[period]
+                for period in periods
+            }
+            total_over = total > sum(capacity_buckets.values())
+        else:
+            capacity_buckets = {}
+            over = {}
+            total_over = False
+
         rows.append(
             {
                 "assignee_id": str(owner_id) if owner_id else None,
                 "assignee_name": names.get(owner_id, "Unassigned"),
                 "buckets": sparse,
                 "total": total,
+                "capacity_buckets": capacity_buckets,
+                "over": over,
+                "total_over": total_over,
             }
         )
     rows.sort(key=lambda r: (-r["total"], r["assignee_name"]))

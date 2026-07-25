@@ -12,6 +12,7 @@ from django.urls import resolve
 
 from plane.workload.api_views import (
     ProjectWorkloadAPIEndpoint,
+    WorkloadCapacityAPIEndpoint,
     WorkloadEstimateAPIEndpoint,
     WorkloadRollupsBulkAPIEndpoint,
     WorkspaceWorkloadAPIEndpoint,
@@ -38,3 +39,7 @@ class TestPublicApiRouting(SimpleTestCase):
     def test_rollups_bulk_route(self):
         match = resolve("/api/v1/workspaces/acme/workload-rollups/")
         self.assertEqual(match.func.view_class, WorkloadRollupsBulkAPIEndpoint)
+
+    def test_capacity_route(self):
+        match = resolve("/api/v1/workspaces/acme/workload-capacity/")
+        self.assertEqual(match.func.view_class, WorkloadCapacityAPIEndpoint)
