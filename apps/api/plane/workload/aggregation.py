@@ -110,3 +110,51 @@ def spread_estimate(hours, start, target, win_from, win_to, granularity):
             d += timedelta(days=1)
             idx += 1
     return buckets, 0, dirty
+
+
+# --- capacity proration (plan D-B1: workday-basis, weekly / 5) -------------
+#
+# ⚠ Mismatch with spread_estimate above: an issue's estimate is spread across
+# every CALENDAR day of its [start, target] span (Sat/Sun included), while
+# capacity below is prorated over WORKDAYS only (Mon-Fri; weekends = 0). A
+# weekend-spanning issue therefore accrues hours on days that carry zero
+# capacity — those days will always read "over" in the daily bucket even for
+# a lightly-loaded member. This is a deliberate v1 trade-off (plan D-B1/R2),
+# not a bug: the day-granularity "over" signal is noisiest at weekends, but
+# week/month buckets (which don't hit this mismatch) are the primary signal.
+
+_WORKWEEK_DAYS = 5  # Mon-Fri
+
+
+def _is_workday(d: date) -> bool:
+    return d.weekday() < _WORKWEEK_DAYS  # Mon=0 .. Fri=4, Sat=5, Sun=6
+
+
+def _workdays_in_month(year: int, month: int) -> int:
+    """Count Mon-Fri days in the given calendar month."""
+    first = date(year, month, 1)
+    next_first = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+    span_days = (next_first - first).days
+    return sum(1 for i in range(span_days) if _is_workday(first + timedelta(days=i)))
+
+
+def capacity_for_period(weekly_hours, period: str, granularity: str) -> float:
+    """Prorate a member's weekly capacity into one bucket's capacity, in hours.
+
+    Pure / stdlib-only (no ORM) — unit-tested in isolation like the rest of
+    this module. Basis is ÷5 workdays (plan D-B1):
+      - day   : weekly_hours / 5 on a workday (Mon-Fri); 0 on Sat/Sun.
+      - week  : weekly_hours as-is (one ISO week = one full capacity unit).
+      - month : weekly_hours * (workdays_in_month / 5) — accounts for months
+                with 4 vs 5 occurrences of each weekday.
+    """
+    if granularity == "day":
+        d = date.fromisoformat(period)
+        return round(weekly_hours / _WORKWEEK_DAYS, 2) if _is_workday(d) else 0.0
+    if granularity == "week":
+        return round(float(weekly_hours), 2)
+    if granularity == "month":
+        year_s, month_s = period.split("-")
+        workdays = _workdays_in_month(int(year_s), int(month_s))
+        return round(weekly_hours * (workdays / _WORKWEEK_DAYS), 2)
+    raise ValueError(f"invalid granularity: {granularity!r}")

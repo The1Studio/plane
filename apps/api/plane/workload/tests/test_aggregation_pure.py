@@ -155,6 +155,50 @@ def test_reconciliation_window_contains_span():
     assert _sum_cents(b) + uns == 10000  # exact
 
 
+# --- capacity proration (plan D-B1: weekly / 5 workdays) --------------------
+
+def test_capacity_day_workday():
+    # 2026-06-15 is a Monday (see test_period_key_week_monday above).
+    assert agg.capacity_for_period(40.0, "2026-06-15", "day") == 8.0
+
+
+def test_capacity_day_weekend_is_zero():
+    # 2026-06-13/14 are Sat/Sun.
+    assert agg.capacity_for_period(40.0, "2026-06-13", "day") == 0.0
+    assert agg.capacity_for_period(40.0, "2026-06-14", "day") == 0.0
+
+
+def test_capacity_week_is_weekly_hours_as_is():
+    assert agg.capacity_for_period(37.5, "2026-W25", "week") == 37.5
+
+
+def test_capacity_month_basic():
+    # June 2026 starts on a Monday, 30 days -> 22 workdays (4 full Mon-Fri
+    # weeks + the trailing Mon/Tue of the 5th week).
+    assert agg.capacity_for_period(40.0, "2026-06", "month") == 176.0
+
+
+def test_capacity_month_iso_week_boundary_has_no_effect():
+    # December 2026's tail week spills into ISO 2027-W01 for WEEK-bucket
+    # keys, but month-granularity proration is purely calendar-based (it
+    # never consults ISO week numbers), so that spill has zero effect here.
+    # Dec 2026: 31 days, 8 weekend days -> 23 workdays.
+    assert agg.capacity_for_period(40.0, "2026-12", "month") == 184.0
+
+
+def test_capacity_scales_linearly_with_weekly_hours():
+    assert agg.capacity_for_period(0.0, "2026-06-15", "day") == 0.0
+    assert agg.capacity_for_period(10.0, "2026-06-15", "day") == 2.0
+
+
+def test_capacity_invalid_granularity_raises():
+    try:
+        agg.capacity_for_period(40.0, "2026-06-15", "year")
+        assert False, "expected ValueError"
+    except ValueError:
+        pass
+
+
 def _main():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

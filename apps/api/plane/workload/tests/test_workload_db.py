@@ -114,6 +114,14 @@ def _estimate(ws, proj, issue, hours):
     )
 
 
+def _capacity(ws, member, weekly_hours):
+    from plane.workload.models import WorkloadCapacity
+
+    return WorkloadCapacity.objects.create(
+        workspace=ws, project=None, member=member, weekly_hours=weekly_hours
+    )
+
+
 def _t(day):
     return datetime(2026, 1, day, 12, 0, tzinfo=timezone.utc)
 
@@ -295,6 +303,84 @@ class TestStateDefaults(TransactionTestCase):
             u, ws.slug, "week", WIN_FROM, WIN_TO, state_groups=["completed"]
         )
         self.assertEqual(data["meta"]["issues_counted"], 1)
+
+
+class TestCapacityOverload(TransactionTestCase):
+    def test_capacity_injected_and_over_flagged(self):
+        ws = _ws()
+        proj = _project(ws)
+        u = _user()
+        _pmember(ws, proj, u)
+        st = _state(ws, proj, "started")
+        monday = date(2026, 6, 15)  # workday -> day cap = weekly / 5
+        issue = _issue(ws, proj, st, u, start=monday, target=monday)
+        _assign(ws, proj, issue, u, created_at=_t(1))
+        _estimate(ws, proj, issue, 8.0)
+        _capacity(ws, u, 5.0)  # day cap = 1.0h, well under the 8h logged
+
+        data = compute_workload(u, ws.slug, "day", WIN_FROM, WIN_TO)
+        row = next(r for r in data["rows"] if r["assignee_id"] == str(u.id))
+        period = monday.isoformat()
+        self.assertEqual(row["capacity_buckets"][period], 1.0)
+        self.assertTrue(row["over"][period])
+        self.assertTrue(row["total_over"])
+
+    def test_capacity_under_load_is_not_over(self):
+        ws = _ws()
+        proj = _project(ws)
+        u = _user()
+        _pmember(ws, proj, u)
+        st = _state(ws, proj, "started")
+        monday = date(2026, 6, 15)
+        issue = _issue(ws, proj, st, u, start=monday, target=monday)
+        _assign(ws, proj, issue, u, created_at=_t(1))
+        _estimate(ws, proj, issue, 4.0)
+        _capacity(ws, u, 40.0)  # day cap = 8.0h, well above the 4h logged
+
+        data = compute_workload(u, ws.slug, "day", WIN_FROM, WIN_TO)
+        row = next(r for r in data["rows"] if r["assignee_id"] == str(u.id))
+        period = monday.isoformat()
+        self.assertEqual(row["capacity_buckets"][period], 8.0)
+        self.assertFalse(row["over"][period])
+        self.assertFalse(row["total_over"])
+
+    def test_member_without_capacity_row_is_graceful(self):
+        """No WorkloadCapacity row -> empty capacity_buckets/over, no crash."""
+        ws = _ws()
+        proj = _project(ws)
+        u = _user()
+        _pmember(ws, proj, u)
+        st = _state(ws, proj, "started")
+        monday = date(2026, 6, 15)
+        issue = _issue(ws, proj, st, u, start=monday, target=monday)
+        _assign(ws, proj, issue, u, created_at=_t(1))
+        _estimate(ws, proj, issue, 8.0)
+
+        data = compute_workload(u, ws.slug, "day", WIN_FROM, WIN_TO)
+        row = next(r for r in data["rows"] if r["assignee_id"] == str(u.id))
+        self.assertEqual(row["capacity_buckets"], {})
+        self.assertEqual(row["over"], {})
+        self.assertFalse(row["total_over"])
+
+    def test_capacity_is_workspace_wide_not_leaked_cross_workspace(self):
+        """A capacity row in a DIFFERENT workspace must never apply here."""
+        ws1 = _ws()
+        ws2 = _ws()
+        proj = _project(ws1)
+        u = _user()
+        _pmember(ws1, proj, u)
+        st = _state(ws1, proj, "started")
+        monday = date(2026, 6, 15)
+        issue = _issue(ws1, proj, st, u, start=monday, target=monday)
+        _assign(ws1, proj, issue, u, created_at=_t(1))
+        _estimate(ws1, proj, issue, 8.0)
+        _capacity(ws2, u, 5.0)  # wrong workspace — must not be picked up
+
+        data = compute_workload(u, ws1.slug, "day", WIN_FROM, WIN_TO)
+        row = next(r for r in data["rows"] if r["assignee_id"] == str(u.id))
+        self.assertEqual(row["capacity_buckets"], {})
+        self.assertEqual(row["over"], {})
+        self.assertFalse(row["total_over"])
 
 
 class TestReconciliation(TransactionTestCase):

@@ -46,6 +46,10 @@ export const WORKLOAD_STRINGS = {
   "matrix.no_target_date": "{percent}% of issues have no target date.",
   "matrix.issues_summary": "{counted} issues counted · {zero} with 0h estimate",
   "matrix.truncated": "Results truncated. Narrow your date range.",
+  "matrix.capacity": "Capacity",
+  "matrix.cap_short": "cap {hours}h",
+  "matrix.over_capacity": "Over",
+  "matrix.no_over_capacity": "No one is over capacity.",
   "granularity.day": "Day",
   "granularity.week": "Week",
   "granularity.month": "Month",
@@ -53,6 +57,7 @@ export const WORKLOAD_STRINGS = {
   "filters.assignees": "Assignees",
   "filters.no_projects": "No projects available",
   "filters.no_assignees": "No assignees available",
+  "filters.over_only": "Over capacity only",
 } as const;
 
 export type TWorkloadStringKey = keyof typeof WORKLOAD_STRINGS;

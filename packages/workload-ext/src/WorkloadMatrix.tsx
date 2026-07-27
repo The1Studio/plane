@@ -11,7 +11,80 @@ import type { TWorkloadGranularity } from "./types";
 type WorkloadMatrixProps = {
   store: IWorkloadStore;
   workspaceSlug: string;
+  /**
+   * Whether the current viewer may edit per-person capacity. Capacity
+   * CRUD is ADMIN-only server-side (D-B3); this package is context-agnostic
+   * and has no access to the app's permission store, so the caller resolves
+   * the role and passes it down. Defaults to read-only.
+   */
+  isAdmin?: boolean;
 };
+
+type CapacityBadgeProps = {
+  store: IWorkloadStore;
+  workspaceSlug: string;
+  assigneeId: string;
+  isAdmin: boolean;
+};
+
+/** Per-row capacity display: editable number input for admins, a read-only badge otherwise. */
+const CapacityBadge = observer(function CapacityBadge({
+  store,
+  workspaceSlug,
+  assigneeId,
+  isAdmin,
+}: CapacityBadgeProps) {
+  const capacity = store.capacities[assigneeId];
+  const [draft, setDraft] = React.useState<string>(capacity !== undefined ? String(capacity) : "");
+  const [isSaving, setIsSaving] = React.useState(false);
+
+  // Keep the draft in sync when the store value changes from elsewhere
+  // (another tab's write, or the initial fetchCapacities resolving).
+  React.useEffect(() => {
+    setDraft(capacity !== undefined ? String(capacity) : "");
+  }, [capacity]);
+
+  if (!isAdmin) {
+    if (capacity === undefined) return null;
+    return (
+      <span className="bg-gray-100 text-xs text-gray-600 rounded px-1.5 py-0.5">
+        {wlt("matrix.cap_short", { hours: capacity })}
+      </span>
+    );
+  }
+
+  async function handleBlur() {
+    const parsed = Number(draft);
+    if (draft.trim() === "" || Number.isNaN(parsed) || parsed < 0 || parsed === capacity) {
+      setDraft(capacity !== undefined ? String(capacity) : "");
+      return;
+    }
+    setIsSaving(true);
+    try {
+      await store.updateCapacity(workspaceSlug, assigneeId, parsed);
+    } catch {
+      // Error is recorded on the store (store.error); revert the draft.
+      setDraft(capacity !== undefined ? String(capacity) : "");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <input
+      type="number"
+      min={0}
+      step={0.5}
+      value={draft}
+      disabled={isSaving}
+      aria-label={wlt("matrix.capacity")}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={handleBlur}
+      onClick={(e) => e.stopPropagation()}
+      className="border-gray-200 focus:ring-custom-primary-100 text-xs w-16 rounded border px-1 py-0.5 tabular-nums focus:ring-1 focus:outline-none"
+    />
+  );
+});
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -46,7 +119,19 @@ function daysBetween(from: string, to: string): number {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export const WorkloadMatrix = observer(function WorkloadMatrix({ store, workspaceSlug }: WorkloadMatrixProps) {
+export const WorkloadMatrix = observer(function WorkloadMatrix({
+  store,
+  workspaceSlug,
+  isAdmin = false,
+}: WorkloadMatrixProps) {
+  // ── Effects ────────────────────────────────────────────────────────────────
+
+  // Capacities are workspace-scoped (not per-row), so fetch once per mount /
+  // workspaceSlug change rather than threading them through fetchWorkload.
+  React.useEffect(() => {
+    if (workspaceSlug) store.fetchCapacities(workspaceSlug);
+  }, [store, workspaceSlug]);
+
   // ── Toolbar handlers ───────────────────────────────────────────────────────
 
   function handleGranularityClick(g: TWorkloadGranularity) {
@@ -129,15 +214,24 @@ export const WorkloadMatrix = observer(function WorkloadMatrix({ store, workspac
 
   const visiblePeriods = periods.slice(0, store.maxColumns);
 
+  // ── Over-capacity filter ───────────────────────────────────────────────────
+  // Client-side only (not a backend query param) — see plan D-B4.
+
+  const visibleRows = store.showOverCapacityOnly ? rows.filter((row) => row.total_over) : rows;
+  const visibleAssigneeIds = new Set(visibleRows.map((row) => row.assignee_id));
+
   // ── Footer sums ────────────────────────────────────────────────────────────
+  // Computed over visibleRows so the footer stays consistent with what's shown.
 
   const periodTotals: Record<string, number> = {};
   for (const period of visiblePeriods) {
-    periodTotals[period] = rows.reduce((sum, row) => sum + (row.buckets[period] ?? 0), 0);
+    periodTotals[period] = visibleRows.reduce((sum, row) => sum + (row.buckets[period] ?? 0), 0);
   }
 
-  const totalUnscheduled = unscheduled.reduce((sum, u) => sum + u.hours, 0);
-  const grandTotal = rows.reduce((sum, row) => sum + row.total, 0);
+  const totalUnscheduled = unscheduled
+    .filter((u) => visibleAssigneeIds.has(u.assignee_id))
+    .reduce((sum, u) => sum + u.hours, 0);
+  const grandTotal = visibleRows.reduce((sum, row) => sum + row.total, 0);
 
   // ── Unscheduled lookup ─────────────────────────────────────────────────────
 
@@ -167,16 +261,49 @@ export const WorkloadMatrix = observer(function WorkloadMatrix({ store, workspac
         </TableHeader>
 
         <TableBody>
-          {rows.map((row) => {
+          {visibleRows.length === 0 && store.showOverCapacityOnly && (
+            <TableRow>
+              <TableCell colSpan={visiblePeriods.length + 3} className="text-sm text-gray-400 py-6 text-center">
+                {wlt("matrix.no_over_capacity")}
+              </TableCell>
+            </TableRow>
+          )}
+          {visibleRows.map((row) => {
             const unscheduledHours = getUnscheduled(row.assignee_id);
             return (
               <TableRow key={row.assignee_id ?? "unassigned"}>
-                <TableCell className="font-medium">{row.assignee_name}</TableCell>
-                {visiblePeriods.map((period) => (
-                  <TableCell key={period} className="text-right tabular-nums">
-                    {formatHours(row.buckets[period] ?? 0)}
-                  </TableCell>
-                ))}
+                <TableCell className="font-medium">
+                  <div className="flex items-center gap-2">
+                    <span>{row.assignee_name}</span>
+                    {row.assignee_id && (
+                      <CapacityBadge
+                        store={store}
+                        workspaceSlug={workspaceSlug}
+                        assigneeId={row.assignee_id}
+                        isAdmin={isAdmin}
+                      />
+                    )}
+                    {row.total_over && (
+                      <span
+                        className="bg-red-100 text-xs text-red-700 rounded px-1.5 py-0.5 font-medium"
+                        title={wlt("matrix.over_capacity")}
+                      >
+                        {wlt("matrix.over_capacity")}
+                      </span>
+                    )}
+                  </div>
+                </TableCell>
+                {visiblePeriods.map((period) => {
+                  const isOver = row.over?.[period] === true;
+                  return (
+                    <TableCell
+                      key={period}
+                      className={["text-right tabular-nums", isOver ? "bg-amber-50 text-amber-700" : ""].join(" ")}
+                    >
+                      {formatHours(row.buckets[period] ?? 0)}
+                    </TableCell>
+                  );
+                })}
                 <TableCell className="text-right tabular-nums">{formatHours(unscheduledHours)}</TableCell>
                 <TableCell className="text-right tabular-nums">{formatHours(row.total)}</TableCell>
               </TableRow>
