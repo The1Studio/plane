@@ -1,0 +1,29 @@
+name: Deploy company-main (self-hosted)
+
+on:
+  push:
+    branches: [company-main]
+    # Chỉ deploy khi có thay đổi liên quan tới app/build (bỏ qua thay đổi docs thuần)
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-company-main
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Runner tự host trên server, gắn label 'sv-0'
+    runs-on: [self-hosted, sv-0]
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build images & deploy
+        env:
+          RUN_DIR: /opt/plane-fork-app
+          IMAGE_TAG: companymain
+        run: bash deployments/selfhost/deploy.sh
