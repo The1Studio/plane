@@ -402,3 +402,84 @@ class TestDryRun(_EstimateWriterTestBase):
         # dry-run must not ledger anything (regression guard: the parent-skip
         # MigrationRecord write was previously unconditional)
         self.assertEqual(MigrationRecord.objects.count(), before)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Case 8 — Ledger key collision (issue #7)
+# ─────────────────────────────────────────────────────────────────────
+
+class TestLedgerKeyDoesNotCollideWithIssue(_EstimateWriterTestBase):
+    """A ClickUp task ledgers twice: once as an Issue, once as a WorkloadEstimate.
+
+    MigrationRecord is unique_together ("run", "source_type", "source_id"), so
+    both writers using source_type="task" made pass-3 (estimates) overwrite the
+    Issue row pass-1 wrote. That silently broke every
+    _ledger_done(run, "task", <task_id>) lookup on a RESUMED run — pass-2
+    (write_subtask_parent / write_issue_relation) would resolve a
+    WorkloadEstimate id, match no Issue, and drop the link while returning True.
+    """
+
+    def test_estimate_ledger_row_does_not_overwrite_issue_ledger_row(self):
+        from plane.clickup_migrate.writers import (
+            SOURCE_TYPE_TASK,
+            SOURCE_TYPE_TASK_ESTIMATE,
+            _ledger_done,
+            _record_upsert,
+        )
+
+        issue = self._issue()
+        task_id = f"cu-collide-{uuid.uuid4().hex[:8]}"
+
+        # pass-1: write_issue ledgers the Issue under "task".
+        _record_upsert(
+            self.run, SOURCE_TYPE_TASK, task_id, "Issue", str(issue.id),
+            MigrationRecord.STATUS_CREATED,
+        )
+
+        # pass-3: the estimate ledgers the SAME ClickUp task id.
+        token = write_workload_estimate(
+            self.run, issue, task_id, 3_600_000, True, self._user_cache(), dry_run=False,
+        )
+        self.assertEqual(token, "created")
+
+        # Both rows must coexist under distinct source_types.
+        self.assertEqual(
+            MigrationRecord.objects.filter(run=self.run, source_id=task_id).count(), 2
+        )
+
+        # The Issue lookup pass-2 relies on must still resolve to the Issue.
+        self.assertEqual(_ledger_done(self.run, SOURCE_TYPE_TASK, task_id), str(issue.id))
+
+        est = WorkloadEstimate.objects.get(issue=issue)
+        self.assertEqual(
+            _ledger_done(self.run, SOURCE_TYPE_TASK_ESTIMATE, task_id), str(est.id)
+        )
+
+    def test_parent_skip_ledger_row_does_not_overwrite_issue_ledger_row(self):
+        from plane.clickup_migrate.writers import (
+            SOURCE_TYPE_TASK,
+            SOURCE_TYPE_TASK_ESTIMATE,
+            _ledger_done,
+            _record_upsert,
+        )
+
+        parent_issue = self._issue()
+        self._issue(parent=parent_issue)  # countable child → parent_issue is a parent
+        task_id = f"cu-collide-parent-{uuid.uuid4().hex[:8]}"
+
+        _record_upsert(
+            self.run, SOURCE_TYPE_TASK, task_id, "Issue", str(parent_issue.id),
+            MigrationRecord.STATUS_CREATED,
+        )
+
+        token = write_workload_estimate(
+            self.run, parent_issue, task_id, 7_200_000, False, self._user_cache(), dry_run=False,
+        )
+        self.assertEqual(token, "skipped-parent")
+
+        # The parent-skip note must not clobber the Issue row either.
+        self.assertEqual(_ledger_done(self.run, SOURCE_TYPE_TASK, task_id), str(parent_issue.id))
+        skip_row = MigrationRecord.objects.get(
+            run=self.run, source_type=SOURCE_TYPE_TASK_ESTIMATE, source_id=task_id
+        )
+        self.assertEqual(skip_row.status, MigrationRecord.STATUS_SKIPPED)

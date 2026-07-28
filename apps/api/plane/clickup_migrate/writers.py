@@ -60,6 +60,18 @@ _PRIO_FALLBACK = {
 }
 
 
+# MigrationRecord is keyed unique_together ("run", "source_type", "source_id"),
+# so every writer that ledgers the SAME ClickUp entity needs its OWN source_type.
+# A ClickUp task produces two Plane rows — an Issue (write_issue) and a
+# WorkloadEstimate (write_workload_estimate) — so the estimate gets its own key.
+# Sharing "task" made pass-3 overwrite the Issue's ledger row with the estimate's,
+# which silently broke every _ledger_done(run, "task", ...) lookup on a RESUMED run:
+# write_subtask_parent / write_issue_relation would resolve a WorkloadEstimate id,
+# match no Issue, and drop the hierarchy link while still reporting success.
+SOURCE_TYPE_TASK = "task"
+SOURCE_TYPE_TASK_ESTIMATE = "task_estimate"
+
+
 def _record_upsert(
     run,
     source_type: str,
@@ -1037,7 +1049,7 @@ def write_workload_estimate(
         if not dry_run:
             MigrationRecord.objects.update_or_create(
                 run=run,
-                source_type="task",
+                source_type=SOURCE_TYPE_TASK_ESTIMATE,
                 source_id=str(task_id),
                 defaults={
                     "plane_type": "WorkloadEstimate",
@@ -1083,7 +1095,7 @@ def write_workload_estimate(
         )
         _record_upsert(
             run,
-            "task",
+            SOURCE_TYPE_TASK_ESTIMATE,
             str(task_id),
             "WorkloadEstimate",
             str(est.id),
