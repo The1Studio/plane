@@ -47,11 +47,14 @@ class Command(BaseCommand):
                                  "silently retargets if anyone creates a newer one mid-migration.")
         parser.add_argument("--dry-run", action="store_true", help="No .save() calls; emit counts only")
         parser.add_argument("--since-days", type=int, default=None, metavar="N",
-                            help="Only migrate tasks updated in the last N days "
-                                 "(ClickUp date_updated_gt). Out-of-window parents "
-                                 "and dependency targets of in-window tasks are still "
-                                 "pulled in (ancestor backfill), so hierarchy/relations "
-                                 "stay intact. Omit for full history.")
+                            help="Only migrate tasks updated in the last N days. Filters on "
+                                 "date_UPDATED (ClickUp date_updated_gt), not date_created — a "
+                                 "task opened long ago but touched recently IS in scope. "
+                                 "Out-of-window parents and dependency targets of in-window "
+                                 "tasks are pulled in too (ancestor backfill), so "
+                                 "hierarchy/relations stay intact; this applies to BOTH --plan "
+                                 "and --apply (before 2026-07-28 --apply skipped the backfill "
+                                 "and silently orphaned such subtasks). Omit for full history.")
         parser.add_argument("--auto-map", action="store_true",
                             help="(--plan) Skip Anthropic; map statuses by keyword "
                                  "heuristic, write MappingTable rows approved=True, and "
@@ -709,6 +712,35 @@ class Command(BaseCommand):
                 f"Attachments: ENABLED (per-task detail fetch; "
                 f"download {'WITH' if use_auth else 'WITHOUT'} auth header)"
             )
+
+        # ── pass-0: ancestor backfill (windowed runs) ─────────────────
+        # --plan has always closed over out-of-window parents / dependency
+        # targets so hierarchy survives a --since-days window; --apply never
+        # did, despite --since-days' help text promising exactly that. The
+        # result was silent orphaning: on the 2026-07-28 staging run, 296
+        # subtasks whose parent sat outside the 90-day window were logged
+        # "Orphan subtask" and landed at top level instead of nested.
+        #
+        # Rather than re-plumb the streaming write path, pre-crawl the window,
+        # close over its ancestors, and hand the result to the SAME
+        # tasks-by-list channel a snapshot replay uses. Memory is the same
+        # shape --plan has always held (~10.6k task dicts).
+        #
+        # Windowed runs only: with no window every task is already in scope,
+        # so streaming is kept there to avoid loading full history at once.
+        if snapshot_by_list is None and date_updated_gt is not None:
+            from plane.clickup_migrate import snapshot as snap
+
+            self.stdout.write("Pass-0: pre-crawling window to close over ancestors …")
+            windowed = self._crawl_all_tasks(client, space_ids, date_updated_gt)
+            complete, ancestors = self._backfill_ancestors(client, windowed)
+            self.stdout.write(
+                f"Pass-0: {len(windowed)} in-window task(s) "
+                f"+ {ancestors} out-of-window ancestor/relation task(s) "
+                f"= {len(complete)} total"
+            )
+            snapshot_by_list = snap.group_by_list(complete)
+            self._write_snapshot(snapshot_path, complete, space_ids, since_days)
 
         all_spaces = client.get_spaces()
         if space_ids:

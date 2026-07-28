@@ -58,8 +58,35 @@ a half-file that a later run would load as a complete extract.
 - **Container structure is still live.** Spaces, folders, lists, tags and custom-field defs are
   fetched per run, because Projects/Modules/States/Labels derive from them. Hundreds of calls,
   not thousands.
-- **Ancestor backfill is skipped on replay** — the snapshot already holds whatever ancestors
-  were resolved when it was seeded.
+- **Ancestor backfill is skipped on snapshot replay** — the snapshot already holds whatever
+  ancestors were resolved when it was seeded. A windowed run _without_ a snapshot does run the
+  backfill in both `--plan` and `--apply` (see below).
+
+## 2026-07-28 — staging run (`theone`)
+
+Instance: self-hosted staging at `/opt/plane-fork-app`, container `plane-fork-app-api-1`
+(**not** `api` as the older runbook below says). `MigrationRun #1`, space `26313036`,
+`--since-days 90`, metadata-only, target workspace `theone`. **0 ledger errors.**
+
+| Entity                      | Count                       |
+| --------------------------- | --------------------------- |
+| Issues                      | 10,615                      |
+| Module memberships          | 10,615                      |
+| Subscribers                 | 13,131                      |
+| Assignees                   | 7,230                       |
+| Labels / links              | 3,799 / 5,177               |
+| Parent links                | 6,464                       |
+| Estimates                   | 5,715 (**19,982.27 h**)     |
+| Parent estimates rolled up  | 171                         |
+| States / Projects / Modules | 398 / 29 / 329              |
+| Relations                   | 182                         |
+| Comments                    | 424                         |
+| Attachments                 | 0 (metadata-only by choice) |
+
+Verified afterwards: `theone` holds 10,621 issues and 30 projects while `theon1e` (7) and
+`unity` (1) are untouched at their pre-flight baselines, and the ledger carries `task=10,614`
+**and** `task_estimate=5,886` as distinct keys — confirming both the `--workspace` guard and the
+issue #7 fix in production, not just in tests.
 
 ## Current state (as of 2026-07-08)
 
@@ -121,6 +148,17 @@ Runbook notes:
   the shared `clickup-service` token throttles that service and its dependents for the duration.
 
 ## Known issues / follow-ups
+
+- **`--apply` skipped the ancestor backfill.** `--since-days`' help text promised that
+  out-of-window parents and dependency targets are pulled in so hierarchy survives the window —
+  true for `--plan`, which calls `_backfill_ancestors`, but `--apply` never did. The 2026-07-28
+  staging run logged **296 `Orphan subtask` warnings** (~4.4% of the 6,760 subtasks): their
+  parent sat outside the 90-day window, so they landed at top level instead of nested. Nothing
+  was corrupted. Fixed by a `--apply` **pass-0** that pre-crawls the window, closes over
+  ancestors, and feeds the result through the same tasks-by-list channel a snapshot replay uses;
+  the help text now states the real behaviour. Regression:
+  `tests/test_since_days.py::TestApplyPassZeroClosesOverAncestors`. Re-running `--apply` on the
+  same `--run-id` heals the existing orphans (idempotent).
 
 - **[#7](https://github.com/The1Studio/plane/issues/7)** — ledger key collision: `write_issue`
   and `write_workload_estimate` shared `source_type="task"`, so the pass-3 estimate row
