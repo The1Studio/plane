@@ -39,6 +39,12 @@ class Command(BaseCommand):
 
         parser.add_argument("--space", dest="space_ids", action="append", default=[], metavar="SPACE_ID",
                             help="Scope to one or more ClickUp Space IDs (repeatable)")
+        parser.add_argument("--workspace", dest="workspace_slug", default=None, metavar="SLUG",
+                            help="Target Plane Workspace slug. STRONGLY recommended whenever "
+                                 "more than one workspace exists: the implicit fallback is "
+                                 "Workspace.objects.first(), and Workspace.Meta.ordering is "
+                                 "('-created_at',), so the target is the NEWEST workspace and "
+                                 "silently retargets if anyone creates a newer one mid-migration.")
         parser.add_argument("--dry-run", action="store_true", help="No .save() calls; emit counts only")
         parser.add_argument("--since-days", type=int, default=None, metavar="N",
                             help="Only migrate tasks updated in the last N days "
@@ -103,9 +109,36 @@ class Command(BaseCommand):
         client = ClickUpClient(token=token, team_id=team_id)
 
         # ── workspace + bot user ──────────────────────────────────────
-        workspace = Workspace.objects.filter(slug__isnull=False).first()
-        if not workspace:
-            raise CommandError("No Workspace found in the database. Did SP0 run?")
+        workspace_slug: str | None = options["workspace_slug"]
+        if workspace_slug:
+            try:
+                workspace = Workspace.objects.get(slug=workspace_slug)
+            except Workspace.DoesNotExist:
+                known = ", ".join(
+                    Workspace.objects.filter(slug__isnull=False).values_list("slug", flat=True)
+                ) or "(none)"
+                raise CommandError(
+                    f"Workspace '{workspace_slug}' not found. Known slugs: {known}"
+                )
+        else:
+            candidates = list(Workspace.objects.filter(slug__isnull=False)[:2])
+            if not candidates:
+                raise CommandError("No Workspace found in the database. Did SP0 run?")
+            workspace = candidates[0]
+            if len(candidates) > 1:
+                # Ordering is ('-created_at',), so this silently picks the NEWEST
+                # workspace — and retargets if a newer one appears mid-migration.
+                # Refuse to guess when the choice is ambiguous.
+                known = ", ".join(
+                    Workspace.objects.filter(slug__isnull=False).values_list("slug", flat=True)
+                )
+                raise CommandError(
+                    "Multiple workspaces exist and --workspace was not given; refusing to "
+                    f"guess a migration target. Known slugs: {known}. "
+                    f"Re-run with --workspace <slug> (implicit pick would have been "
+                    f"'{workspace.slug}')."
+                )
+        self.stdout.write(f"Target workspace: {workspace.slug}")
 
         try:
             bot_user = User.objects.get(email__iexact=bot_email)
