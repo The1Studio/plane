@@ -23,7 +23,22 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build images & deploy
+        id: deploy
         env:
           RUN_DIR: /opt/plane-fork-app
           IMAGE_TAG: companymain
         run: bash deployments/selfhost/deploy.sh
+
+      - name: Notify Discord
+        if: always()
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_THREAD_ID: '1524317964160204800'
+          DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
+          GH_REPO: ${{ github.repository }}
+          GH_REF: ${{ github.ref_name }}
+          GH_SHA: ${{ github.sha }}
+          GH_ACTOR: ${{ github.actor }}
+          GH_EVENT: ${{ github.event_name }}
+          GH_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash deployments/selfhost/notify-discord.sh
