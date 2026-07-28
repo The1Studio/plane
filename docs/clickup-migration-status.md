@@ -70,9 +70,14 @@ Runbook notes:
 ## Known issues / follow-ups
 
 - **[#7](https://github.com/The1Studio/plane/issues/7)** — ledger key collision: `write_issue`
-  and `write_workload_estimate` share `source_type="task"`, so the estimate row overwrites the
-  issue's ledger row. Idempotent (heals via `external_id`) but defeats resume/skip and corrupts
-  per-issue reconciliation. **Open.**
+  and `write_workload_estimate` shared `source_type="task"`, so the pass-3 estimate row
+  overwrote the issue's ledger row. Issues themselves healed via `external_id`, but the
+  clobbered row silently broke `_ledger_done(run, "task", …)` on a **resumed** run:
+  `write_subtask_parent` / `write_issue_relation` resolved a `WorkloadEstimate` id, matched no
+  `Issue`, and dropped the parent/relation link while still returning `True`. Fixed — the
+  estimate now ledgers under its own `source_type="task_estimate"`
+  (`SOURCE_TYPE_TASK_ESTIMATE`), with regression tests in
+  `tests/test_estimate_writer.py::TestLedgerKeyDoesNotCollideWithIssue`. **Closed.**
 - **[#6](https://github.com/The1Studio/plane/issues/6)** — attachments never migrated. Fixed
   (3 commits above); closed after end-to-end verification.
 
