@@ -8,6 +8,59 @@ _Last updated: 2026-07-08._
 The production migration is deliberately **windowed to the last 90 days** (`--since-days 90`).
 Older ClickUp tasks are intentionally out of scope for the initial cutover.
 
+Note the window filters on **`date_updated`**, not `date_created` — a task opened two years ago
+but touched last week is in scope. `include_closed=true`, `subtasks=true`, and both archived and
+non-archived lists are walked.
+
+## Snapshot — reusable extract, incremental re-import
+
+`--snapshot PATH` writes a portable JSONL of the **raw** ClickUp task payloads, decoupling
+extract from load. Without it, every run re-crawls ClickUp from scratch and everything that
+persists (`MigrationRun`, `MappingTable`, `MigrationRecord`) lives in that one instance's
+Postgres — so importing the same data into a second instance starts from zero.
+
+| Flag                                 | Effect                                                                                                              |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| `--snapshot PATH` (file absent)      | Crawl per `--since-days`, then write the snapshot                                                                   |
+| `--snapshot PATH` (file present)     | Read tasks from it; ClickUp is **not** paged for tasks                                                              |
+| `--snapshot PATH --snapshot-refresh` | Pull only tasks updated since the watermark, merge (delta wins per task id), rewrite the snapshot, import the union |
+
+The **watermark** is `max(date_updated)` across the snapshot in Unix ms — the same unit
+`date_updated_gt` takes, so the delta bound needs no clock arithmetic and does not depend on
+when a run started.
+
+### Staging → prod replay
+
+```bash
+# 1. Seed the snapshot (staging, one full crawl)
+python manage.py migrate_clickup --plan --space 26313036 --since-days 90 \
+  --auto-map --snapshot /data/clickup-snapshot.jsonl
+
+# 2. Move it
+scp server:/data/clickup-snapshot.jsonl prod:/data/
+
+# 3. Later: pull only what changed, then import everything
+python manage.py migrate_clickup --run-id N --workspace <slug> --space 26313036 \
+  --apply --snapshot /data/clickup-snapshot.jsonl --snapshot-refresh
+```
+
+The file is written to a temp path and atomically renamed, so an interrupted write cannot leave
+a half-file that a later run would load as a complete extract.
+
+### Deliberate limits
+
+- **Tasks only.** Comments are re-fetched per task at import time, and comments dominate the
+  import's API cost — so a snapshot makes a replay _reproducible_, not _fast_. Snapshotting
+  comments is a follow-up.
+- **No deletion detection.** `date_updated_gt` never reports deletions, so a task deleted in
+  ClickUp between runs stays in the snapshot and is re-imported. Catching that needs a full
+  id-sweep diff.
+- **Container structure is still live.** Spaces, folders, lists, tags and custom-field defs are
+  fetched per run, because Projects/Modules/States/Labels derive from them. Hundreds of calls,
+  not thousands.
+- **Ancestor backfill is skipped on replay** — the snapshot already holds whatever ancestors
+  were resolved when it was seeded.
+
 ## Current state (as of 2026-07-08)
 
 | Metric                   | Count     | Notes                                                                |

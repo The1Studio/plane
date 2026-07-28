@@ -69,6 +69,21 @@ class Command(BaseCommand):
                                  "header (verified: with-auth 401, without 206), so downloads "
                                  "default to sending NO auth; set CLICKUP_ATTACHMENT_USE_AUTH=1 "
                                  "to force the token header on for a workspace that needs it.")
+        parser.add_argument("--snapshot", dest="snapshot_path", default=None, metavar="PATH",
+                            help="Portable JSONL raw-extract snapshot. Decouples extract "
+                                 "from load so the same task set can be replayed into "
+                                 "another instance (staging -> prod) without re-crawling. "
+                                 "If PATH does not exist, tasks are crawled per --since-days "
+                                 "and written there. If it DOES exist, tasks are read from it "
+                                 "and ClickUp is not paged for tasks at all (unless "
+                                 "--snapshot-refresh). Tasks only: comments and container "
+                                 "structure are still fetched live.")
+        parser.add_argument("--snapshot-refresh", action="store_true",
+                            help="(with --snapshot, on an existing file) Pull only tasks "
+                                 "updated since the snapshot's watermark, merge them in "
+                                 "(delta wins per task id), rewrite the snapshot, and use the "
+                                 "merged set. This is the 'only fetch what changed, then "
+                                 "import everything' path. Deletions are NOT detected.")
         parser.add_argument("--run-id", type=int, default=None,
                             help="Resume an existing MigrationRun by ID (else creates a new one)")
         parser.add_argument("--review-dir", default=".", metavar="DIR",
@@ -168,20 +183,132 @@ class Command(BaseCommand):
             )
             self.stdout.write(f"Created MigrationRun #{run.pk}")
 
+        # ── snapshot (extract/load decoupling) ────────────────────────
+        # Resolved BEFORE dispatch so both --plan and --apply see the same
+        # task set. snapshot_by_list is None when tasks should be crawled live.
+        snapshot_path: str | None = options["snapshot_path"]
+        snapshot_refresh: bool = options["snapshot_refresh"]
+        if snapshot_refresh and not snapshot_path:
+            raise CommandError("--snapshot-refresh requires --snapshot PATH.")
+
+        snapshot_by_list = self._load_snapshot(
+            client, space_ids, snapshot_path, snapshot_refresh, since_days,
+        )
+
         # ── dispatch ──────────────────────────────────────────────────
         if options["plan"]:
             self._run_plan(run, client, workspace, bot_user, space_ids, dry_run, review_dir,
-                           date_updated_gt, auto_map=options["auto_map"])
+                           date_updated_gt, auto_map=options["auto_map"],
+                           snapshot_path=snapshot_path, snapshot_by_list=snapshot_by_list,
+                           since_days=since_days)
         else:
             self._run_apply(run, client, workspace, bot_user, space_ids, dry_run, date_updated_gt,
-                            migrate_attachments=options["attachments"])
+                            migrate_attachments=options["attachments"],
+                            snapshot_path=snapshot_path, snapshot_by_list=snapshot_by_list,
+                            since_days=since_days)
+
+    # ─────────────────────────────────────────────────────────────────
+    # Snapshot plumbing
+    # ─────────────────────────────────────────────────────────────────
+
+    def _crawl_all_tasks(self, client, space_ids, date_updated_gt):
+        """Flat task crawl across the selected spaces (both archived states)."""
+        all_spaces = client.get_spaces()
+        spaces = [s for s in all_spaces if str(s["id"]) in space_ids] if space_ids else all_spaces
+
+        tasks: list[dict] = []
+        for space in spaces:
+            sid = space["id"]
+            list_ids = [lst["id"] for lst in client.get_folderless_lists(sid)]
+            for folder in client.get_folders(sid):
+                list_ids.extend(lst["id"] for lst in client.get_lists_in_folder(folder["id"]))
+            for lid in list_ids:
+                for archived in (False, True):
+                    for page, _ in client.iter_tasks(
+                        lid, archived=archived, date_updated_gt=date_updated_gt
+                    ):
+                        tasks.extend(page)
+        return self._dedupe_tasks(tasks)
+
+    def _load_snapshot(self, client, space_ids, snapshot_path, snapshot_refresh, since_days):
+        """Resolve the task source. Returns tasks-by-list, or None to crawl live.
+
+        None is returned when there is no snapshot path, or the file does not
+        exist yet — in that case the normal crawl runs and the snapshot is
+        written afterwards from the tasks it collected (see _write_snapshot).
+        """
+        from plane.clickup_migrate import snapshot as snap
+
+        if not snapshot_path:
+            return None
+
+        if not os.path.exists(snapshot_path):
+            if snapshot_refresh:
+                raise CommandError(
+                    f"--snapshot-refresh given but {snapshot_path} does not exist. "
+                    "Run once without --snapshot-refresh to seed the snapshot first."
+                )
+            self.stdout.write(
+                f"Snapshot {snapshot_path} not found — crawling live and writing it afterwards."
+            )
+            return None
+
+        tasks_by_id, manifest = snap.read(snapshot_path)
+        self.stdout.write(
+            f"Snapshot loaded: {snapshot_path} "
+            f"({len(tasks_by_id)} tasks, watermark={manifest.get('watermark')})"
+        )
+
+        if snapshot_refresh:
+            watermark = manifest.get("watermark")
+            if watermark is None:
+                raise CommandError(
+                    f"{snapshot_path} has no watermark — cannot compute a delta. "
+                    "Re-seed the snapshot with a full run."
+                )
+            self.stdout.write(f"Delta: pulling tasks updated since watermark {watermark} …")
+            delta = self._crawl_all_tasks(client, space_ids, watermark)
+            merged, updated, added = snap.merge(tasks_by_id, delta)
+            self.stdout.write(
+                f"Delta: {len(delta)} task(s) fetched — {updated} updated, {added} new; "
+                f"snapshot now {len(merged)} task(s)"
+            )
+            snap.write(
+                snapshot_path, merged.values(),
+                space_ids=space_ids, since_days=since_days,
+            )
+            tasks_by_id = merged
+
+        by_list = snap.group_by_list(tasks_by_id.values())
+        dropped = len(tasks_by_id) - sum(len(v) for v in by_list.values())
+        if dropped:
+            self.stderr.write(
+                f"WARNING: {dropped} snapshot task(s) have no resolvable list id "
+                "and cannot be placed in a Project — skipped."
+            )
+        return by_list
+
+    def _write_snapshot(self, snapshot_path, tasks, space_ids, since_days):
+        """Persist a freshly-crawled task set. No-op without --snapshot."""
+        if not snapshot_path:
+            return
+        from plane.clickup_migrate import snapshot as snap
+
+        manifest = snap.write(
+            snapshot_path, tasks, space_ids=space_ids, since_days=since_days,
+        )
+        self.stdout.write(
+            f"Snapshot written: {snapshot_path} "
+            f"({manifest['task_count']} tasks, watermark={manifest['watermark']})"
+        )
 
     # ─────────────────────────────────────────────────────────────────
     # Phase 3 — --plan
     # ─────────────────────────────────────────────────────────────────
 
     def _run_plan(self, run, client, workspace, bot_user, space_ids, dry_run, review_dir,
-                  date_updated_gt=None, auto_map=False):
+                  date_updated_gt=None, auto_map=False,
+                  snapshot_path=None, snapshot_by_list=None, since_days=None):
         import json
         import os
 
@@ -244,6 +371,9 @@ class Command(BaseCommand):
             for lst in client.get_folderless_lists(sid):
                 lid = lst["id"]
                 field_defs_by_list[lid] = client.get_field_defs(lid)
+                if snapshot_by_list is not None:
+                    all_tasks.extend(snapshot_by_list.get(lid, []))
+                    continue
                 for tasks_page, _ in client.iter_tasks(lid, archived=False, date_updated_gt=date_updated_gt):
                     all_tasks.extend(tasks_page)
                 for tasks_page, _ in client.iter_tasks(lid, archived=True, date_updated_gt=date_updated_gt):
@@ -253,6 +383,9 @@ class Command(BaseCommand):
                 for lst in client.get_lists_in_folder(folder["id"]):
                     lid = lst["id"]
                     field_defs_by_list[lid] = client.get_field_defs(lid)
+                    if snapshot_by_list is not None:
+                        all_tasks.extend(snapshot_by_list.get(lid, []))
+                        continue
                     for tasks_page, _ in client.iter_tasks(lid, archived=False, date_updated_gt=date_updated_gt):
                         all_tasks.extend(tasks_page)
                     for tasks_page, _ in client.iter_tasks(lid, archived=True, date_updated_gt=date_updated_gt):
@@ -265,11 +398,19 @@ class Command(BaseCommand):
 
         # Ancestor backfill: when a window is set, pull out-of-window
         # parents + dependency targets so hierarchy/relations stay intact.
+        # Skipped when replaying a snapshot: the snapshot already contains
+        # whatever ancestors were resolved when it was seeded, and re-walking
+        # them would issue exactly the per-task fetches the snapshot avoids.
         ancestors = 0
-        if date_updated_gt is not None:
+        if date_updated_gt is not None and snapshot_by_list is None:
             all_tasks, ancestors = self._backfill_ancestors(client, all_tasks)
             if ancestors:
                 self.stdout.write(f"Backfilled {ancestors} out-of-window ancestor/relation task(s)")
+
+        # Persist the freshly-crawled set (no-op without --snapshot, and skipped
+        # when we replayed one — _load_snapshot already rewrote it on refresh).
+        if snapshot_by_list is None:
+            self._write_snapshot(snapshot_path, all_tasks, space_ids, since_days)
 
         distinct_statuses = collect_distinct_statuses(all_tasks)
         distinct_fields = collect_distinct_custom_field_defs(field_defs_by_list)
@@ -514,7 +655,8 @@ class Command(BaseCommand):
     # ─────────────────────────────────────────────────────────────────
 
     def _run_apply(self, run, client, workspace, bot_user, space_ids, dry_run, date_updated_gt=None,
-                   migrate_attachments=False):
+                   migrate_attachments=False,
+                   snapshot_path=None, snapshot_by_list=None, since_days=None):
         from plane.clickup_migrate.writers import (
             UserCache,
             MappingCache,
@@ -655,6 +797,7 @@ class Command(BaseCommand):
                     use_auth, dry_run, counts, task_to_issue, subtask_parents, all_tasks_raw,
                     date_updated_gt=date_updated_gt,
                     migrate_attachments=migrate_attachments,
+                    snapshot_by_list=snapshot_by_list,
                 )
 
             # ── folders → Project + Modules ───────────────────────────
@@ -700,6 +843,7 @@ class Command(BaseCommand):
                         module=module,
                         date_updated_gt=date_updated_gt,
                         migrate_attachments=migrate_attachments,
+                        snapshot_by_list=snapshot_by_list,
                     )
 
         # ── pass-2: subtask parents ───────────────────────────────────
@@ -785,8 +929,13 @@ class Command(BaseCommand):
         module=None,
         date_updated_gt=None,
         migrate_attachments=False,
+        snapshot_by_list=None,
     ):
-        """Extract and write all tasks from a single ClickUp list."""
+        """Write all tasks for a single ClickUp list.
+
+        Tasks come from the snapshot when one is loaded (no ClickUp task paging
+        at all), otherwise they are crawled live.
+        """
         from plane.clickup_migrate.writers import (
             write_issue, write_issue_assignee, write_issue_label,
             write_module_issue, write_issue_subscriber, write_comment,
@@ -795,129 +944,139 @@ class Command(BaseCommand):
         )
         from plane.db.models import State
 
-        for archived in (False, True):
-            for tasks_page, page_num in client.iter_tasks(list_id, archived=archived, date_updated_gt=date_updated_gt):
-                for task in tasks_page:
-                    task_id = str(task.get("id", ""))
-                    all_tasks_raw[task_id] = task
+        if snapshot_by_list is not None:
+            task_pages = [(snapshot_by_list.get(str(list_id), []), 0)]
+        else:
+            task_pages = (
+                page
+                for archived in (False, True)
+                for page in client.iter_tasks(
+                    list_id, archived=archived, date_updated_gt=date_updated_gt
+                )
+            )
 
-                    # Track subtask parent for pass-2.
-                    parent_task_id = str((task.get("parent") or ""))
-                    if parent_task_id:
-                        subtask_parents[task_id] = parent_task_id
+        for tasks_page, page_num in task_pages:
+            for task in tasks_page:
+                task_id = str(task.get("id", ""))
+                all_tasks_raw[task_id] = task
 
-                    # Resolve state — create lazily from the TASK's status.
-                    # This workspace exposes statuses at space/folder level, so
-                    # list defs carry none; deriving states from tasks is the
-                    # only way to preserve real Open/In-Progress/Done fidelity.
-                    status_obj = task.get("status") or {}
-                    status_name = status_obj.get("status", "")
-                    state = state_map.get(status_name)
-                    if state is None and status_name and not dry_run:
-                        group = mapping_cache.status_group(list_id, status_name)
-                        has_default = State.all_state_objects.filter(
-                            project=project, default=True
-                        ).exists()
-                        state = write_state(
-                            run, project, workspace, list_id,
-                            {"status": status_name, "color": status_obj.get("color", "#60646C")},
-                            group, is_default=not has_default,
-                            user_cache=user_cache, dry_run=dry_run,
-                        )
-                        if state is not None:
-                            state_map[status_name] = state
-                            counts["state"] += 1
-                    if state is None and state_map:
-                        state = next(iter(state_map.values()))
+                # Track subtask parent for pass-2.
+                parent_task_id = str((task.get("parent") or ""))
+                if parent_task_id:
+                    subtask_parents[task_id] = parent_task_id
 
-                    issue = write_issue(
-                        run, project, workspace, task, state,
-                        mapping_cache, user_cache, dry_run,
+                # Resolve state — create lazily from the TASK's status.
+                # This workspace exposes statuses at space/folder level, so
+                # list defs carry none; deriving states from tasks is the
+                # only way to preserve real Open/In-Progress/Done fidelity.
+                status_obj = task.get("status") or {}
+                status_name = status_obj.get("status", "")
+                state = state_map.get(status_name)
+                if state is None and status_name and not dry_run:
+                    group = mapping_cache.status_group(list_id, status_name)
+                    has_default = State.all_state_objects.filter(
+                        project=project, default=True
+                    ).exists()
+                    state = write_state(
+                        run, project, workspace, list_id,
+                        {"status": status_name, "color": status_obj.get("color", "#60646C")},
+                        group, is_default=not has_default,
+                        user_cache=user_cache, dry_run=dry_run,
                     )
-                    if issue:
-                        task_to_issue[task_id] = issue
-                    counts["issue"] += 1
+                    if state is not None:
+                        state_map[status_name] = state
+                        counts["state"] += 1
+                if state is None and state_map:
+                    state = next(iter(state_map.values()))
 
-                    if not issue or dry_run:
+                issue = write_issue(
+                    run, project, workspace, task, state,
+                    mapping_cache, user_cache, dry_run,
+                )
+                if issue:
+                    task_to_issue[task_id] = issue
+                counts["issue"] += 1
+
+                if not issue or dry_run:
+                    continue
+
+                # Assignees.
+                for a in (task.get("assignees") or []):
+                    email = (a or {}).get("email")
+                    assignee = user_cache.resolve(email)
+                    write_issue_assignee(issue, assignee, dry_run)
+                    counts["assignee"] += 1
+
+                # Labels (tags).
+                for tag in (task.get("tags") or []):
+                    label = label_map.get(tag.get("name", ""))
+                    if label:
+                        write_issue_label(issue, label, bot_user, dry_run)
+                        counts["label_link"] += 1
+
+                # Module membership.
+                if module:
+                    write_module_issue(module, issue, bot_user, dry_run)
+                    counts["module_issue"] += 1
+
+                # Watchers → IssueSubscriber.
+                for w in (task.get("watchers") or []):
+                    email = (w or {}).get("email")
+                    sub = user_cache.resolve(email)
+                    write_issue_subscriber(issue, sub, bot_user, dry_run)
+                    counts["subscriber"] += 1
+
+                # Custom fields → description table + archive.
+                write_custom_fields_to_description(
+                    issue, task, field_defs, mapping_cache, bot_user, dry_run
+                )
+
+                # Attachments (see _resolve_attachments for the issue-#6
+                # list-endpoint detail-fetch rationale).
+                for att in self._resolve_attachments(
+                    task, task_id, client, migrate_attachments, counts
+                ):
+                    write_attachment(run, issue, workspace, att, client, use_auth, bot_user, dry_run)
+                    counts["attachment"] += 1
+
+                # Comments (with cursor resumption).
+                # H1: MigrationCursor.get_or_create only in non-dry-run.
+                from plane.clickup_migrate.models import MigrationCursor
+                if dry_run:
+                    # Dry-run: iterate all comments without persisting cursor state.
+                    for comments, _, _ in client.iter_comments(task_id, start_id=None):
+                        counts["comment"] += len(comments)
+                        for comment in comments:
+                            counts["comment"] += len(comment.get("replies") or [])
+                else:
+                    cursor_obj, _ = MigrationCursor.objects.get_or_create(
+                        run=run,
+                        entity_type="comments",
+                        container_id=task_id,
+                        defaults={"cursor_token": None, "done": False},
+                    )
+                    if cursor_obj.done:
                         continue
 
-                    # Assignees.
-                    for a in (task.get("assignees") or []):
-                        email = (a or {}).get("email")
-                        assignee = user_cache.resolve(email)
-                        write_issue_assignee(issue, assignee, dry_run)
-                        counts["assignee"] += 1
-
-                    # Labels (tags).
-                    for tag in (task.get("tags") or []):
-                        label = label_map.get(tag.get("name", ""))
-                        if label:
-                            write_issue_label(issue, label, bot_user, dry_run)
-                            counts["label_link"] += 1
-
-                    # Module membership.
-                    if module:
-                        write_module_issue(module, issue, bot_user, dry_run)
-                        counts["module_issue"] += 1
-
-                    # Watchers → IssueSubscriber.
-                    for w in (task.get("watchers") or []):
-                        email = (w or {}).get("email")
-                        sub = user_cache.resolve(email)
-                        write_issue_subscriber(issue, sub, bot_user, dry_run)
-                        counts["subscriber"] += 1
-
-                    # Custom fields → description table + archive.
-                    write_custom_fields_to_description(
-                        issue, task, field_defs, mapping_cache, bot_user, dry_run
-                    )
-
-                    # Attachments (see _resolve_attachments for the issue-#6
-                    # list-endpoint detail-fetch rationale).
-                    for att in self._resolve_attachments(
-                        task, task_id, client, migrate_attachments, counts
-                    ):
-                        write_attachment(run, issue, workspace, att, client, use_auth, bot_user, dry_run)
-                        counts["attachment"] += 1
-
-                    # Comments (with cursor resumption).
-                    # H1: MigrationCursor.get_or_create only in non-dry-run.
-                    from plane.clickup_migrate.models import MigrationCursor
-                    if dry_run:
-                        # Dry-run: iterate all comments without persisting cursor state.
-                        for comments, _, _ in client.iter_comments(task_id, start_id=None):
-                            counts["comment"] += len(comments)
-                            for comment in comments:
-                                counts["comment"] += len(comment.get("replies") or [])
-                    else:
-                        cursor_obj, _ = MigrationCursor.objects.get_or_create(
-                            run=run,
-                            entity_type="comments",
-                            container_id=task_id,
-                            defaults={"cursor_token": None, "done": False},
-                        )
-                        if cursor_obj.done:
-                            continue
-
-                        start_id = cursor_obj.cursor_token
-                        for comments, _, next_cursor in client.iter_comments(task_id, start_id=start_id):
-                            for comment in comments:
-                                parent_comment = write_comment(
-                                    run, issue, workspace, comment, user_cache,
-                                    parent_comment=None, dry_run=dry_run,
+                    start_id = cursor_obj.cursor_token
+                    for comments, _, next_cursor in client.iter_comments(task_id, start_id=start_id):
+                        for comment in comments:
+                            parent_comment = write_comment(
+                                run, issue, workspace, comment, user_cache,
+                                parent_comment=None, dry_run=dry_run,
+                            )
+                            counts["comment"] += 1
+                            # Replies.
+                            for reply in (comment.get("replies") or []):
+                                write_comment(
+                                    run, issue, workspace, reply, user_cache,
+                                    parent_comment=parent_comment, dry_run=dry_run,
                                 )
                                 counts["comment"] += 1
-                                # Replies.
-                                for reply in (comment.get("replies") or []):
-                                    write_comment(
-                                        run, issue, workspace, reply, user_cache,
-                                        parent_comment=parent_comment, dry_run=dry_run,
-                                    )
-                                    counts["comment"] += 1
 
-                            # Checkpoint cursor.
-                            cursor_obj.cursor_token = next_cursor
-                            cursor_obj.save(update_fields=["cursor_token"])
+                        # Checkpoint cursor.
+                        cursor_obj.cursor_token = next_cursor
+                        cursor_obj.save(update_fields=["cursor_token"])
 
-                        cursor_obj.done = True
-                        cursor_obj.save(update_fields=["done"])
+                    cursor_obj.done = True
+                    cursor_obj.save(update_fields=["done"])
