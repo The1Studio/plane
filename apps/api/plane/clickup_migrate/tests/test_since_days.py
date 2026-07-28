@@ -205,3 +205,78 @@ class TestResolveAttachments(SimpleTestCase):
         self.assertEqual([a["id"] for a in out], ["a1"])
         self.assertEqual(client.fetched, [])  # already had them
         self.assertEqual(counts["attachment_detail_fetch"], 0)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# --apply pass-0: ancestors must reach the write path, not just --plan
+# ─────────────────────────────────────────────────────────────────────
+
+class _StructureClient(_BackfillClient):
+    """_BackfillClient plus the space/folder/list surface _crawl_all_tasks walks."""
+
+    def __init__(self, graph, tasks_by_list):
+        super().__init__(graph)
+        self.tasks_by_list = tasks_by_list
+        self.windows = []
+
+    def get_spaces(self):
+        return [{"id": "S1"}]
+
+    def get_folderless_lists(self, space_id):
+        return [{"id": lid} for lid in self.tasks_by_list]
+
+    def get_folders(self, space_id):
+        return []
+
+    def get_lists_in_folder(self, folder_id):
+        return []
+
+    def iter_tasks(self, list_id, archived=False, date_updated_gt=None):
+        self.windows.append(date_updated_gt)
+        if archived:
+            return
+        yield list(self.tasks_by_list.get(list_id, [])), 0
+
+
+class TestApplyPassZeroClosesOverAncestors(SimpleTestCase):
+    """Regression for the 2026-07-28 staging run.
+
+    `--plan` had always closed over out-of-window parents, but `--apply` never
+    did — despite --since-days' help text promising it — so 296 subtasks whose
+    parent fell outside the 90-day window were logged "Orphan subtask" and
+    landed at top level. `--apply` now runs the same backfill and feeds the
+    closed-over set through the tasks-by-list channel, so this asserts the
+    out-of-window parent actually reaches the write path.
+    """
+
+    def test_out_of_window_parent_is_grouped_under_its_own_list(self):
+        from plane.clickup_migrate import snapshot as snap
+
+        cmd = Command()
+        # A is in-window in L1; its parent B was last touched long ago and
+        # lives in L2, so the windowed crawl never returns it.
+        client = _StructureClient(
+            graph={"B": {"id": "B", "list": {"id": "L2"}}},
+            tasks_by_list={"L1": [{"id": "A", "parent": "B", "list": {"id": "L1"}}], "L2": []},
+        )
+
+        windowed = cmd._crawl_all_tasks(client, ["S1"], date_updated_gt=12345)
+        complete, backfilled = cmd._backfill_ancestors(client, windowed)
+        grouped = snap.group_by_list(complete)
+
+        self.assertEqual([t["id"] for t in windowed], ["A"])
+        self.assertEqual(backfilled, 1)
+        # The parent must be present AND addressable by its own list, or the
+        # traversal would never write it and the link would orphan again.
+        self.assertIn("L2", grouped)
+        self.assertEqual([t["id"] for t in grouped["L2"]], ["B"])
+        self.assertEqual([t["id"] for t in grouped["L1"]], ["A"])
+
+    def test_crawl_propagates_the_window_to_every_list(self):
+        cmd = Command()
+        client = _StructureClient(graph={}, tasks_by_list={"L1": [], "L2": []})
+        cmd._crawl_all_tasks(client, ["S1"], date_updated_gt=999)
+        # Every page request must carry the bound — a dropped filter would
+        # silently turn a windowed run into a full-history pull.
+        self.assertTrue(client.windows)
+        self.assertEqual(set(client.windows), {999})
