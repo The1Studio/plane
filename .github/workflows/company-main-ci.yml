@@ -147,13 +147,23 @@ jobs:
   # Runs the actual Python test suite for The1Studio's fork-owned Django apps.
   # Job 1 above only checks that the apps IMPORT cleanly and that migrations
   # are complete — it never executes a single test. This job is the real
-  # regression gate for github_ext / workload / clickup_migrate / ai_ext
-  # behavior (hundreds of tests previously never gated a PR — see PR #14,
-  # which merged 47 github_ext tests only because a human ran pytest by hand).
+  # regression gate for fork-app behavior (hundreds of tests previously never
+  # gated a PR — see PR #14, which merged 47 github_ext tests only because a
+  # human ran pytest by hand).
+  #
+  # The app list is DERIVED, never hardcoded. It used to be spelled out here,
+  # which meant a newly scaffolded app's tests silently never ran and the job
+  # went green while covering none of it — the same failure as PR #14, and it
+  # recurred with project_ext (PR #25). plane-fork-test-paths.py intersects the
+  # `forkApps` registry in .claude/skills/_shared/references/fork-convention.md
+  # with the tests/ directories actually on disk, and hard-fails on drift, so
+  # registering a new app is the single action that makes it both classified
+  # and tested.
   #
   # Scope: fork-owned apps ONLY. Upstream Plane's own test suite is NOT run
   # here — it is not maintained on this fork and would fail for unrelated
-  # reasons.
+  # reasons. That is why this derives from the registry rather than globbing
+  # every plane/*/tests directory.
   #
   # KNOWN RED AT INTRODUCTION: plane/ai_ext/tests/test_rag_access.py is
   # broken on company-main; PR #15 fixes it (16/16 green). Merge #15 FIRST,
@@ -248,9 +258,21 @@ jobs:
             -c "CREATE EXTENSION IF NOT EXISTS vector;"
         timeout-minutes: 2
 
+      - name: Resolve fork-owned test paths
+        id: fork-test-paths
+        # Hard-fails if an app ships tests/ but is missing from `forkApps`, which
+        # would otherwise both exclude it here and make plane-classify-path.cjs
+        # report its files as `core` violations.
+        run: |
+          set -euo pipefail
+          paths="$(python3 .claude/scripts/plane-fork-test-paths.py)"
+          echo "Discovered fork-app suites: $paths"
+          echo "paths=$paths" >> "$GITHUB_OUTPUT"
+        timeout-minutes: 2
+
       - name: Run backend test suite (fork-owned apps)
         working-directory: apps/api
-        run: pytest plane/github_ext plane/workload plane/clickup_migrate plane/ai_ext plane/project_ext
+        run: pytest ${{ steps.fork-test-paths.outputs.paths }}
         timeout-minutes: 15
 
   # ---------------------------------------------------------------------------
