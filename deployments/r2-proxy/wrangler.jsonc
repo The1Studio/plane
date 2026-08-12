@@ -1,0 +1,9 @@
+{
+  "name": "plane-r2-proxy",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-01",
+  "r2_buckets": [
+    { "binding": "BUCKET", "bucket_name": "plane-uploads" }
+  ],
+  "observability": { "enabled": true }
+}
