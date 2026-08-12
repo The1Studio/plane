@@ -25,7 +25,6 @@ export const WORKLOAD_STRINGS = {
   "common.total": "Total",
   "common.none": "None",
   "common.loading": "Loading…",
-  "common.refresh": "Refresh",
   "common.saving": "saving…",
   "estimate.label": "Estimated hours",
   "estimate.tooltip": "Estimated: {hours}h",
@@ -54,9 +53,10 @@ export const WORKLOAD_STRINGS = {
   "granularity.week": "Week",
   "granularity.month": "Month",
   "filters.projects": "Projects",
-  "filters.assignees": "Assignees",
-  "filters.no_projects": "No projects available",
-  "filters.no_assignees": "No assignees available",
+  "filters.members": "Members",
+  "filters.granularity": "Granularity",
+  "filters.state_groups": "Status",
+  "filters.clear": "Clear filters",
   "filters.over_only": "Over capacity only",
 } as const;
 

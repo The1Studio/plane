@@ -4,7 +4,7 @@ import { Table, TableHeader, TableBody, TableFooter, TableRow, TableHead, TableC
 
 import { wlt } from "./i18n";
 import type { IWorkloadStore } from "./store";
-import type { TWorkloadGranularity } from "./types";
+import { WorkloadToolbar } from "./WorkloadToolbar";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -18,6 +18,10 @@ type WorkloadMatrixProps = {
    * the role and passes it down. Defaults to read-only.
    */
   isAdmin?: boolean;
+  /** Forwarded verbatim to WorkloadToolbar — see its prop docs for why slots exist. */
+  memberFilterSlot?: React.ReactNode;
+  projectFilterSlot?: React.ReactNode;
+  dateRangeSlot?: React.ReactNode;
 };
 
 type CapacityBadgeProps = {
@@ -47,7 +51,7 @@ const CapacityBadge = observer(function CapacityBadge({
   if (!isAdmin) {
     if (capacity === undefined) return null;
     return (
-      <span className="bg-gray-100 text-xs text-gray-600 rounded px-1.5 py-0.5">
+      <span className="rounded bg-layer-1 px-1.5 py-0.5 text-11 text-tertiary">
         {wlt("matrix.cap_short", { hours: capacity })}
       </span>
     );
@@ -81,19 +85,12 @@ const CapacityBadge = observer(function CapacityBadge({
       onChange={(e) => setDraft(e.target.value)}
       onBlur={handleBlur}
       onClick={(e) => e.stopPropagation()}
-      className="border-gray-200 focus:ring-custom-primary-100 text-xs w-16 rounded border px-1 py-0.5 tabular-nums focus:ring-1 focus:outline-none"
+      className="w-16 rounded border border-subtle bg-surface-1 px-1 py-0.5 text-11 text-primary tabular-nums focus:ring-1 focus:ring-accent-strong focus:outline-none"
     />
   );
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-/** Max date-range span in days per granularity. */
-const MAX_SPAN_DAYS: Record<TWorkloadGranularity, number> = {
-  day: 92,
-  week: 366,
-  month: 730,
-};
 
 /** Format hours value for display. Returns "—" for zero. */
 function formatHours(value: number): string {
@@ -102,27 +99,15 @@ function formatHours(value: number): string {
   return `${value.toFixed(1)}h`;
 }
 
-/** Add/subtract days from a YYYY-MM-DD string, returning YYYY-MM-DD. */
-function shiftDate(dateStr: string, days: number): string {
-  const d = new Date(dateStr);
-  d.setDate(d.getDate() + days);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-/** Compute day difference between two YYYY-MM-DD strings. */
-function daysBetween(from: string, to: string): number {
-  return Math.round((new Date(to).getTime() - new Date(from).getTime()) / 86_400_000);
-}
-
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export const WorkloadMatrix = observer(function WorkloadMatrix({
   store,
   workspaceSlug,
   isAdmin = false,
+  memberFilterSlot,
+  projectFilterSlot,
+  dateRangeSlot,
 }: WorkloadMatrixProps) {
   // ── Effects ────────────────────────────────────────────────────────────────
 
@@ -132,44 +117,13 @@ export const WorkloadMatrix = observer(function WorkloadMatrix({
     if (workspaceSlug) store.fetchCapacities(workspaceSlug);
   }, [store, workspaceSlug]);
 
-  // ── Toolbar handlers ───────────────────────────────────────────────────────
-
-  function handleGranularityClick(g: TWorkloadGranularity) {
-    store.setGranularity(g);
-    store.fetchWorkload(workspaceSlug);
-  }
-
-  function handleDateChange(field: "from" | "to", value: string) {
-    let from = store.dateFrom;
-    let to = store.dateTo;
-
-    if (field === "from") {
-      from = value;
-      // Enforce max span: if to is too far, clamp it
-      const maxTo = shiftDate(from, MAX_SPAN_DAYS[store.granularity]);
-      if (daysBetween(from, to) > MAX_SPAN_DAYS[store.granularity]) {
-        to = maxTo;
-      }
-    } else {
-      to = value;
-      // Enforce max span: if from is too far back, clamp it
-      const minFrom = shiftDate(to, -MAX_SPAN_DAYS[store.granularity]);
-      if (daysBetween(from, to) > MAX_SPAN_DAYS[store.granularity]) {
-        from = minFrom;
-      }
-    }
-
-    store.setDateRange(from, to);
-    store.fetchWorkload(workspaceSlug);
-  }
-
   // ── Loading / error / empty states ────────────────────────────────────────
 
   if (store.isLoading) {
     return (
       <div className="flex flex-col gap-4">
         {renderToolbar()}
-        <div className="text-sm text-gray-500 py-8 text-center">{wlt("common.loading")}</div>
+        <div className="py-8 text-center text-13 text-tertiary">{wlt("common.loading")}</div>
       </div>
     );
   }
@@ -178,7 +132,7 @@ export const WorkloadMatrix = observer(function WorkloadMatrix({
     return (
       <div className="flex flex-col gap-4">
         {renderToolbar()}
-        <div className="text-sm text-red-500 py-4">{store.error}</div>
+        <div className="py-4 text-13 text-danger-primary">{store.error}</div>
       </div>
     );
   }
@@ -187,7 +141,7 @@ export const WorkloadMatrix = observer(function WorkloadMatrix({
     return (
       <div className="flex flex-col gap-4">
         {renderToolbar()}
-        <div className="text-sm text-gray-400 py-8 text-center">{wlt("matrix.no_data_loaded")}</div>
+        <div className="py-8 text-center text-13 text-placeholder">{wlt("matrix.no_data_loaded")}</div>
       </div>
     );
   }
@@ -198,7 +152,7 @@ export const WorkloadMatrix = observer(function WorkloadMatrix({
     return (
       <div className="flex flex-col gap-4">
         {renderToolbar()}
-        <div className="text-sm text-gray-400 py-8 text-center">
+        <div className="py-8 text-center text-13 text-placeholder">
           {wlt("matrix.no_workload_data")}
           {meta.unscheduled_ratio > 0 && (
             <span className="ml-1">
@@ -263,7 +217,7 @@ export const WorkloadMatrix = observer(function WorkloadMatrix({
         <TableBody>
           {visibleRows.length === 0 && store.showOverCapacityOnly && (
             <TableRow>
-              <TableCell colSpan={visiblePeriods.length + 3} className="text-sm text-gray-400 py-6 text-center">
+              <TableCell colSpan={visiblePeriods.length + 3} className="py-6 text-center text-13 text-placeholder">
                 {wlt("matrix.no_over_capacity")}
               </TableCell>
             </TableRow>
@@ -285,7 +239,7 @@ export const WorkloadMatrix = observer(function WorkloadMatrix({
                     )}
                     {row.total_over && (
                       <span
-                        className="bg-red-100 text-xs text-red-700 rounded px-1.5 py-0.5 font-medium"
+                        className="rounded bg-danger-subtle px-1.5 py-0.5 text-11 font-medium text-danger-primary"
                         title={wlt("matrix.over_capacity")}
                       >
                         {wlt("matrix.over_capacity")}
@@ -298,7 +252,10 @@ export const WorkloadMatrix = observer(function WorkloadMatrix({
                   return (
                     <TableCell
                       key={period}
-                      className={["text-right tabular-nums", isOver ? "bg-amber-50 text-amber-700" : ""].join(" ")}
+                      className={[
+                        "text-right tabular-nums",
+                        isOver ? "bg-warning-subtle text-warning-primary" : "",
+                      ].join(" ")}
                     >
                       {formatHours(row.buckets[period] ?? 0)}
                     </TableCell>
@@ -326,69 +283,24 @@ export const WorkloadMatrix = observer(function WorkloadMatrix({
       </Table>
 
       {/* Meta info */}
-      <div className="text-xs text-gray-500 space-y-0.5">
+      <div className="space-y-0.5 text-11 text-tertiary">
         <p>{wlt("matrix.issues_summary", { counted: meta.issues_counted, zero: meta.zero_estimate_count })}</p>
-        {meta.truncated && <p className="text-amber-600">{wlt("matrix.truncated")}</p>}
+        {meta.truncated && <p className="text-warning-primary">{wlt("matrix.truncated")}</p>}
       </div>
     </div>
   );
 
-  // ── Toolbar (extracted as inner function so it can be called in all branches) ──
+  // ── Toolbar (inner fn so every early-return branch renders it identically) ──
 
   function renderToolbar() {
-    const granularities: Array<{ value: TWorkloadGranularity; label: string }> = [
-      { value: "day", label: wlt("granularity.day") },
-      { value: "week", label: wlt("granularity.week") },
-      { value: "month", label: wlt("granularity.month") },
-    ];
-
     return (
-      <div className="flex flex-wrap items-center gap-3">
-        {/* Granularity toggle */}
-        <div className="border-gray-200 flex overflow-hidden rounded border">
-          {granularities.map(({ value, label }) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => handleGranularityClick(value)}
-              className={[
-                "px-3 py-1.5 text-sm transition-colors",
-                store.granularity === value
-                  ? "bg-custom-primary-100 text-custom-primary-200 font-medium"
-                  : "bg-white text-gray-600 hover:bg-gray-50",
-              ].join(" ")}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        {/* Date range */}
-        <div className="text-sm flex items-center gap-2">
-          <label htmlFor="wl-matrix-from" className="text-gray-500">
-            {wlt("common.from")}
-          </label>
-          <input
-            id="wl-matrix-from"
-            type="date"
-            value={store.dateFrom}
-            onChange={(e) => handleDateChange("from", e.target.value)}
-            className="border-gray-200 text-sm focus:ring-custom-primary-100 rounded border px-2 py-1 focus:ring-1 focus:outline-none"
-          />
-          <label htmlFor="wl-matrix-to" className="text-gray-500">
-            {wlt("common.to")}
-          </label>
-          <input
-            id="wl-matrix-to"
-            type="date"
-            value={store.dateTo}
-            min={store.dateFrom}
-            max={shiftDate(store.dateFrom, MAX_SPAN_DAYS[store.granularity])}
-            onChange={(e) => handleDateChange("to", e.target.value)}
-            className="border-gray-200 text-sm focus:ring-custom-primary-100 rounded border px-2 py-1 focus:ring-1 focus:outline-none"
-          />
-        </div>
-      </div>
+      <WorkloadToolbar
+        store={store}
+        workspaceSlug={workspaceSlug}
+        memberFilterSlot={memberFilterSlot}
+        projectFilterSlot={projectFilterSlot}
+        dateRangeSlot={dateRangeSlot}
+      />
     );
   }
 });
