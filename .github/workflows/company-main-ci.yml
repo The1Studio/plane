@@ -250,7 +250,7 @@ jobs:
 
       - name: Run backend test suite (fork-owned apps)
         working-directory: apps/api
-        run: pytest plane/github_ext plane/workload plane/clickup_migrate plane/ai_ext
+        run: pytest plane/github_ext plane/workload plane/clickup_migrate plane/ai_ext plane/project_ext
         timeout-minutes: 15
 
   # ---------------------------------------------------------------------------
