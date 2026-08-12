@@ -59,7 +59,7 @@ Keep paths in sync with the table above (the doctor's drift check enforces it).
       ]
     }
   ],
-  "forkApps": ["ai_ext", "clickup_migrate", "workload"],
+  "forkApps": ["ai_ext", "clickup_migrate", "workload", "project_ext"],
   "forkAppRoot": "apps/api/plane/",
   "forkPackageRoot": "packages/",
   "forkPackageSuffix": "-ext",

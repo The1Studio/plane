@@ -99,6 +99,8 @@ INSTALLED_APPS = [
     "plane.workload",
     # The1Studio fork (github_ext) — docs/FORK.md touch-point 1
     "plane.github_ext",
+    # The1Studio fork (project_ext) — docs/FORK.md touch-point 1
+    "plane.project_ext",
     # Third-party things
     "rest_framework",
     "corsheaders",

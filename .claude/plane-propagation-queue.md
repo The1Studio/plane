@@ -19,3 +19,23 @@ Entries written by `plane-scaffold-feature` / `plane-propagate`; processed entri
   - The1Studio/plane-claude-plugin#1 — https://github.com/The1Studio/plane-claude-plugin/issues/1
   - The1Studio/docs#1 — https://github.com/The1Studio/docs/issues/1
   - The1Studio/developer-docs#1 — https://github.com/The1Studio/developer-docs/issues/1
+
+## project_ext — 2026-08-12
+
+- Feature: project visibility (`Project.network`, 0 = secret/private, 2 = public) over the
+  public API. The core `/api/v1/` project serializer
+  (`plane.api.serializers.project.ProjectCreateSerializer.Meta.fields`) omits `network`, so DRF
+  silently drops it on create AND update — a PATCH with `{"network": 0}` returns 200 OK with the
+  project still public. Exposed from the fork-owned `project_ext` app rather than editing core.
+- New endpoints:
+  - `GET/PATCH /api/v1/workspaces/<slug>/projects/<project_id>/visibility/` — body `{"network": 0|2}`; GET any ws member, PATCH ws admin.
+  - `PATCH /api/v1/workspaces/<slug>/project-visibility/` — body `{"project_ids": [...], "network": 0|2}`; ws admin; one unknown id fails the whole call (no partial update).
+- New fields: none on core models — `project_ext` owns no tables (no migration).
+- Related upstream bug (report separately, do NOT fix in core): `plane/api/views/project.py:234-238`
+  passes the `project_lead` _User object_ into `ProjectMember.objects.create(member_id=...)`, which
+  expects a UUID → ValidationError → generic `400 {"error": "Please provide valid detail"}` AFTER the
+  project is already committed (no transaction). Caller sees 400, project exists, lead has no
+  ProjectMember row. One-word fix: `project_lead_id`.
+- Propagation needed: MCP tool in `plane-mcp-server` (DONE locally — `set_project_visibility`,
+  `get_project_visibility`, `set_projects_visibility_bulk`), SDK bindings in `plane-node-sdk` +
+  `plane-python-sdk`, docs update.
