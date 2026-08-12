@@ -179,6 +179,12 @@ Append `"<name>"` to the array so the classifier (`plane-classify-path.cjs`) rec
 
 This prevents drift: after the next `plane-fork-doctor` run the new app is known, not flagged as unclassified.
 
+**This array also selects which apps company-main CI runs tests for** — `.claude/scripts/plane-fork-test-paths.py`
+intersects it with the `tests/` directories on disk to build the pytest invocation. An app missing from
+`forkApps` is therefore misclassified as `core` AND its tests never run, while the job still reports
+green. The script hard-fails on that combination, so CI will tell you; registering here is the single
+action that fixes both. Do NOT add the app path to the workflow by hand — the list is derived.
+
 ### Step 6 — Queue propagation TODO
 
 Open (or create) `.claude/plane-propagation-queue.md`.
@@ -245,6 +251,9 @@ After completing all steps, confirm:
 - [ ] TP6 (`extended.ts` + `apps/web/package.json`) updated if `needs-frontend = yes`
 - [ ] `CLAUDE.md` "Custom features" has the new one-line entry
 - [ ] `.claude/skills/_shared/references/fork-convention.md` `forkApps` array includes `"<name>"`
+- [ ] **CI covers the new tests:** `python3 .claude/scripts/plane-fork-test-paths.py` exits 0 and its
+      output includes `plane/<name>` (proves the app is both registered and discoverable — a green CI
+      run does NOT prove its tests executed)
 - [ ] **Closed-loop classifier check:** `node .claude/scripts/plane-classify-path.cjs apps/api/plane/<name>/models.py` returns `"category": "custom-app"` (proves Step 5 registration took effect; not just that the array text was edited)
 - [ ] `.claude/plane-propagation-queue.md` has the new TODO block
 - [ ] `python manage.py makemigrations --check --dry-run` exits 0
