@@ -17,7 +17,7 @@ jobs:
   deploy:
     # Runner tự host trên server, gắn label 'sv-0'
     runs-on: [self-hosted, sv-0]
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@v4
