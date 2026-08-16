@@ -8,10 +8,14 @@
 #
 #   GET/PATCH /api/v1/workspaces/<slug>/projects/<project_id>/visibility/
 #   PATCH     /api/v1/workspaces/<slug>/project-visibility/
+#   GET       /api/v1/workspaces/<slug>/all-projects/
+#   POST      /api/v1/workspaces/<slug>/projects/<project_id>/members/
 
 from django.urls import path
 
 from .api_views import (
+    ProjectAllListAPIEndpoint,
+    ProjectMemberAddAPIEndpoint,
     ProjectVisibilityAPIEndpoint,
     ProjectVisibilityBulkAPIEndpoint,
 )
@@ -26,5 +30,15 @@ urlpatterns = [
         "workspaces/<str:slug>/project-visibility/",
         ProjectVisibilityBulkAPIEndpoint.as_view(),
         name="api-project-visibility-bulk",
+    ),
+    path(
+        "workspaces/<str:slug>/all-projects/",
+        ProjectAllListAPIEndpoint.as_view(),
+        name="api-project-all-list",
+    ),
+    path(
+        "workspaces/<str:slug>/projects/<uuid:project_id>/members/",
+        ProjectMemberAddAPIEndpoint.as_view(),
+        name="api-project-member-add",
     ),
 ]

@@ -4,10 +4,16 @@
 #
 # project_ext owns NO tables.
 #
-# This app exists solely to expose an endpoint for a column that already lives
-# on the core `Project` model (`network`) but is absent from the core public-API
-# serializer (`plane.api.serializers.project.ProjectCreateSerializer.Meta.fields`),
-# which makes project visibility unreachable over /api/v1/ — see docs/FORK.md.
+# This app exists to expose public-API endpoints for gaps in the core
+# public-API surface: a column that already lives on the core `Project` model
+# (`network`) but is absent from the core public-API serializer
+# (`plane.api.serializers.project.ProjectCreateSerializer.Meta.fields`), which
+# makes project visibility unreachable over /api/v1/; a workspace-admin
+# all-projects list (the core public-API project list only returns projects
+# the caller is a project *member* of); and a project-member-add endpoint
+# (core's public API has no way to add a project member at all). All three
+# read/write existing core tables (`Project`, `ProjectMember`) through the ORM
+# — see docs/FORK.md.
 #
 # Per docs/FORK.md we do NOT add the field to the core serializer (that is a core
 # file, not a touch-point, and would conflict on every upstream rebase). We also

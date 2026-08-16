@@ -12,10 +12,19 @@ from django.http import Http404
 from django.test import TransactionTestCase
 
 from plane.project_ext.service import (
+    DEFAULT_PROJECT_MEMBER_ROLE,
     NETWORK_PUBLIC,
     NETWORK_SECRET,
+    ROLE_ADMIN,
+    ROLE_GUEST,
+    ROLE_MEMBER,
+    add_project_member,
+    list_all_projects,
     parse_network,
+    parse_role,
     resolve_project_or_404,
+    resolve_target_user,
+    resolve_workspace_or_404,
     set_visibility,
     set_visibility_bulk,
 )
@@ -44,6 +53,22 @@ def _project(ws, network=NETWORK_PUBLIC):
         identifier=uuid.uuid4().hex[:5].upper(),
         network=network,
     )
+
+
+def _workspace_member(ws, user, role=ROLE_ADMIN, is_active=True):
+    from plane.db.models import WorkspaceMember
+
+    return WorkspaceMember.objects.create(workspace=ws, member=user, role=role, is_active=is_active)
+
+
+def _project_member(project, user, role=ROLE_MEMBER, is_active=True):
+    from plane.db.models import ProjectMember
+
+    member = ProjectMember.objects.create(project=project, member=user, role=role)
+    if not is_active:
+        member.is_active = False
+        member.save(update_fields=["is_active"])
+    return member
 
 
 class ParseNetworkTests(TransactionTestCase):
@@ -142,3 +167,201 @@ class SetVisibilityBulkTests(TransactionTestCase):
 
         self.assertIsNone(payload)
         self.assertTrue(error)
+
+
+class ResolveWorkspaceOr404Tests(TransactionTestCase):
+    def test_returns_workspace_for_known_slug(self):
+        ws = _ws()
+
+        self.assertEqual(resolve_workspace_or_404(ws.slug).id, ws.id)
+
+    def test_raises_404_for_unknown_slug(self):
+        with self.assertRaises(Http404):
+            resolve_workspace_or_404(f"no-such-ws-{uuid.uuid4().hex[:8]}")
+
+
+class ParseRoleTests(TransactionTestCase):
+    def test_accepts_valid_ints_and_labels(self):
+        for raw, expected in [
+            (20, ROLE_ADMIN),
+            (15, ROLE_MEMBER),
+            (5, ROLE_GUEST),
+            ("20", ROLE_ADMIN),
+            ("admin", ROLE_ADMIN),
+            ("Member", ROLE_MEMBER),
+            ("GUEST", ROLE_GUEST),
+        ]:
+            role, error = parse_role(raw)
+            self.assertIsNone(error, f"{raw!r} should parse")
+            self.assertEqual(role, expected)
+
+    def test_defaults_to_member_when_absent(self):
+        role, error = parse_role(None)
+
+        self.assertIsNone(error)
+        self.assertEqual(role, DEFAULT_PROJECT_MEMBER_ROLE)
+        self.assertEqual(role, ROLE_MEMBER)
+
+    def test_rejects_invalid_values(self):
+        for raw in [1, 3, -1, True, False, "", "owner", "kinda", {}, []]:
+            role, error = parse_role(raw)
+            self.assertIsNone(role, f"{raw!r} must not parse")
+            self.assertTrue(error)
+
+
+class ResolveTargetUserTests(TransactionTestCase):
+    def test_resolves_by_user_id(self):
+        user = _user()
+
+        resolved, error = resolve_target_user(str(user.id), None)
+
+        self.assertIsNone(error)
+        self.assertEqual(resolved.id, user.id)
+
+    def test_resolves_by_email_case_insensitive(self):
+        user = _user()
+
+        resolved, error = resolve_target_user(None, user.email.upper())
+
+        self.assertIsNone(error)
+        self.assertEqual(resolved.id, user.id)
+
+    def test_requires_user_id_or_email(self):
+        resolved, error = resolve_target_user(None, None)
+
+        self.assertIsNone(resolved)
+        self.assertTrue(error)
+
+    def test_rejects_malformed_user_id(self):
+        resolved, error = resolve_target_user("not-a-uuid", None)
+
+        self.assertIsNone(resolved)
+        self.assertTrue(error)
+
+    def test_errors_when_user_not_found(self):
+        resolved, error = resolve_target_user(str(uuid.uuid4()), None)
+
+        self.assertIsNone(resolved)
+        self.assertTrue(error)
+
+        resolved, error = resolve_target_user(None, "nobody@test.invalid")
+
+        self.assertIsNone(resolved)
+        self.assertTrue(error)
+
+
+class ListAllProjectsTests(TransactionTestCase):
+    """list_all_projects takes an already-resolved workspace, not a slug — the
+    404-for-unknown-slug behavior lives in resolve_workspace_or_404 (tested in
+    ResolveWorkspaceOr404Tests above) and is exercised end-to-end via
+    ProjectAllListAPIEndpoint.initial()."""
+
+    def test_lists_every_project_including_private_ones(self):
+        ws = _ws()
+        admin = _user()
+        _workspace_member(ws, admin, role=ROLE_ADMIN)
+        public = _project(ws, network=NETWORK_PUBLIC)
+        private = _project(ws, network=NETWORK_SECRET)
+
+        payload = list_all_projects(ws, admin.id)
+
+        self.assertEqual(payload["workspace_slug"], ws.slug)
+        self.assertEqual(payload["count"], 2)
+        ids = {row["id"] for row in payload["results"]}
+        self.assertEqual(ids, {str(public.id), str(private.id)})
+
+    def test_is_member_reflects_active_project_membership(self):
+        ws = _ws()
+        admin = _user()
+        _workspace_member(ws, admin, role=ROLE_ADMIN)
+        joined = _project(ws, network=NETWORK_SECRET)
+        not_joined = _project(ws, network=NETWORK_SECRET)
+        _project_member(joined, admin, role=ROLE_ADMIN)
+
+        payload = list_all_projects(ws, admin.id)
+
+        by_id = {row["id"]: row for row in payload["results"]}
+        self.assertTrue(by_id[str(joined.id)]["is_member"])
+        self.assertFalse(by_id[str(not_joined.id)]["is_member"])
+
+    def test_cross_workspace_isolation(self):
+        ws = _ws()
+        admin = _user()
+        _workspace_member(ws, admin, role=ROLE_ADMIN)
+        _project(ws, network=NETWORK_SECRET)
+
+        other_ws = _ws()
+        stranger_project = _project(other_ws, network=NETWORK_PUBLIC)
+
+        payload = list_all_projects(ws, admin.id)
+
+        ids = {row["id"] for row in payload["results"]}
+        self.assertNotIn(str(stranger_project.id), ids)
+
+
+class AddProjectMemberTests(TransactionTestCase):
+    def test_creates_project_member_row(self):
+        from plane.db.models import ProjectMember, ProjectUserProperty
+
+        ws = _ws()
+        project = _project(ws)
+        user = _user()
+        _workspace_member(ws, user, role=ROLE_MEMBER)
+
+        payload, error = add_project_member(ws.slug, project, user, ROLE_MEMBER)
+
+        self.assertIsNone(error)
+        self.assertTrue(payload["created"])
+        self.assertEqual(payload["role"], ROLE_MEMBER)
+        self.assertEqual(payload["user_id"], str(user.id))
+        self.assertEqual(payload["email"], user.email)
+        self.assertTrue(ProjectMember.objects.filter(project=project, member=user, is_active=True).exists())
+        # ProjectMember.save() must have created the matching sort-order row —
+        # the same side effect the core bulk-add endpoint reproduces by hand.
+        self.assertTrue(ProjectUserProperty.objects.filter(project=project, user=user).exists())
+
+    def test_reactivates_existing_inactive_member(self):
+        from plane.db.models import ProjectMember
+
+        ws = _ws()
+        project = _project(ws)
+        user = _user()
+        _workspace_member(ws, user, role=ROLE_MEMBER)
+        _project_member(project, user, role=ROLE_GUEST, is_active=False)
+
+        payload, error = add_project_member(ws.slug, project, user, ROLE_ADMIN)
+
+        self.assertIsNone(error)
+        self.assertFalse(payload["created"])
+        self.assertEqual(payload["role"], ROLE_ADMIN)
+        member = ProjectMember.objects.get(project=project, member=user)
+        self.assertTrue(member.is_active)
+        self.assertEqual(member.role, ROLE_ADMIN)
+
+    def test_idempotent_readd_returns_created_false(self):
+        ws = _ws()
+        project = _project(ws)
+        user = _user()
+        _workspace_member(ws, user, role=ROLE_MEMBER)
+
+        first, error = add_project_member(ws.slug, project, user, ROLE_MEMBER)
+        self.assertIsNone(error)
+        self.assertTrue(first["created"])
+
+        second, error = add_project_member(ws.slug, project, user, ROLE_MEMBER)
+        self.assertIsNone(error)
+        self.assertFalse(second["created"])
+        self.assertEqual(second["role"], ROLE_MEMBER)
+
+    def test_rejects_user_not_in_workspace(self):
+        ws = _ws()
+        project = _project(ws)
+        user = _user()  # never added to ws via WorkspaceMember
+
+        payload, error = add_project_member(ws.slug, project, user, ROLE_MEMBER)
+
+        self.assertIsNone(payload)
+        self.assertTrue(error)
+        from plane.db.models import ProjectMember
+
+        self.assertFalse(ProjectMember.objects.filter(project=project, member=user).exists())

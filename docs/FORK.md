@@ -201,8 +201,11 @@ New backend code lives in **new Django apps**:
 
 - `apps/api/plane/ai_ext/` — SP2 AI feature suite (embeddings, Claude tooling, AI digest tasks)
 - `apps/api/plane/clickup_migrate/` — SP1 ClickUp → Plane ETL
-- `apps/api/plane/project_ext/` — project visibility (`network`) over the public API; the core
-  `/api/v1/` serializer omits the field, so it is unreachable without this app
+- `apps/api/plane/project_ext/` — project visibility (`network`) over the public API (the core
+  `/api/v1/` serializer omits the field, so it is unreachable without this app); plus a
+  workspace-admin all-projects list and project-member-add endpoint (the core public-API
+  project list only returns projects the caller is a *member* of, and there is no public-API
+  endpoint to add a project member at all)
 
 Each app is **self-contained**:
 
