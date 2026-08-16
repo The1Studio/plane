@@ -10,10 +10,13 @@
 # (`plane.api.serializers.project.ProjectCreateSerializer.Meta.fields`), which
 # makes project visibility unreachable over /api/v1/; a workspace-admin
 # all-projects list (the core public-API project list only returns projects
-# the caller is a project *member* of); and a project-member-add endpoint
-# (core's public API has no way to add a project member at all). All three
-# read/write existing core tables (`Project`, `ProjectMember`) through the ORM
-# — see docs/FORK.md.
+# the caller is a project *member* of); and a workspace-scoped bulk
+# project-member-add endpoint (core's project-member endpoints ARE public,
+# but gated at project level — a user who is not already in a project cannot
+# add anyone to it, including themselves, so a workspace ADMIN has no
+# workspace-level path to grant themselves access to a private project they
+# administer). All three read/write existing core tables (`Project`,
+# `ProjectMember`) through the ORM — see docs/FORK.md.
 #
 # Per docs/FORK.md we do NOT add the field to the core serializer (that is a core
 # file, not a touch-point, and would conflict on every upstream rebase). We also

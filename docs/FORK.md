@@ -203,9 +203,12 @@ New backend code lives in **new Django apps**:
 - `apps/api/plane/clickup_migrate/` — SP1 ClickUp → Plane ETL
 - `apps/api/plane/project_ext/` — project visibility (`network`) over the public API (the core
   `/api/v1/` serializer omits the field, so it is unreachable without this app); plus a
-  workspace-admin all-projects list and project-member-add endpoint (the core public-API
-  project list only returns projects the caller is a *member* of, and there is no public-API
-  endpoint to add a project member at all)
+  workspace-admin all-projects list and a workspace-scoped bulk project-member-add endpoint.
+  Core's public-API project list only returns projects the caller is a project *member* of, and
+  core's project-member endpoints are gated at *project* level — a user who is not already in a
+  project cannot add anyone to it, including themselves, so a workspace ADMIN has no
+  workspace-level path to grant themselves access to a private project they administer. These
+  two endpoints are that bootstrap path.
 
 Each app is **self-contained**:
 

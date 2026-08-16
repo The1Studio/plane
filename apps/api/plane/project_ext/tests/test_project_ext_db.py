@@ -18,11 +18,12 @@ from plane.project_ext.service import (
     ROLE_ADMIN,
     ROLE_GUEST,
     ROLE_MEMBER,
-    add_project_member,
+    add_project_members_bulk,
     list_all_projects,
     parse_network,
     parse_role,
     resolve_project_or_404,
+    resolve_projects_or_404,
     resolve_target_user,
     resolve_workspace_or_404,
     set_visibility,
@@ -299,26 +300,47 @@ class ListAllProjectsTests(TransactionTestCase):
         self.assertNotIn(str(stranger_project.id), ids)
 
 
-class AddProjectMemberTests(TransactionTestCase):
-    def test_creates_project_member_row(self):
+class ResolveProjectsOr404Tests(TransactionTestCase):
+    def test_returns_every_project_when_all_owned(self):
+        ws = _ws()
+        projects = [_project(ws) for _ in range(3)]
+
+        resolved = resolve_projects_or_404(ws.slug, [str(p.id) for p in projects])
+
+        self.assertEqual({p.id for p in resolved}, {p.id for p in projects})
+
+    def test_raises_404_when_any_id_is_unowned(self):
+        ws = _ws()
+        owned = _project(ws)
+        stranger = _project(_ws())
+
+        with self.assertRaises(Http404):
+            resolve_projects_or_404(ws.slug, [str(owned.id), str(stranger.id)])
+
+
+class AddProjectMembersBulkTests(TransactionTestCase):
+    def test_creates_project_member_row_for_every_project(self):
         from plane.db.models import ProjectMember, ProjectUserProperty
 
         ws = _ws()
-        project = _project(ws)
+        projects = [_project(ws) for _ in range(2)]
         user = _user()
         _workspace_member(ws, user, role=ROLE_MEMBER)
 
-        payload, error = add_project_member(ws.slug, project, user, ROLE_MEMBER)
+        payload, error = add_project_members_bulk(ws.slug, [str(p.id) for p in projects], user, ROLE_MEMBER)
 
         self.assertIsNone(error)
-        self.assertTrue(payload["created"])
-        self.assertEqual(payload["role"], ROLE_MEMBER)
         self.assertEqual(payload["user_id"], str(user.id))
         self.assertEqual(payload["email"], user.email)
-        self.assertTrue(ProjectMember.objects.filter(project=project, member=user, is_active=True).exists())
-        # ProjectMember.save() must have created the matching sort-order row —
-        # the same side effect the core bulk-add endpoint reproduces by hand.
-        self.assertTrue(ProjectUserProperty.objects.filter(project=project, user=user).exists())
+        self.assertEqual(payload["role"], ROLE_MEMBER)
+        self.assertEqual({r["project_id"] for r in payload["results"]}, {str(p.id) for p in projects})
+        self.assertTrue(all(r["created"] for r in payload["results"]))
+        for project in projects:
+            self.assertTrue(ProjectMember.objects.filter(project=project, member=user, is_active=True).exists())
+            # ProjectMember.save() must have created the matching sort-order
+            # row — the same side effect core's bulk-add endpoint reproduces
+            # by hand.
+            self.assertTrue(ProjectUserProperty.objects.filter(project=project, user=user).exists())
 
     def test_reactivates_existing_inactive_member(self):
         from plane.db.models import ProjectMember
@@ -329,11 +351,10 @@ class AddProjectMemberTests(TransactionTestCase):
         _workspace_member(ws, user, role=ROLE_MEMBER)
         _project_member(project, user, role=ROLE_GUEST, is_active=False)
 
-        payload, error = add_project_member(ws.slug, project, user, ROLE_ADMIN)
+        payload, error = add_project_members_bulk(ws.slug, [str(project.id)], user, ROLE_ADMIN)
 
         self.assertIsNone(error)
-        self.assertFalse(payload["created"])
-        self.assertEqual(payload["role"], ROLE_ADMIN)
+        self.assertEqual(payload["results"], [{"project_id": str(project.id), "created": False}])
         member = ProjectMember.objects.get(project=project, member=user)
         self.assertTrue(member.is_active)
         self.assertEqual(member.role, ROLE_ADMIN)
@@ -344,24 +365,44 @@ class AddProjectMemberTests(TransactionTestCase):
         user = _user()
         _workspace_member(ws, user, role=ROLE_MEMBER)
 
-        first, error = add_project_member(ws.slug, project, user, ROLE_MEMBER)
+        first, error = add_project_members_bulk(ws.slug, [str(project.id)], user, ROLE_MEMBER)
         self.assertIsNone(error)
-        self.assertTrue(first["created"])
+        self.assertTrue(first["results"][0]["created"])
 
-        second, error = add_project_member(ws.slug, project, user, ROLE_MEMBER)
+        second, error = add_project_members_bulk(ws.slug, [str(project.id)], user, ROLE_MEMBER)
         self.assertIsNone(error)
-        self.assertFalse(second["created"])
-        self.assertEqual(second["role"], ROLE_MEMBER)
+        self.assertFalse(second["results"][0]["created"])
 
     def test_rejects_user_not_in_workspace(self):
+        from plane.db.models import ProjectMember
+
         ws = _ws()
         project = _project(ws)
         user = _user()  # never added to ws via WorkspaceMember
 
-        payload, error = add_project_member(ws.slug, project, user, ROLE_MEMBER)
+        payload, error = add_project_members_bulk(ws.slug, [str(project.id)], user, ROLE_MEMBER)
 
         self.assertIsNone(payload)
         self.assertTrue(error)
+        self.assertFalse(ProjectMember.objects.filter(project=project, member=user).exists())
+
+    def test_unowned_project_id_fails_whole_call_without_partial_apply(self):
         from plane.db.models import ProjectMember
 
-        self.assertFalse(ProjectMember.objects.filter(project=project, member=user).exists())
+        ws = _ws()
+        owned = _project(ws)
+        stranger_project = _project(_ws())
+        user = _user()
+        _workspace_member(ws, user, role=ROLE_MEMBER)
+
+        with self.assertRaises(Http404):
+            add_project_members_bulk(ws.slug, [str(owned.id), str(stranger_project.id)], user, ROLE_MEMBER)
+
+        # no partial update on a failed bulk call
+        self.assertFalse(ProjectMember.objects.filter(project=owned, member=user).exists())
+
+    def test_rejects_empty_project_ids(self):
+        payload, error = add_project_members_bulk(_ws().slug, [], _user(), ROLE_MEMBER)
+
+        self.assertIsNone(payload)
+        self.assertTrue(error)

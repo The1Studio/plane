@@ -14,12 +14,25 @@
 # serializer is not a docs/FORK.md touch-point, so we expose the field from this
 # fork-owned app instead of editing core.
 #
-# The all-projects and member-add endpoints below exist for a related reason:
-# `plane.api.views.project.ProjectListCreateAPIEndpoint` only returns projects
-# the caller is a project MEMBER of (plus public ones) — workspace ADMIN role
-# is not enough, and there is no public-API endpoint to add a project member
-# at all. Both gaps make "workspace admin enumerates + onboards a user across
-# every project" impossible via the public API without this app.
+# The all-projects and project-members-bulk endpoints below exist for a
+# related reason: `plane.api.views.project.ProjectListCreateAPIEndpoint` only
+# returns projects the caller is a project MEMBER of (plus public ones) —
+# workspace ADMIN role is not enough. And core's project-member endpoints
+# (`plane.api.urls.member`, e.g. `POST /api/v1/workspaces/<slug>/projects/
+# <id>/members/`) are gated at PROJECT level, so a user who is not already in
+# the project cannot add anyone to it — including themselves. A workspace
+# ADMIN therefore cannot grant themselves access to a private project they
+# administer: workspace-level authority exists but has no workspace-level
+# path to act through. These two endpoints are that bootstrap path.
+#
+# NOTE: the member-add endpoint is intentionally NOT
+# `POST /api/v1/workspaces/<slug>/projects/<project_id>/members/` — that path
+# is already registered by core (`plane.api.urls.member`, `name=
+# "project-members"`) and, because this app's api_urls is included BEFORE
+# `plane.api.urls`, registering the same path here would silently shadow the
+# working core endpoint for every API consumer. `.../project-members/`
+# (no `<project_id>` segment — workspace-scoped, bulk) is the fork-owned,
+# non-colliding path instead; see docs/FORK.md.
 
 from rest_framework import status
 from rest_framework.response import Response
@@ -28,7 +41,7 @@ from plane.api.views.base import BaseAPIView  # APIKeyAuthentication
 from plane.app.permissions import ROLE, allow_permission
 
 from .service import (
-    add_project_member,
+    add_project_members_bulk,
     list_all_projects,
     parse_network,
     parse_role,
@@ -103,23 +116,20 @@ class ProjectAllListAPIEndpoint(BaseAPIView):
         return Response(list_all_projects(self._workspace, request.user.id), status=status.HTTP_200_OK)
 
 
-class ProjectMemberAddAPIEndpoint(BaseAPIView):
-    """POST /api/v1/workspaces/<slug>/projects/<project_id>/members/
+class ProjectMemberBulkAddAPIEndpoint(BaseAPIView):
+    """POST /api/v1/workspaces/<slug>/project-members/
 
-    Workspace admin only. Body: {"user_id": "<uuid>"} OR {"email": "..."},
-    plus optional {"role": 20|15|5} defaulting to 15 (Member). <slug> MUST own
-    <project_id> (404 otherwise, checked before the role gate — mirrors
-    ProjectVisibilityAPIEndpoint.initial()). The target user must already be
-    an active member of the workspace (400 otherwise) — this endpoint adds a
+    Workspace admin only. Body: {"project_ids": ["<uuid>", ...]} (required,
+    non-empty), plus {"user_id": "<uuid>"} OR {"email": "..."}, plus optional
+    {"role": 20|15|5} defaulting to 15 (Member). Every project_id must belong
+    to <slug> — 404 if ANY is unowned/unknown, whole call fails, no partial
+    apply (resolve_projects_or_404). The target user must already be an
+    active member of the workspace (400 otherwise) — this endpoint adds a
     project member, never a workspace member.
     """
 
-    def initial(self, request, *args, **kwargs):
-        self._project = resolve_project_or_404(kwargs.get("slug"), kwargs.get("project_id"))
-        super().initial(request, *args, **kwargs)
-
     @allow_permission([ROLE.ADMIN], level="WORKSPACE")
-    def post(self, request, slug, project_id):
+    def post(self, request, slug):
         user, error = resolve_target_user(request.data.get("user_id"), request.data.get("email"))
         if error:
             return Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
@@ -128,7 +138,7 @@ class ProjectMemberAddAPIEndpoint(BaseAPIView):
         if error:
             return Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
 
-        payload, error = add_project_member(slug, self._project, user, role)
+        payload, error = add_project_members_bulk(slug, request.data.get("project_ids"), user, role)
         if error:
             return Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
 

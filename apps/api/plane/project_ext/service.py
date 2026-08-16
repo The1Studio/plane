@@ -223,11 +223,24 @@ def resolve_target_user(user_id, email):
     return user, None
 
 
-def add_project_member(slug, project, user, role):
-    """Add — or reactivate/re-role — <user> as a member of <project>.
+def resolve_projects_or_404(slug, project_ids):
+    """Return every Project for <project_ids>, enforcing that <slug> owns all
+    of them. Raises Http404 (not a 400) if ANY id is unknown/unowned — the
+    whole call fails rather than applying a partial update, same all-or-
+    nothing intent as set_visibility_bulk, but surfaced as 404 (matching
+    resolve_project_or_404's single-project convention) per this endpoint's
+    contract rather than set_visibility_bulk's 400.
+    """
+    projects = list(Project.objects.filter(workspace__slug=slug, pk__in=project_ids))
+    found = {str(p.id) for p in projects}
+    missing = [str(pid) for pid in project_ids if str(pid) not in found]
+    if missing:
+        raise Http404(f"project_ids not found in workspace {slug}: {', '.join(missing)}")
+    return projects
 
-    The target user MUST already be an active member of <slug>'s workspace;
-    this never silently adds them to the workspace itself (400 otherwise).
+
+def _upsert_project_member(project, user, role):
+    """Add — or reactivate/re-role — <user> as a member of <project>.
 
     A brand-new row goes through ProjectMember.objects.create() rather than
     bulk_create(), so ProjectMember.save()'s override runs — it sets
@@ -238,28 +251,52 @@ def add_project_member(slug, project, user, role):
     through the normal project list immediately.
 
     Idempotent: re-adding an existing active member with the same role is a
-    200 with created=False and no write; re-adding an inactive member (or one
-    whose role changed) reactivates/updates the existing row rather than
-    creating a duplicate.
+    no-write, created=False; re-adding an inactive member (or one whose role
+    changed) reactivates/updates the existing row rather than creating a
+    duplicate. Returns created (bool).
     """
+    member = ProjectMember.objects.filter(project=project, member=user).first()
+    if member is None:
+        ProjectMember.objects.create(project=project, member=user, role=role)
+        return True
+
+    if member.role != role or not member.is_active:
+        member.role = role
+        member.is_active = True
+        member.save(update_fields=["role", "is_active"])
+    return False
+
+
+def add_project_members_bulk(slug, project_ids, user, role):
+    """Add — or reactivate/re-role — <user> as a member of every project in
+    <project_ids>, all within <slug>'s workspace.
+
+    <project_ids> must be a non-empty list, and every id must belong to
+    <slug> — Http404 otherwise (resolve_projects_or_404), whole call fails,
+    no partial apply. <user> MUST already be an active member of <slug>'s
+    workspace; this never silently adds them to the workspace itself (400
+    otherwise). Returns (payload, error) — error is always a 400-shaped
+    message; the project-ownership case raises Http404 directly instead of
+    returning through this tuple.
+    """
+    if not project_ids:
+        return None, "project_ids must be a non-empty list of project UUIDs"
+
+    if not isinstance(project_ids, (list, tuple)):
+        return None, "project_ids must be a list of project UUIDs"
+
+    projects = resolve_projects_or_404(slug, project_ids)
+
     if not WorkspaceMember.objects.filter(workspace__slug=slug, member=user, is_active=True).exists():
         return None, f"{user.email or user.id} is not a member of workspace {slug}"
 
-    member = ProjectMember.objects.filter(project=project, member=user).first()
-    if member is None:
-        member = ProjectMember.objects.create(project=project, member=user, role=role)
-        created = True
-    else:
-        created = False
-        if member.role != role or not member.is_active:
-            member.role = role
-            member.is_active = True
-            member.save(update_fields=["role", "is_active"])
+    results = [
+        {"project_id": str(project.id), "created": _upsert_project_member(project, user, role)} for project in projects
+    ]
 
     return {
-        "project_id": str(project.id),
         "user_id": str(user.id),
         "email": user.email,
-        "role": member.role,
-        "created": created,
+        "role": role,
+        "results": results,
     }, None
