@@ -4,12 +4,20 @@
 
 from django.urls import path
 
-from plane.api.views import UserEndpoint
+from plane.api.views import UserEndpoint, UserWorkspacesEndpoint
 
 urlpatterns = [
     path(
         "users/me/",
         UserEndpoint.as_view(http_method_names=["get"]),
         name="users",
+    ),
+    # Registered before nothing else matches this prefix, but keep it adjacent
+    # to `users/me/` so the pair stays obvious: this is the discovery endpoint
+    # that makes every workspace-scoped route reachable (issue #29).
+    path(
+        "users/me/workspaces/",
+        UserWorkspacesEndpoint.as_view(http_method_names=["get"]),
+        name="user-workspaces",
     ),
 ]
