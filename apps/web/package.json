@@ -36,6 +36,7 @@
     "@plane/types": "workspace:*",
     "@plane/ui": "workspace:*",
     "@plane/utils": "workspace:*",
+    "@plane/views-ext": "workspace:*",
     "@plane/workload-ext": "workspace:*",
     "@popperjs/core": "^2.11.8",
     "@react-pdf/renderer": "^3.4.5",
