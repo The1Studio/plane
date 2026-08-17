@@ -38,6 +38,8 @@ urlpatterns = [
     path("api/", include("plane.workload.urls")),
     # The1Studio fork (github_ext) — docs/FORK.md touch-point 2
     path("api/", include("plane.github_ext.urls")),
+    # The1Studio fork (views_ext) — docs/FORK.md touch-point 2
+    path("api/views-ext/", include("plane.views_ext.urls")),
     path("", include("plane.web.urls")),
 ]
 
