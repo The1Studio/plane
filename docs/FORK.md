@@ -209,6 +209,14 @@ New backend code lives in **new Django apps**:
   project cannot add anyone to it, including themselves, so a workspace ADMIN has no
   workspace-level path to grant themselves access to a private project they administer. These
   two endpoints are that bootstrap path.
+- `apps/api/plane/workspace_ext/` — workspace discovery over the public API
+  (`GET /api/v1/users/me/workspaces/`). Every workspace-scoped route takes the slug as a path
+  segment, but no core `/api/v1/` route returns the slugs a caller can access, so an API-key
+  client cannot bootstrap itself. Guessing does not work either: an unknown slug and a real
+  workspace the caller lacks access to both answer `403` with byte-identical bodies. Core's
+  `plane.api.views.user` / `plane.api.urls.user` are not touch-points, so the endpoint lives
+  here. Returns only workspaces the caller is an *active* member of. Model-less (read-only over
+  core models), so it ships no `migrations/`.
 
 Each app is **self-contained**:
 
