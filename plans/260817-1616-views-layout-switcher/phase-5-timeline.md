@@ -62,18 +62,47 @@ unchanged. Do not "unify" the two paths.
    `case` to `WorkspaceAdditionalLayouts`, and confirm the fork layout-options table has a
    `gantt_chart` entry (note the key is `gantt_chart`, not `gantt`, in the constants tables —
    check `packages/constants/src/issue/filter.ts` before assuming).
-5. **Audit the rest of the component for route-param reads.** `projectId` at line 51 feeds more
-   than `updateBlockDates` — quick-add is one known consumer. Read every use before shipping;
-   B3 was found by reading, and a second instance would surface as a runtime crash rather than a
-   type error.
+5. ~~**Audit the rest of the component for route-param reads.**~~ **DONE — 2026-08-17, result below.**
 
-## Quick-add
+### Step 5 audit result (completed ahead of implementation)
 
-`QuickAddIssueRoot` (~line 113) is gated on `enableIssueCreation && isAllowed`. Creating a work
-item from a workspace-wide Timeline has no unambiguous target project. Disable quick-add for the
-global store rather than defaulting to some project — a silently-wrong project assignment is worse
-than a missing button. `WorkspaceIssues.viewFlags` already exposes `enableIssueCreation`; prefer
-driving it from there over a new condition.
+`grep -n "projectId" apps/web/core/components/issues/issue-layouts/gantt/base-gantt-root.tsx`
+returns exactly three lines, and no more:
+
+| Line | Use | Verdict |
+|---|---|---|
+| 51 | `const { workspaceSlug, projectId } = useParams();` | The destructure |
+| 102 | `issues.updateIssueDates(…, projectId.toString())` | **B3 — the only crash site** |
+| 109 | `[issues, projectId, workspaceSlug]` | Dep array for the same callback |
+
+**There is no second `projectId` dependency.** B3 is the whole problem, and the D5 fallback closes
+it. This retires the phase's highest-scoring risk (a hidden second dependency, previously 12).
+
+One thing the audit *did* surface, which the plan did not anticipate — see Quick-add below.
+
+## Quick-add — corrected by the step-5 audit, and **not Timeline-specific**
+
+The plan assumed quick-add read `projectId`. It does not. The real shape is worse in one way and
+easier in another, and it affects **every** new layout, not just Timeline:
+
+- `QuickAddIssueRoot` (~line 113) is gated on `enableIssueCreation && isAllowed && !isCompletedCycle`.
+- `WorkspaceIssues.viewFlags.enableIssueCreation` is `true`
+  (`apps/web/core/store/issue/workspace/issue.store.ts:60`), so the gate **passes**.
+- But `useWorkspaceIssueActions` (`use-issues-actions.tsx:722-733`) returns only
+  `fetchIssues · fetchNextIssues · createIssue · updateIssue · removeIssue · updateFilters` —
+  **no `quickAddIssue` key at all**.
+
+So the button renders with `quickAddCallback={undefined}`: a visible control that does nothing.
+No crash, no type error — it just silently fails, which is why nothing upstream caught it.
+
+**Resolution:** set `enableIssueCreation: false` on `WorkspaceIssues.viewFlags`. One line, in the
+fork's own store file, and it fixes List, Board, Calendar and Timeline at once rather than needing
+a per-layout guard. Creating a work item from a workspace-wide view has no unambiguous target
+project anyway, so the honest answer is no button.
+
+**This is cross-cutting, not Phase 5's to own.** Whichever phase lands first should take it, and
+the others should verify it rather than re-fix it. Phase 3 is the natural owner since it is first
+to put List and Board in front of a user.
 
 ## Parallel-safety with Phase 4
 
@@ -98,7 +127,7 @@ sequentially. All other files in the two phases are disjoint.
 
 | Risk                                                            | L   | I   | Score | Mitigation                                                                           |
 | --------------------------------------------------------------- | --- | --- | ----- | ------------------------------------------------------------------------------------ |
-| A second undiscovered `projectId` dependency crashes at runtime | 3   | 4   | 12    | Step 5 is a full read of every route-param use, not a grep for the one known line    |
+| ~~A second undiscovered `projectId` dependency~~ **RETIRED**    | —   | —   | —     | Step-5 audit complete: exactly 3 `projectId` lines, all one callback. B3 is the only one. |
 | D5 branch regresses project-scoped Timeline                     | 2   | 4   | 8     | Store-type-guarded branch; unchanged-project-Timeline is a success criterion         |
 | Per-item updates feel slow on a multi-bar drag                  | 3   | 2   | 6     | Accepted for now; group-by-project is the documented next step if profiling shows it |
 | Concurrent append collision with Phase 4                        | 3   | 2   | 6     | Separate worktrees, or run sequentially                                              |

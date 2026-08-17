@@ -56,7 +56,29 @@ plus `extra_options` — so behaviour stays consistent with the rest of the app.
 
 The one-line core delegation that calls this lands in **Phase 3**, not here.
 
-## Deliverable 3 — Layout roots for the global store
+## Deliverable 3 — Layout roots for the global store · **CORRECTED 2026-08-17**
+
+> **These roots are NEW CORE FILES, not package files.** The original plan put them in
+> `packages/views-ext`; that is impossible. `BaseListRoot` / `BaseKanBanRoot` import via the `@/`
+> alias (`@/hooks/store/use-issues`, `@/hooks/use-issue-layout-store`, …), which is defined only in
+> `apps/web/tsconfig.json` and does not resolve from a workspace package — packages are consumed
+> **by** `apps/web`, not the reverse. Verified both ways: the existing GLOBAL root
+> `spreadsheet/roots/workspace-root.tsx` uses `@/` imports at lines 14-24 and lives in core, while
+> `grep -rn 'from "@/"' packages/workload-ext/src/` returns zero hits.
+>
+> Create them as the GLOBAL-store siblings of the existing spreadsheet root, matching its naming:
+>
+> - `apps/web/core/components/issues/issue-layouts/list/roots/workspace-root.tsx` → `WorkspaceListRoot`
+> - `apps/web/core/components/issues/issue-layouts/kanban/roots/workspace-root.tsx` → `WorkspaceKanBanRoot`
+>
+> **New core files are an established pattern in this fork**, not an exception invented here —
+> `docs/FORK.md`'s workload table already lists three (`use-workload-estimate.ts`,
+> `estimated-hours-column.tsx`, `progress-column.tsx`, each marked NEW). A new file at a path
+> upstream does not use has near-zero rebase-conflict surface. Fence each with
+> `// The1Studio fork (views-layouts)`; Phase 6 records both in `docs/FORK.md`.
+>
+> **Consequence:** this phase's "touches no core file" success criterion is void — see below.
+> Phase 4 and Phase 5 roots inherit the same constraint.
 
 Thin wrappers, one per layout. Templates (~35 lines each) — read them first:
 
@@ -72,18 +94,25 @@ exists and is already global-store-aware (`storeType: EIssuesStoreType.GLOBAL`).
 
 Calendar and Timeline roots are **out of scope here** — Phases 4 and 5.
 
-## Deliverable 4 — The switcher component
+## Deliverable 4 — The switcher · **data only** (corrected 2026-08-17)
 
-A `GlobalViewLayoutSelection` implementation. It is a thin wrapper: render the existing generic
 `LayoutSelection`
-(`apps/web/core/components/issues/issue-layouts/filters/header/layout-selection.tsx`) with
-`layouts={GLOBAL_VIEW_LAYOUTS}`. That component already handles icons, tooltips, i18n and the
-active-state styling for all five layouts.
+(`apps/web/core/components/issues/issue-layouts/filters/header/layout-selection.tsx`) already
+handles icons, tooltips, i18n and active-state styling for all five layouts. The circled control in
+`img1.png` **is** that component — it is already rendered in the Views header at
+`workspace-views/header.tsx:155` and renders empty today only because the CE stub returns `<></>`.
 
-Do not build a new switcher. The circled control in `img1.png` **is** this component — it is
-already rendered in the Views header at
-`apps/web/app/(all)/[workspaceSlug]/(projects)/workspace-views/header.tsx:155`; it renders empty
-today only because the CE stub returns `<></>`.
+It hits the same `@/`-alias wall as Deliverable 3, so this phase ships **only the data**: export
+`GLOBAL_VIEW_LAYOUTS: EIssueLayoutTypes[]`. Phase 3 composes
+`<LayoutSelection layouts={GLOBAL_VIEW_LAYOUTS} … />` inline inside the `ce/` stub, where `@/`
+resolves.
+
+A component-injection factory (`createGlobalViewLayoutSelection(LayoutSelection)`) was considered
+and **rejected** — indirection to dodge a single import, against KISS/YAGNI. Keep the package free
+of React-component plumbing.
+
+`GLOBAL_VIEW_LAYOUTS` remains the single place layout availability is declared; Phases 4 and 5
+append to this one array. Start it with `LIST`, `KANBAN`, `SPREADSHEET`.
 
 ## Store-type unions — noted here, edited in Phase 3
 
@@ -103,11 +132,13 @@ building the roots in isolation.
 - [ ] Layout options table exports entries for all 5 layouts, with the D3 `group_by` set
 - [ ] `GLOBAL_VIEW_LAYOUTS` exists and is the only place layout availability is declared
 - [ ] Param builder returns `group_by` in its param list for `list` and `kanban`, and omits it for `spreadsheet`
-- [ ] List and Board roots compile against `BaseListRoot` / `BaseKanBanRoot`
-- [ ] Switcher renders 5 buttons with correct icons and active state
+- [ ] `WorkspaceListRoot` / `WorkspaceKanBanRoot` exist as NEW core files and compile (the
+      `ListStoreType` / `KanbanStoreType` union error is expected — Phase 3 fixes it)
 - [ ] `node .claude/scripts/plane-classify-path.cjs packages/views-ext/src/index.ts` → `custom-package`
 - [ ] Zero new imports of `@plane/constants`' `my_issues.layoutOptions` in fork code — the fork table replaces it
-- [ ] `plane-isolation-audit`: PASS (this phase should touch **no** core file)
+- [ ] ~~`plane-isolation-audit`: PASS (no core file)~~ **VOID** — corrected 2026-08-17. The audit
+      correctly flags the two new core roots. Criterion is now: the audit flags **exactly** those
+      two files from this phase and nothing else; Phase 6 documents them.
 
 ## Risks
 

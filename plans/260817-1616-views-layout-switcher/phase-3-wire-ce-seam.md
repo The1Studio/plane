@@ -80,9 +80,31 @@ target avoids a params-dependent branch that would need re-verifying on every fu
 addition. Confirm that shape-identity against a live response before committing to it; if it
 diverges, branch on `params.group_by` instead and say so in a comment.
 
-## Core-edit budget
+## Also owned by Phase 3 — suppress the dead quick-add button (cross-cutting)
 
-Four core files, all fenced delegations, ~10 lines total:
+Found during Phase 5 pre-audit, affects **every** new layout. `WorkspaceIssues.viewFlags.enableIssueCreation`
+is `true` (`store/issue/workspace/issue.store.ts:60`), so the quick-add gate passes — but
+`useWorkspaceIssueActions` (`use-issues-actions.tsx:722-733`) returns no `quickAddIssue` key at
+all. The button renders wired to `undefined`: no crash, no type error, just a control that
+silently does nothing. That is why it survived upstream.
+
+Set `enableIssueCreation: false` on `WorkspaceIssues.viewFlags`. One line, fixes List, Board,
+Calendar and Timeline at once. A workspace-wide view has no unambiguous target project, so no
+button is the honest answer. Full detail: [`phase-5-timeline.md`](phase-5-timeline.md) § Quick-add.
+
+## Core-edit budget · **revised 2026-08-17**
+
+Phase 2's roots turned out to be core files, not package files (the `@/` alias does not resolve
+from a workspace package — see [`phase-2-frontend-package.md`](phase-2-frontend-package.md) § D3).
+Two are NEW files, which carry near-zero rebase-conflict surface. Revised total — 5 edited + 2 new:
+
+| File | Lines | Class |
+|---|---|---|
+| `.../issue-layouts/list/roots/workspace-root.tsx` | NEW | New core file (Phase 2 authored) |
+| `.../issue-layouts/kanban/roots/workspace-root.tsx` | NEW | New core file (Phase 2 authored) |
+| `apps/web/core/store/issue/workspace/issue.store.ts` | 1 | Documented exception — quick-add suppression above |
+
+plus the originally-budgeted edits:
 
 | File                                                                        | Lines      | Class                                 |
 | --------------------------------------------------------------------------- | ---------- | ------------------------------------- |
