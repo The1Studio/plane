@@ -11,9 +11,6 @@ from plane.app.permissions import ROLE, allow_permission
 
 from .views import (
     _run,
-    capacity_delete,
-    capacity_list,
-    capacity_put,
     estimate_bulk,
     estimate_delete,
     estimate_get,
@@ -78,22 +75,6 @@ class WorkloadEstimateAPIEndpoint(BaseAPIView):
     @allow_permission([ROLE.ADMIN])
     def delete(self, request, slug, project_id, issue_id):
         return estimate_delete(project_id, issue_id)
-
-
-class WorkloadCapacityAPIEndpoint(BaseAPIView):
-    """GET/PUT/DELETE /api/v1/workspaces/<slug>/workload-capacity/"""
-
-    @allow_permission([ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
-    def get(self, request, slug):
-        return capacity_list(request, slug)
-
-    @allow_permission([ROLE.ADMIN], level="WORKSPACE")
-    def put(self, request, slug):
-        return capacity_put(request, slug)
-
-    @allow_permission([ROLE.ADMIN], level="WORKSPACE")
-    def delete(self, request, slug):
-        return capacity_delete(request, slug)
 
 
 class WorkloadSettingsAPIEndpoint(BaseAPIView):

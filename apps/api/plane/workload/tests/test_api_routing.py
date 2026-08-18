@@ -8,11 +8,10 @@
 import uuid
 
 from django.test import SimpleTestCase
-from django.urls import resolve
+from django.urls import Resolver404, resolve
 
 from plane.workload.api_views import (
     ProjectWorkloadAPIEndpoint,
-    WorkloadCapacityAPIEndpoint,
     WorkloadEstimateAPIEndpoint,
     WorkloadRollupsBulkAPIEndpoint,
     WorkspaceWorkloadAPIEndpoint,
@@ -40,6 +39,8 @@ class TestPublicApiRouting(SimpleTestCase):
         match = resolve("/api/v1/workspaces/acme/workload-rollups/")
         self.assertEqual(match.func.view_class, WorkloadRollupsBulkAPIEndpoint)
 
-    def test_capacity_route(self):
-        match = resolve("/api/v1/workspaces/acme/workload-capacity/")
-        self.assertEqual(match.func.view_class, WorkloadCapacityAPIEndpoint)
+    def test_capacity_route_is_gone(self):
+        """Phase 3 (D1) deletes the per-member capacity endpoint entirely —
+        the route must no longer resolve (not merely deny access)."""
+        with self.assertRaises(Resolver404):
+            resolve("/api/v1/workspaces/acme/workload-capacity/")

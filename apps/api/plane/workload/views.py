@@ -18,9 +18,9 @@ from plane.db.models import Issue, Workspace
 
 from .aggregation import ALLOWED_GRANULARITIES
 from .constants import DEFAULT_MAX_WEEKLY_HOURS, DEFAULT_WEEK_START_DAY, DEFAULT_WORKDAYS
-from .models import WorkloadCapacity, WorkloadEstimate, WorkloadSettings
+from .models import WorkloadEstimate, WorkloadSettings
 from .rollup import RollupTooLarge, compute_rollups, is_parent, parent_issue_ids
-from .serializers import WorkloadCapacitySerializer, WorkloadEstimateSerializer, WorkloadSettingsSerializer
+from .serializers import WorkloadEstimateSerializer, WorkloadSettingsSerializer
 from .service import (
     VALID_STATE_GROUPS,
     BulkEstimatesError,
@@ -177,66 +177,6 @@ def estimate_delete(project_id, issue_id):
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-# Shared capacity handlers — reused by both the app API (this module) and
-# the public API (api_views.py). Unlike the estimate endpoint, there is no
-# member/project segment in the URL — PUT/DELETE identify the target row via
-# `member` in the request body; GET returns every capacity row in scope.
-
-def capacity_list(request, slug):
-    """GET workspace-wide (project=None) capacity rows for this workspace.
-
-    Returns {<member_uuid>: <weekly_hours>}. Bulk-first shape (mirrors
-    estimate_bulk) — the matrix is the primary consumer and needs every
-    member's capacity at once. Optional `?member=<uuid>` narrows to one.
-    """
-    qs = WorkloadCapacity.objects.filter(workspace__slug=slug, project__isnull=True)
-    member_raw = request.GET.get("member")
-    if member_raw:
-        try:
-            member_id = uuid.UUID(member_raw)
-        except ValueError:
-            return Response({"error": "member must be a UUID"}, status=status.HTTP_400_BAD_REQUEST)
-        qs = qs.filter(member_id=member_id)
-    rows = qs.values_list("member_id", "weekly_hours")
-    return Response({str(mid): hours for mid, hours in rows}, status=status.HTTP_200_OK)
-
-
-def capacity_put(request, slug):
-    serializer = WorkloadCapacitySerializer(data=request.data)
-    serializer.is_valid(raise_exception=True)
-    member = serializer.validated_data["member"]
-    weekly_hours = serializer.validated_data["weekly_hours"]
-
-    workspace = Workspace.objects.filter(slug=slug).first()
-    if workspace is None:
-        return Response({"error": "workspace not found"}, status=status.HTTP_404_NOT_FOUND)
-
-    obj, _created = WorkloadCapacity.objects.update_or_create(
-        member=member,
-        workspace=workspace,
-        project=None,
-        defaults={
-            "weekly_hours": weekly_hours,
-            "created_by": request.user,
-        },
-    )
-    return Response(WorkloadCapacitySerializer(obj).data, status=status.HTTP_200_OK)
-
-
-def capacity_delete(request, slug):
-    member_raw = request.data.get("member") or request.GET.get("member")
-    if not member_raw:
-        return Response({"error": "member is required"}, status=status.HTTP_400_BAD_REQUEST)
-    try:
-        member_id = uuid.UUID(str(member_raw))
-    except ValueError:
-        return Response({"error": "member must be a UUID"}, status=status.HTTP_400_BAD_REQUEST)
-    WorkloadCapacity.objects.filter(
-        workspace__slug=slug, project__isnull=True, member_id=member_id
-    ).delete()
-    return Response(status=status.HTTP_204_NO_CONTENT)
-
-
 # Shared work-settings handlers — reused by both the app API (this module)
 # and the public API (api_views.py). Workspace-scoped, singleton-per-workspace
 # (no id segment in the URL): GET returns the constants.py defaults when no
@@ -384,30 +324,6 @@ class WorkloadEstimateEndpoint(BaseAPIView):
     @allow_permission([ROLE.ADMIN])
     def delete(self, request, slug, project_id, issue_id):
         return estimate_delete(project_id, issue_id)
-
-
-class WorkloadCapacityEndpoint(BaseAPIView):
-    """GET/PUT/DELETE workspace-wide per-member capacity.
-
-    /api/workspaces/<slug>/workload-capacity/
-
-    GET returns {member_id: weekly_hours} for every member with a capacity
-    row in this workspace (readable by ADMIN and MEMBER — matrix consumers).
-    PUT/DELETE identify the target row via `member` in the request body
-    (there is no member segment in the URL) and are ADMIN-only (plan D-B3).
-    """
-
-    @allow_permission([ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
-    def get(self, request, slug):
-        return capacity_list(request, slug)
-
-    @allow_permission([ROLE.ADMIN], level="WORKSPACE")
-    def put(self, request, slug):
-        return capacity_put(request, slug)
-
-    @allow_permission([ROLE.ADMIN], level="WORKSPACE")
-    def delete(self, request, slug):
-        return capacity_delete(request, slug)
 
 
 class WorkloadSettingsEndpoint(BaseAPIView):
