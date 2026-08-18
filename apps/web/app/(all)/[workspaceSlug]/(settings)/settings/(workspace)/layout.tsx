@@ -13,7 +13,7 @@ import { getWorkspaceActivePath, pathnameToAccessKey } from "@/components/settin
 import { SettingsMobileNav } from "@/components/settings/mobile/nav";
 // plane imports
 import { WORKSPACE_SETTINGS_ACCESS } from "@plane/constants";
-import type { EUserWorkspaceRoles } from "@plane/types";
+import { EUserWorkspaceRoles } from "@plane/types";
 // components
 import { WorkspaceSettingsSidebarRoot } from "@/components/settings/workspace/sidebar";
 // hooks
@@ -35,6 +35,18 @@ const WorkspaceSettingLayout = observer(function WorkspaceSettingLayout({ params
   let isAuthorized: boolean | string = false;
   if (pathname && workspaceSlug && userWorkspaceRole) {
     isAuthorized = WORKSPACE_SETTINGS_ACCESS[accessKey]?.includes(userWorkspaceRole as EUserWorkspaceRoles);
+
+    /* The1Studio fork (workspace work settings) */
+    // WORKSPACE_SETTINGS_ACCESS is derived (href -> access) from WORKSPACE_SETTINGS
+    // in the sealed @plane/constants package, so the fork's /settings/workload
+    // route has no entry and the lookup above returns undefined -- which reads as
+    // "not authorized" for EVERY role, including admins. The nav entry in
+    // item-categories.tsx is ADMIN-gated; this mirrors that gate for the route
+    // itself. It lives here rather than in @plane/constants because docs/FORK.md
+    // forbids editing @plane/* packages in place.
+    if (accessKey === "/settings/workload") {
+      isAuthorized = userWorkspaceRole === EUserWorkspaceRoles.ADMIN;
+    }
   }
 
   return (
