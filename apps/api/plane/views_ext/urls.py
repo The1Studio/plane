@@ -6,15 +6,24 @@
 # include (docs/FORK.md touch-point 2).
 #
 #   GET /api/views-ext/workspaces/<slug>/issues/
+#   GET /api/views-ext/workspaces/<slug>/user-issues/<user_id>/
 
 from django.urls import path
 
-from .views import GroupedWorkspaceViewIssuesEndpoint
+from .views import (
+    GroupedWorkspaceUserProfileIssuesEndpoint,
+    GroupedWorkspaceViewIssuesEndpoint,
+)
 
 urlpatterns = [
     path(
         "workspaces/<str:slug>/issues/",
         GroupedWorkspaceViewIssuesEndpoint.as_view(),
         name="views-ext-workspace-issues",
+    ),
+    path(
+        "workspaces/<str:slug>/user-issues/<uuid:user_id>/",
+        GroupedWorkspaceUserProfileIssuesEndpoint.as_view(),
+        name="views-ext-workspace-user-profile-issues",
     ),
 ]
