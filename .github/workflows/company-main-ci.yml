@@ -142,6 +142,24 @@ jobs:
         # Catches type errors introduced by the rebase (e.g. upstream API shape changes).
         timeout-minutes: 5
 
+      - name: Web build (SSR prerender)
+        run: pnpm turbo run build --filter=web
+        # This is the SAME command the deploy workflow runs, and it is the ONLY
+        # check here that executes application code. Type-check cannot replace
+        # it: `react-router build` prerenders in SPA mode, which CONSTRUCTS the
+        # MobX RootStore tree at build time, so a store that throws during
+        # construction fails here and nowhere else.
+        #
+        # Added after PR #37 merged green and immediately broke the deploy
+        # (run 32141644769): CalendarStore read `workSettingsStore` during
+        # `super()`, five lines before RootStore assigned it. The field is
+        # declared non-optional, so `tsc` was perfectly happy — the bug only
+        # exists in a construction window the type system does not model.
+        # Before this step, `turbo run build --filter=web` lived solely in
+        # deploy-company-main.yml, which runs on push AFTER merge, so this
+        # entire class of failure was structurally invisible to PR CI.
+        timeout-minutes: 10
+
   # ---------------------------------------------------------------------------
   # Job 3 — Backend pytest suite (fork-owned apps)
   # Runs the actual Python test suite for The1Studio's fork-owned Django apps.
