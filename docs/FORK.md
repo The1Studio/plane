@@ -201,6 +201,11 @@ New backend code lives in **new Django apps**:
 
 - `apps/api/plane/ai_ext/` — SP2 AI feature suite (embeddings, Claude tooling, AI digest tasks)
 - `apps/api/plane/clickup_migrate/` — SP1 ClickUp → Plane ETL
+- `apps/api/plane/workload/` — per-issue time estimates (`WorkloadEstimate`) and per-person
+  capacity (`WorkloadCapacity`); powers the spreadsheet/peek/sidebar hours columns and the
+  workspace workload matrix (see § "Frontend core-edit exceptions" SP2 workload table)
+- `apps/api/plane/github_ext/` — GitHub ↔ Plane dev-workflow links (`WorkItemGithubLink`) and
+  PR-driven status automation (`StateTransitionConfig`, webhook ingest)
 - `apps/api/plane/project_ext/` — project visibility (`network`) over the public API (the core
   `/api/v1/` serializer omits the field, so it is unreachable without this app); plus a
   workspace-admin all-projects list and a workspace-scoped bulk project-member-add endpoint.
@@ -217,6 +222,9 @@ New backend code lives in **new Django apps**:
   `plane.api.views.user` / `plane.api.urls.user` are not touch-points, so the endpoint lives
   here. Returns only workspaces the caller is an *active* member of. Model-less (read-only over
   core models), so it ships no `migrations/`.
+- `apps/api/plane/views_ext/` — grouped/paginated workspace-issues endpoint
+  (`GET /api/views-ext/workspaces/<slug>/issues/`) powering the workspace Views tab's multi-layout
+  switcher (see § "Views multi-layout switcher" above)
 
 Each app is **self-contained**:
 
@@ -279,6 +287,64 @@ conflict surface stays trivial.
 **`plane-isolation-audit` note:** `packages/workload-ext` uses the `@plane/` npm scope but is
 **fork-owned** (not upstream) — editing it is NOT an `@plane/*` violation. Allowlist
 `@plane/workload-ext` in the isolation audit so it isn't false-flagged as a sealed-package edit.
+
+### Views multi-layout switcher (workspace Views tab) — fenced `The1Studio fork (views-layouts)`
+
+Adds the List / Board / Calendar / Spreadsheet / Timeline layout switcher to the workspace
+**Views** tab (`/:workspaceSlug/workspace-views/:globalViewId`), matching the project Work Items
+tab. Backend: new `views_ext` Django app (§ Backend customizations above). Frontend: new
+`packages/views-ext/` package (own subsection below) plus a small set of fenced core delegations —
+the same "no upstream seam" pattern as the SP2 workload table above, minimised to
+`@plane/views-ext` delegations rather than inline fork logic (`docs/FORK.md` core-edit
+minimisation rule).
+
+| File                                                                         | What                                                                                                                                                                                                                                       | Why no seam                                                                                                                       |
+| ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/ce/components/views/helper.tsx`                                    | `GlobalViewLayoutSelection` + `WorkspaceAdditionalLayouts` delegate to `@plane/views-ext` / the new layout roots, replacing the upstream `<></>` stub bodies                                                                             | The `ce/` stub seam — the intended injection point, same class as `additional-properties.tsx` (SP2 workload row above)             |
+| `apps/web/core/store/issue/workspace/filter.store.ts`                        | `getAppliedFilters` now calls the fork-owned `getGlobalViewQueryParamsByLayout(userFilters?.displayFilters?.layout)` instead of a param builder hardcoded to `SPREADSHEET`/`"my_issues"`                                                | No seam; every sibling store (cycle, module, archived, profile) already derives params from the active layout — upstream never made the global one dynamic |
+| `apps/web/core/services/workspace.service.ts`                                | `getViewIssues` routes global-view issue fetches to `/api/views-ext/workspaces/<slug>/issues/` instead of the ungrouped core `/api/workspaces/<slug>/issues/`                                                                          | No service-layer override point; the core endpoint has no `group_by` support                                                       |
+| `apps/web/core/components/issues/issue-layouts/list/base-list-root.tsx`      | `+ EIssuesStoreType.GLOBAL` in `ListStoreType`                                                                                                                                                                                            | Sealed union type; admitting a sibling of the existing `PROFILE` member (also workspace-level, cross-project)                       |
+| `apps/web/core/components/issues/issue-layouts/kanban/base-kanban-root.tsx`  | `+ EIssuesStoreType.GLOBAL` in `KanbanStoreType`                                                                                                                                                                                          | Same                                                                                                                                 |
+| `apps/web/core/store/issue/workspace/issue.store.ts`                         | `WorkspaceIssues.viewFlags.enableIssueCreation` flipped `true` → `false`                                                                                                                                                                  | Upstream wired the quick-add button to an `undefined` callback (`useWorkspaceIssueActions` supplies no `quickAddIssue`) — no crash, no type error, it silently did nothing. A workspace-wide view also has no unambiguous target project, so suppressing the button is the correct fix, not a workaround |
+| `apps/web/core/hooks/use-group-dragndrop.ts`                                 | `+ EIssuesStoreType.GLOBAL` in the local `DNDStoreType` union                                                                                                                                                                             | Only surfaced when `tsc` failed after the two `ListStoreType`/`KanbanStoreType` widenings above propagated here — not discoverable by reading. Safe: the hook takes `projectId` per-issue rather than from the route, and the global view's group-by set excludes cycle/module, so those branches are unreachable for `GLOBAL` |
+| `apps/web/core/components/issues/issue-layouts/list/roots/workspace-root.tsx` (NEW)   | `WorkspaceListRoot` — GLOBAL-store List root, sibling of the existing `WorkspaceSpreadsheetRoot`                                                                                                                                | New file; no upstream equivalent for a cross-project List layout exists to conflict with                                            |
+| `apps/web/core/components/issues/issue-layouts/kanban/roots/workspace-root.tsx` (NEW) | `WorkspaceKanBanRoot` — GLOBAL-store Board root, same pattern as the List root above                                                                                                                                                    | Same                                                                                                                                 |
+| `apps/web/core/components/issues/issue-layouts/calendar/base-calendar-root.tsx` | `+ EIssuesStoreType.GLOBAL` in `CalendarStoreType`, plus a comment recording the quick-add coupling (below)                                                                                                                            | Sealed union type. Unlike List/Board this union did NOT already contain `PROFILE` — no workspace-level Calendar had ever existed upstream |
+| `apps/web/core/components/issues/issue-layouts/calendar/calendar.tsx`         | `+ IWorkspaceIssuesFilter` in the `issuesFilterStore` prop union                                                                                                                                                                          | Sealed prop type. Verified safe before widening: this subtree only ever reads `issuesFilterStore.issueFilters?.displayFilters?.calendar?.…`, always optional-chained — the `mutateFilters`/`resetFilters` that `IWorkspaceIssuesFilter` lacks are never called here |
+| `.../calendar/header.tsx`, `.../calendar/day-tile.tsx`, `.../calendar/week-days.tsx`, `.../calendar/dropdowns/months-dropdown.tsx`, `.../calendar/dropdowns/options-dropdown.tsx` | Same one-line `+ IWorkspaceIssuesFilter` prop-union widening, 5 files                                                                            | The prop is forwarded down the whole calendar chain, so the union must widen at every hop. Each was read before widening and confirmed identical to `calendar.tsx` above. Type-only — zero logic changed across all five |
+| `apps/web/core/components/issues/issue-layouts/calendar/roots/workspace-root.tsx` (NEW) | `WorkspaceCalendarRoot` — GLOBAL-store Calendar root                                                                                                                                                                            | New file; same pattern as the List/Board roots above                                                                                 |
+| `apps/web/core/components/issues/issue-layouts/gantt/base-gantt-root.tsx`     | `+ EIssuesStoreType.GLOBAL` in `GanttStoreType`, and the **B3 fix**: `updateBlockDates` branches on the GLOBAL store to resolve each dragged item's own `project_id` from `issueMap` and route through per-issue `updateIssue`      | Sealed union + a genuine API-shape mismatch: `updateIssueDates` takes ONE project id for a batch, and it was reading a route `:projectId` that `/workspace-views/:globalViewId` does not have — it threw on the first bar drag. A workspace-wide timeline spans many projects, so no single value is correct. Non-GLOBAL stores fall through unchanged |
+| `apps/web/core/components/issues/issue-layouts/gantt/roots/workspace-root.tsx` (NEW) | `WorkspaceGanttRoot` — GLOBAL-store Timeline root (`gantt/roots/` created by this feature)                                                                                                                                        | New file; no upstream equivalent                                                                                                     |
+
+**Quick-add coupling — read before touching either side.** `calendar/quick-add-issue-actions.tsx:82`
+returns `null` without a route `:projectId`, which there is none of on `/workspace-views/`. That is
+what keeps Calendar safe — **not** `WorkspaceIssues.viewFlags.enableIssueCreation: false`, because
+`calendar.tsx:112-114` reads `viewFlags` from a hardcoded `useIssues(EIssuesStoreType.PROJECT)`
+rather than the active store, so that flag never reaches the gate at `calendar.tsx:183`. Quick-add
+DOES mount for `GLOBAL` and renders nothing solely because of the null guard. Timeline is different:
+its gate reads the real flag, so the flag IS what protects it there. Anyone changing either
+mechanism should re-check the other.
+
+**Rebase handling:** these files ARE expected conflict points (unlike the abort-on-conflict rule
+for everything else). On conflict, re-apply the fork block — each is fenced by a
+`The1Studio fork (views-layouts)` comment — and keep upstream's changes around it. Do NOT abort
+the rebase for a conflict confined to this set. The two `(NEW)` root files carry near-zero
+rebase-conflict surface (no upstream file to collide with); the reserved Calendar/Timeline rows
+above will gain the same treatment once Phases 4/5 land — do not delete this placeholder note in
+the interim, and do not abort a rebase over a conflict in those two files either once they exist.
+
+**`plane-isolation-audit` / fork-ownership note:** `packages/views-ext` uses the `@plane/` npm
+scope but is **fork-owned** (not upstream) — same clarification as `@plane/workload-ext` above.
+Allowlist `@plane/views-ext` so it isn't false-flagged as a sealed-package edit.
+
+**Why `packages/views-ext` carries its own layout-options table:** `@plane/constants`'
+`ISSUE_DISPLAY_FILTERS_BY_PAGE.my_issues.layoutOptions` only defines `spreadsheet` and `list` (no
+`kanban`/`calendar`/`gantt_chart` entries), and `@plane/*` is sealed — this repo never edits it in
+place. `packages/views-ext/src/layout-options.ts` is the fork-owned replacement covering all 5
+layouts for the Views tab specifically, modelled on upstream's own `profile_issues` entry (also a
+workspace-level, cross-project view). This is a **deliberate, documented duplicate**, not
+accidental drift — do not "consolidate" it back into `@plane/constants` without first re-opening
+the isolation question it was created to avoid.
 
 ### Fork bugfix exceptions (upstream bugs, fenced, upstream-PR candidates)
 

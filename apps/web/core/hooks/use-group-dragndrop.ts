@@ -20,6 +20,10 @@ type DNDStoreType =
   | EIssuesStoreType.CYCLE
   | EIssuesStoreType.PROJECT_VIEW
   | EIssuesStoreType.PROFILE
+  // The1Studio fork (views-layouts) — workspace-wide Views tab; sibling of PROFILE above. Safe:
+  // this hook takes projectId per-issue rather than from the route, and the global view's
+  // group-by set excludes cycle/module, so those branches are unreachable here.
+  | EIssuesStoreType.GLOBAL
   | EIssuesStoreType.ARCHIVED
   | EIssuesStoreType.WORKSPACE_DRAFT
   | EIssuesStoreType.TEAM

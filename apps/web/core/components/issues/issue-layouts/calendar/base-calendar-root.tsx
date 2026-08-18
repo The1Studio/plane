@@ -31,7 +31,25 @@ export type CalendarStoreType =
   | EIssuesStoreType.PROJECT_VIEW
   | EIssuesStoreType.TEAM
   | EIssuesStoreType.TEAM_VIEW
-  | EIssuesStoreType.EPIC;
+  | EIssuesStoreType.EPIC
+  // The1Studio fork (views-layouts) — GLOBAL admitted for the workspace Views tab Calendar
+  // layout. See `calendar/roots/workspace-root.tsx` (`WorkspaceCalendarRoot`).
+  //
+  // Load-bearing coupling: `quick-add-issue-actions.tsx` reads `projectId` from the route via
+  // `useParams()` and returns null without it (line 82) — there is no `:projectId` on
+  // `/workspace-views/:globalViewId`.
+  //
+  // NOTE: it is NOT `WorkspaceIssues.viewFlags.enableIssueCreation: false` that protects us here.
+  // `calendar.tsx:112-114` reads `viewFlags` from a hardcoded
+  // `useIssues(EIssuesStoreType.PROJECT)` rather than the active store, so the
+  // `disableIssueCreation={!enableIssueCreation}` gate at calendar.tsx:183 sees the PROJECT
+  // store's `true` even on a workspace view. Quick-add DOES mount for GLOBAL; it renders nothing
+  // solely because of that null guard.
+  // Consequence: Calendar's safety rests on an incidental guard in a child component, not on a
+  // deliberate flag. Anyone touching either should re-check the other. Fixing calendar.tsx to
+  // read the active store would make this intentional, but that changes behaviour for every
+  // calendar consumer and is deliberately out of scope here.
+  | EIssuesStoreType.GLOBAL;
 
 interface IBaseCalendarRoot {
   QuickActions: FC<IQuickActionProps>;

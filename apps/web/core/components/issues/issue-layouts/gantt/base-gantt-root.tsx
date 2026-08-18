@@ -11,8 +11,10 @@ import { useParams } from "next/navigation";
 import { ALL_ISSUES, EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
 import { useTranslation } from "@plane/i18n";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
-import type { EIssuesStoreType, IBlockUpdateData, TIssue } from "@plane/types";
-import { EIssueLayoutTypes, GANTT_TIMELINE_TYPE } from "@plane/types";
+import type { IBlockUpdateData, TIssue } from "@plane/types";
+// The1Studio fork (views-layouts) — EIssuesStoreType needs to be a value import (not type-only)
+// for the D5 `storeType === EIssuesStoreType.GLOBAL` runtime check below.
+import { EIssueLayoutTypes, EIssuesStoreType, GANTT_TIMELINE_TYPE } from "@plane/types";
 import { renderFormattedPayloadDate } from "@plane/utils";
 // components
 import { TimeLineTypeContext } from "@/components/gantt-chart/contexts";
@@ -42,7 +44,11 @@ export type GanttStoreType =
   | EIssuesStoreType.MODULE
   | EIssuesStoreType.CYCLE
   | EIssuesStoreType.PROJECT_VIEW
-  | EIssuesStoreType.EPIC;
+  | EIssuesStoreType.EPIC
+  // The1Studio fork (views-layouts) — B3/D5: workspace-wide Timeline for the Views tab. No
+  // workspace-level Gantt existed upstream. See updateBlockDates below for the reason this
+  // needs its own branch rather than reusing the project-scoped `updateIssueDates` path.
+  | EIssuesStoreType.GLOBAL;
 
 export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRoot) {
   const { viewId, isCompletedCycle = false, isEpic = false } = props;
@@ -51,7 +57,9 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
   const { workspaceSlug, projectId } = useParams();
 
   const storeType = useIssueStoreType() as GanttStoreType;
-  const { issues, issuesFilter } = useIssues(storeType);
+  // The1Studio fork (views-layouts) — `issueMap` is looked up for the D5 fallback below (each
+  // `TIssue`'s own `project_id`, since a workspace-wide drag selection can span projects).
+  const { issues, issuesFilter, issueMap } = useIssues(storeType);
   const { fetchIssues, fetchNextIssues, updateIssue, quickAddIssue } = useIssuesActions(storeType);
   const { initGantt } = useTimeLineChart(GANTT_TIMELINE_TYPE.ISSUE);
   // store hooks
@@ -98,15 +106,44 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
         start_date?: string;
         target_date?: string;
       }[]
-    ) =>
-      issues.updateIssueDates(workspaceSlug.toString(), updates, projectId.toString()).catch(() => {
+    ) => {
+      // The1Studio fork (views-layouts) — B3/D5: `updateIssueDates` takes one `projectId` for the
+      // whole batch, but a workspace-wide Timeline (GLOBAL store) can hold items from many
+      // projects in a single drag selection, so there is no correct single project to pass (a real
+      // API-shape mismatch, not a missing cast — see plan.md § B3). Fall back to per-item
+      // `updateIssue`, keyed by each issue's own `project_id` — the same call the per-issue write
+      // above (`updateIssueBlockStructure`) already uses. Every other store keeps the existing bulk
+      // `updateIssueDates` call, byte-for-byte unchanged.
+      if (storeType === EIssuesStoreType.GLOBAL) {
+        return Promise.all(
+          updates.map((update) => {
+            const issueProjectId = issueMap[update.id]?.project_id;
+            if (!updateIssue || !issueProjectId) return Promise.resolve();
+            const payload: Partial<TIssue> = {};
+            if (update.start_date) payload.start_date = update.start_date;
+            if (update.target_date) payload.target_date = update.target_date;
+            return updateIssue(issueProjectId, update.id, payload);
+          })
+        )
+          .then(() => undefined)
+          .catch(() => {
+            setToast({
+              type: TOAST_TYPE.ERROR,
+              title: t("toast.error"),
+              message: "Error while updating work item dates, Please try again Later",
+            });
+          });
+      }
+
+      return issues.updateIssueDates(workspaceSlug.toString(), updates, projectId.toString()).catch(() => {
         setToast({
           type: TOAST_TYPE.ERROR,
           title: t("toast.error"),
           message: "Error while updating work item dates, Please try again Later",
         });
-      }),
-    [issues, projectId, workspaceSlug]
+      });
+    },
+    [issues, projectId, workspaceSlug, storeType, issueMap, updateIssue]
   );
 
   const quickAdd =

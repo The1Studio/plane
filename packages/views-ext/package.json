@@ -1,0 +1,30 @@
+{
+  "name": "@plane/views-ext",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Views multi-layout switcher extension — fork-owned layout options and query-param builder for the workspace Views tab",
+  "license": "AGPL-3.0",
+  "type": "module",
+  "main": "./dist/index.mjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "exports": {
+    ".": "./dist/index.mjs",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch --no-clean",
+    "check:types": "tsc --noEmit",
+    "clean": "rm -rf .turbo && rm -rf node_modules && rm -rf dist"
+  },
+  "dependencies": {
+    "@plane/constants": "workspace:*",
+    "@plane/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@plane/typescript-config": "workspace:*",
+    "tsdown": "catalog:",
+    "typescript": "catalog:"
+  }
+}

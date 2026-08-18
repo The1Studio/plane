@@ -609,6 +609,9 @@ importers:
       '@plane/utils':
         specifier: workspace:*
         version: link:../../packages/utils
+      '@plane/views-ext':
+        specifier: workspace:*
+        version: link:../../packages/views-ext
       '@plane/workload-ext':
         specifier: workspace:*
         version: link:../../packages/workload-ext
@@ -1549,6 +1552,25 @@ importers:
       '@types/sanitize-html':
         specifier: 2.16.0
         version: 2.16.0
+      tsdown:
+        specifier: 'catalog:'
+        version: 0.16.0(typescript@5.8.3)(unrun@0.2.34)
+      typescript:
+        specifier: 5.8.3
+        version: 5.8.3
+
+  packages/views-ext:
+    dependencies:
+      '@plane/constants':
+        specifier: workspace:*
+        version: link:../constants
+      '@plane/types':
+        specifier: workspace:*
+        version: link:../types
+    devDependencies:
+      '@plane/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
       tsdown:
         specifier: 'catalog:'
         version: 0.16.0(typescript@5.8.3)(unrun@0.2.34)

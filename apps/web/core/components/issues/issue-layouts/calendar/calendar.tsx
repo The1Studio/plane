@@ -35,6 +35,7 @@ import type { ICalendarStore } from "@/store/issue/issue_calendar_view.store";
 import type { IModuleIssuesFilter } from "@/store/issue/module";
 import type { IProjectIssuesFilter } from "@/store/issue/project";
 import type { IProjectViewIssuesFilter } from "@/store/issue/project-views";
+import type { IWorkspaceIssuesFilter } from "@/store/issue/workspace";
 // local imports
 import { IssueLayoutHOC } from "../issue-layout-HOC";
 import type { TRenderQuickActions } from "../list/list-view-types";
@@ -44,7 +45,18 @@ import { CalendarWeekDays } from "./week-days";
 import { CalendarWeekHeader } from "./week-header";
 
 type Props = {
-  issuesFilterStore: IProjectIssuesFilter | IModuleIssuesFilter | ICycleIssuesFilter | IProjectViewIssuesFilter;
+  // The1Studio fork (views-layouts) — `IWorkspaceIssuesFilter` admitted for the workspace Views
+  // tab Calendar layout (GLOBAL store). This subtree only ever reads `issuesFilterStore
+  // .issueFilters?.…` (header.tsx, dropdowns/options-dropdown.tsx, dropdowns/months-dropdown.tsx),
+  // all optional-chained with a fallback — `mutateFilters`/`resetFilters`, which
+  // `IWorkspaceIssuesFilter` does not declare, are never called here. See
+  // `calendar/roots/workspace-root.tsx`.
+  issuesFilterStore:
+    | IProjectIssuesFilter
+    | IModuleIssuesFilter
+    | ICycleIssuesFilter
+    | IProjectViewIssuesFilter
+    | IWorkspaceIssuesFilter;
   issues: TIssueMap | undefined;
   groupedIssueIds: TGroupedIssues;
   layout: "month" | "week" | undefined;

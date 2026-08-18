@@ -39,6 +39,8 @@ export type KanbanStoreType =
   | EIssuesStoreType.CYCLE
   | EIssuesStoreType.PROJECT_VIEW
   | EIssuesStoreType.PROFILE
+  // The1Studio fork (views-layouts) — workspace-wide Views tab; sibling of PROFILE above
+  | EIssuesStoreType.GLOBAL
   | EIssuesStoreType.TEAM
   | EIssuesStoreType.TEAM_VIEW
   | EIssuesStoreType.EPIC;
