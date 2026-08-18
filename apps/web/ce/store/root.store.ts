@@ -5,6 +5,7 @@
  */
 
 // store
+import { makeObservable, observable } from "mobx";
 import { WorkloadStore } from "@plane/workload-ext";
 import type { IWorkloadStore } from "@plane/workload-ext";
 import { CoreRootStore } from "@/store/root.store";
@@ -23,6 +24,19 @@ export class RootStore extends CoreRootStore {
 
   constructor() {
     super();
+
+    /* The1Studio fork (workspace work settings) */
+    // `workSettingsStore` MUST be observable. CoreRootStore's own constructor
+    // (invoked by super() above) builds CalendarStore, whose constructor reads
+    // the week-start day and registers a reaction on it -- all BEFORE the line
+    // below has run, so it observes `undefined`. Without observability MobX
+    // would register that reaction with zero dependencies and it could never
+    // fire again, leaving the calendar pinned to the fallback week start even
+    // after the real setting loads. Declaring it observable makes the
+    // assignment below a tracked change that wakes the reaction.
+    makeObservable(this, {
+      workSettingsStore: observable.ref,
+    });
 
     this.timelineStore = new TimeLineStore(this);
     this.workloadStore = new WorkloadStore();
