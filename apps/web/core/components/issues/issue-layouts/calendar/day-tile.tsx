@@ -22,6 +22,7 @@ import { MONTHS_LIST } from "@/constants/calendar";
 // types
 import type { ICycleIssuesFilter } from "@/store/issue/cycle";
 import type { IModuleIssuesFilter } from "@/store/issue/module";
+import type { IProfileIssuesFilter } from "@/store/issue/profile";
 import type { IProjectIssuesFilter } from "@/store/issue/project";
 import type { IProjectViewIssuesFilter } from "@/store/issue/project-views";
 import type { IWorkspaceIssuesFilter } from "@/store/issue/workspace";
@@ -29,14 +30,16 @@ import type { TRenderQuickActions } from "../list/list-view-types";
 import { CalendarIssueBlocks } from "./issue-blocks";
 
 type Props = {
-  // The1Studio fork (views-layouts) — `IWorkspaceIssuesFilter` admitted; see `calendar.tsx`'s
-  // `Props.issuesFilterStore` for the rationale.
+  // The1Studio fork (views-layouts / profile-layouts) — `IWorkspaceIssuesFilter` and
+  // `IProfileIssuesFilter` admitted; see `calendar.tsx`'s `Props.issuesFilterStore` for the
+  // rationale.
   issuesFilterStore:
     | IProjectIssuesFilter
     | IModuleIssuesFilter
     | ICycleIssuesFilter
     | IProjectViewIssuesFilter
-    | IWorkspaceIssuesFilter;
+    | IWorkspaceIssuesFilter
+    | IProfileIssuesFilter;
   date: ICalendarDate;
   issues: TIssueMap | undefined;
   groupedIssueIds: TGroupedIssues;

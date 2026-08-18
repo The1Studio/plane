@@ -14,6 +14,8 @@ import { useTranslation } from "@plane/i18n";
 // types
 import type { IIssueDisplayFilterOptions, IIssueDisplayProperties } from "@plane/types";
 import { EIssuesStoreType, EIssueLayoutTypes } from "@plane/types";
+// The1Studio fork (profile-layouts)
+import { PROFILE_VIEW_LAYOUTS, PROFILE_VIEW_ISSUE_LAYOUT_OPTIONS } from "@plane/views-ext";
 // components
 import { DisplayFiltersSelection, FiltersDropdown, LayoutSelection } from "@/components/issues/issue-layouts/filters";
 import { WorkItemFiltersToggle } from "@/components/work-item-filters/filters-toggle";
@@ -66,7 +68,9 @@ export const ProfileIssuesFilter = observer(function ProfileIssuesFilter() {
   return (
     <div className="relative flex items-center justify-end gap-2">
       <LayoutSelection
-        layouts={[EIssueLayoutTypes.LIST, EIssueLayoutTypes.KANBAN]}
+        /* The1Studio fork (profile-layouts) — was [LIST, KANBAN]. PROFILE_VIEW_LAYOUTS is the
+           single place profile layout availability is declared. */
+        layouts={PROFILE_VIEW_LAYOUTS}
         onChange={(layout) => handleLayoutChange(layout)}
         selectedLayout={activeLayout}
       />
@@ -74,7 +78,9 @@ export const ProfileIssuesFilter = observer(function ProfileIssuesFilter() {
       <FiltersDropdown title={t("common.display")} placement="bottom-end">
         <DisplayFiltersSelection
           layoutDisplayFiltersOptions={
-            activeLayout ? ISSUE_DISPLAY_FILTERS_BY_PAGE.profile_issues.layoutOptions[activeLayout] : undefined
+            // The1Studio fork (profile-layouts) — the sealed @plane/constants profile_issues table
+            // defines only list/kanban, so it resolves undefined for the three added layouts.
+            activeLayout ? PROFILE_VIEW_ISSUE_LAYOUT_OPTIONS[activeLayout] : undefined
           }
           displayFilters={issueFilters?.displayFilters ?? {}}
           handleDisplayFiltersUpdate={handleDisplayFilters}

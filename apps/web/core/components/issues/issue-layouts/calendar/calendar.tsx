@@ -33,6 +33,7 @@ import useSize from "@/hooks/use-window-size";
 import type { ICycleIssuesFilter } from "@/store/issue/cycle";
 import type { ICalendarStore } from "@/store/issue/issue_calendar_view.store";
 import type { IModuleIssuesFilter } from "@/store/issue/module";
+import type { IProfileIssuesFilter } from "@/store/issue/profile";
 import type { IProjectIssuesFilter } from "@/store/issue/project";
 import type { IProjectViewIssuesFilter } from "@/store/issue/project-views";
 import type { IWorkspaceIssuesFilter } from "@/store/issue/workspace";
@@ -45,18 +46,21 @@ import { CalendarWeekDays } from "./week-days";
 import { CalendarWeekHeader } from "./week-header";
 
 type Props = {
-  // The1Studio fork (views-layouts) — `IWorkspaceIssuesFilter` admitted for the workspace Views
-  // tab Calendar layout (GLOBAL store). This subtree only ever reads `issuesFilterStore
-  // .issueFilters?.…` (header.tsx, dropdowns/options-dropdown.tsx, dropdowns/months-dropdown.tsx),
-  // all optional-chained with a fallback — `mutateFilters`/`resetFilters`, which
-  // `IWorkspaceIssuesFilter` does not declare, are never called here. See
-  // `calendar/roots/workspace-root.tsx`.
+  // The1Studio fork (views-layouts / profile-layouts) — `IWorkspaceIssuesFilter` admitted for the
+  // workspace Views tab Calendar layout (GLOBAL store); `IProfileIssuesFilter` admitted for the
+  // profile "Your work" pages' Calendar layout (PROFILE store). This subtree only ever reads
+  // `issuesFilterStore.issueFilters?.…` (header.tsx, dropdowns/options-dropdown.tsx,
+  // dropdowns/months-dropdown.tsx), all optional-chained with a fallback — `mutateFilters`/
+  // `resetFilters`, which neither `IWorkspaceIssuesFilter` nor `IProfileIssuesFilter` declares,
+  // are never called here. See `calendar/roots/workspace-root.tsx` and
+  // `calendar/roots/profile-issues-root.tsx`.
   issuesFilterStore:
     | IProjectIssuesFilter
     | IModuleIssuesFilter
     | ICycleIssuesFilter
     | IProjectViewIssuesFilter
-    | IWorkspaceIssuesFilter;
+    | IWorkspaceIssuesFilter
+    | IProfileIssuesFilter;
   issues: TIssueMap | undefined;
   groupedIssueIds: TGroupedIssues;
   layout: "month" | "week" | undefined;

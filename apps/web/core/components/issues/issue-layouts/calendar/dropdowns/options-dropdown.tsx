@@ -26,19 +26,22 @@ import { useCalendarView } from "@/hooks/store/use-calendar-view";
 import useSize from "@/hooks/use-window-size";
 import type { ICycleIssuesFilter } from "@/store/issue/cycle";
 import type { IModuleIssuesFilter } from "@/store/issue/module";
+import type { IProfileIssuesFilter } from "@/store/issue/profile";
 import type { IProjectIssuesFilter } from "@/store/issue/project";
 import type { IProjectViewIssuesFilter } from "@/store/issue/project-views";
 import type { IWorkspaceIssuesFilter } from "@/store/issue/workspace";
 
 interface ICalendarHeader {
-  // The1Studio fork (views-layouts) — `IWorkspaceIssuesFilter` admitted; see `calendar.tsx`'s
-  // `Props.issuesFilterStore` for the rationale.
+  // The1Studio fork (views-layouts / profile-layouts) — `IWorkspaceIssuesFilter` and
+  // `IProfileIssuesFilter` admitted; see `calendar.tsx`'s `Props.issuesFilterStore` for the
+  // rationale.
   issuesFilterStore:
     | IProjectIssuesFilter
     | IModuleIssuesFilter
     | ICycleIssuesFilter
     | IProjectViewIssuesFilter
-    | IWorkspaceIssuesFilter;
+    | IWorkspaceIssuesFilter
+    | IProfileIssuesFilter;
   updateFilters?: (
     projectId: string,
     filterType: TSupportedFilterTypeForUpdate,

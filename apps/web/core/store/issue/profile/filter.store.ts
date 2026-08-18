@@ -21,7 +21,8 @@ import type {
   TSupportedFilterForUpdate,
 } from "@plane/types";
 import { EIssuesStoreType } from "@plane/types";
-import { handleIssueQueryParamsByLayout } from "@plane/utils";
+// The1Studio fork (profile-layouts)
+import { getProfileViewQueryParamsByLayout } from "@plane/views-ext";
 import { IssueFiltersService } from "@/services/issue_filter.service";
 import type { IBaseIssueFilterStore } from "../helpers/issue-filter-helper.store";
 import { IssueFilterHelperStore } from "../helpers/issue-filter-helper.store";
@@ -109,7 +110,11 @@ export class ProfileIssuesFilter extends IssueFilterHelperStore implements IProf
     const userFilters = this.getIssueFilters(userId);
     if (!userFilters) return undefined;
 
-    const filteredParams = handleIssueQueryParamsByLayout(userFilters?.displayFilters?.layout, "profile_issues");
+    // The1Studio fork (profile-layouts): upstream's `ISSUE_DISPLAY_FILTERS_BY_PAGE.profile_issues`
+    // table only covers `list`/`kanban` — sealed `@plane/*`, cannot be edited in place — so
+    // Spreadsheet/Calendar/Gantt would hit a missing key. `getProfileViewQueryParamsByLayout`
+    // sources from the fork-owned `PROFILE_VIEW_ISSUE_LAYOUT_OPTIONS` (packages/views-ext) instead.
+    const filteredParams = getProfileViewQueryParamsByLayout(userFilters?.displayFilters?.layout);
     if (!filteredParams) return undefined;
 
     const filteredRouteParams: Partial<Record<TIssueParams, string | boolean>> = this.computedFilteredParams(
