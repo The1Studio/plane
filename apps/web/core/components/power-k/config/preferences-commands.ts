@@ -6,11 +6,13 @@
 
 import { useCallback } from "react";
 import { useTheme } from "next-themes";
-import { Calendar, Earth, Languages, Palette } from "lucide-react";
+/* The1Studio fork (workspace work settings) — update_start_of_week command removed, Calendar icon no longer used */
+import { Earth, Languages, Palette } from "lucide-react";
 // plane imports
 import { useTranslation } from "@plane/i18n";
 import { setToast, TOAST_TYPE } from "@plane/propel/toast";
-import type { EStartOfTheWeek, TUserProfile } from "@plane/types";
+/* The1Studio fork (workspace work settings) — EStartOfTheWeek no longer used */
+import type { TUserProfile } from "@plane/types";
 // components
 import type { TPowerKCommandConfig } from "@/components/power-k/core/types";
 // hooks
@@ -133,21 +135,7 @@ export const usePowerKPreferencesCommands = (): TPowerKCommandConfig[] => {
       isVisible: () => true,
       closeOnSelect: true,
     },
-    {
-      id: "update_start_of_week",
-      group: "preferences",
-      page: "update-start-of-week",
-      type: "change-page",
-      i18n_title: "power_k.preferences_actions.update_start_of_week",
-      icon: Calendar,
-      onSelect: (data) => {
-        const startOfWeek = data as EStartOfTheWeek;
-        handleUpdateUserProfile({ start_of_the_week: startOfWeek });
-      },
-      isEnabled: () => true,
-      isVisible: () => true,
-      closeOnSelect: true,
-    },
+    /* The1Studio fork (workspace work settings) — update_start_of_week command removed; week-start is now workspace-wide (D3), no per-user override. */
     {
       id: "update_interface_language",
       group: "preferences",

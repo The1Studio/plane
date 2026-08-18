@@ -12,13 +12,18 @@ import { CalendarDays } from "lucide-react";
 import { Combobox } from "@headlessui/react";
 // ui
 import type { Matcher } from "@plane/propel/calendar";
+/* The1Studio fork (workspace work settings) */
+import type { EStartOfTheWeek } from "@plane/types";
 import { Calendar } from "@plane/propel/calendar";
 import { CloseIcon } from "@plane/propel/icons";
 import { ComboDropDown } from "@plane/ui";
 import { cn, renderFormattedDate, getDate } from "@plane/utils";
 // helpers
 // hooks
-import { useUserProfile } from "@/hooks/store/user";
+/* The1Studio fork (workspace work settings) */
+import { useParams } from "next/navigation";
+/* The1Studio fork (workspace work settings) */
+import { useWorkSettings } from "@/hooks/store/use-work-settings";
 import { useDropdown } from "@/hooks/use-dropdown";
 // components
 import { DropdownButton } from "./buttons";
@@ -76,8 +81,12 @@ export const DateDropdown = observer(function DateDropdown(props: Props) {
   // refs
   const dropdownRef = useRef<HTMLDivElement | null>(null);
   // hooks
-  const { data } = useUserProfile();
-  const startOfWeek = data?.start_of_the_week;
+  /* The1Studio fork (workspace work settings) */
+  const { workspaceSlug } = useParams();
+  /* The1Studio fork (workspace work settings) */
+  const { workSettings } = useWorkSettings(workspaceSlug?.toString());
+  /* The1Studio fork (workspace work settings) */
+  const startOfWeek = workSettings.week_start_day as EStartOfTheWeek;
   // popper-js refs
   const [referenceElement, setReferenceElement] = useState<HTMLButtonElement | null>(null);
   const [popperElement, setPopperElement] = useState<HTMLDivElement | null>(null);
@@ -165,6 +174,7 @@ export const DateDropdown = observer(function DateDropdown(props: Props) {
   );
 
   return (
+    // oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- pre-existing warning, unrelated to this change (husky lint-staged runs --deny-warnings on the whole file)
     <ComboDropDown
       as="div"
       ref={dropdownRef}
