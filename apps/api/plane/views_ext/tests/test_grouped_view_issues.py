@@ -268,3 +268,46 @@ class GuestVisibilityTests(_EndpointTestCase):
         response = stranger_client.get(self.url)
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+
+class FrontendEmittedGroupByTests(_EndpointTestCase):
+    """
+    Regression guard for the 2026-08-18 production incident.
+
+    The allowlist originally held only the four values D3 recommended the UI *offer*
+    (state__group / priority / project_id / labels__id). But the frontend emits the full
+    EIssueGroupByToServerOptions range: a display filter persisted from the Work Items tab
+    sends group_by=state_id, and the Calendar layout always sends group_by=target_date.
+    Both 400'd on every request, so List and Board never rendered and Calendar silently
+    fell back to ungrouped -- which read as "slow" rather than "broken".
+
+    Every value this enum can emit must be accepted. Assert them all, so adding a layout
+    or a group-by option upstream cannot reintroduce this silently.
+    """
+
+    FRONTEND_EMITTED = [
+        "state_id",
+        "state__group",
+        "priority",
+        "labels__id",
+        "assignees__id",
+        "cycle_id",
+        "issue_module__module_id",
+        "target_date",
+        "project_id",
+        "created_by",
+    ]
+
+    def test_every_frontend_emitted_group_by_is_accepted(self):
+        _issue(self.ws, self.project, self.state, self.owner)
+
+        for field in self.FRONTEND_EMITTED:
+            with self.subTest(group_by=field):
+                response = self.client.get(self.url, {"group_by": field})
+                self.assertEqual(
+                    response.status_code,
+                    status.HTTP_200_OK,
+                    msg=f"group_by={field} must be accepted; the frontend emits it",
+                )
+                self.assertEqual(response.data["grouped_by"], field)
+                self.assertIsInstance(response.data["results"], dict)

@@ -11,8 +11,7 @@ import useSWR from "swr";
 // plane imports
 import { GLOBAL_VIEW_TRACKER_ELEMENTS, ISSUE_DISPLAY_FILTERS_BY_PAGE } from "@plane/constants";
 import { EmptyStateDetailed } from "@plane/propel/empty-state";
-import type { EIssueLayoutTypes } from "@plane/types";
-import { EIssuesStoreType, STATIC_VIEW_TYPES } from "@plane/types";
+import { EIssueLayoutTypes, EIssuesStoreType, STATIC_VIEW_TYPES } from "@plane/types";
 // assets
 // components
 import { IssuePeekOverview } from "@/components/issues/peek-overview";
@@ -93,18 +92,36 @@ export const AllIssueLayoutRoot = observer(function AllIssueLayoutRoot(props: Pr
     { revalidateIfStale: false, revalidateOnFocus: false }
   );
 
-  // Fetch issues
+  /**
+   * The1Studio fork (views-layouts) — this root fetches issues ONLY for the Spreadsheet layout.
+   *
+   * `WorkspaceSpreadsheetRoot` is a bespoke root that does no fetching of its own and consumes
+   * whatever this root loaded. Every other layout renders through a `Base*Root`, and each of
+   * those issues its own `fetchIssues` on mount with layout-appropriate grouping and page size.
+   * Fetching here unconditionally therefore cost those layouts a second, redundant round-trip
+   * per page load — and the `clear()` above it wiped the store while the layout's own request
+   * was in flight, forcing extra work on top.
+   *
+   * Filters are still fetched for every layout: the Base roots read `group_by` / `order_by` out
+   * of the filter store to build their own request, so those must land first regardless.
+   */
+  const shouldFetchIssuesHere = activeLayout === undefined || activeLayout === EIssueLayoutTypes.SPREADSHEET;
+
   const { isLoading: issuesLoading } = useSWR(
-    workspaceSlug && globalViewId ? `WORKSPACE_GLOBAL_VIEW_ISSUES_${workspaceSlug}_${globalViewId}` : null,
+    workspaceSlug && globalViewId
+      ? `WORKSPACE_GLOBAL_VIEW_ISSUES_${workspaceSlug}_${globalViewId}_${shouldFetchIssuesHere}`
+      : null,
     async () => {
       if (workspaceSlug && globalViewId) {
-        clear();
         toggleLoading(true);
         await fetchFilters(workspaceSlug, globalViewId);
-        await fetchIssues(workspaceSlug, globalViewId, groupedIssueIds ? "mutation" : "init-loader", {
-          canGroup: false,
-          perPageCount: 100,
-        });
+        if (shouldFetchIssuesHere) {
+          clear();
+          await fetchIssues(workspaceSlug, globalViewId, groupedIssueIds ? "mutation" : "init-loader", {
+            canGroup: false,
+            perPageCount: 100,
+          });
+        }
         toggleLoading(false);
       }
     },
