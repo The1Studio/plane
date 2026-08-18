@@ -91,12 +91,3 @@ export type TWorkloadFilters = {
   assignee_ids?: string[];
   state_group?: string[];
 };
-
-/** PUT body / echoed shape for `workspaces/<slug>/workload-capacity/`. */
-export type TWorkloadCapacity = {
-  member: string;
-  weekly_hours: number;
-};
-
-/** GET response for `workspaces/<slug>/workload-capacity/` — member id → weekly hours. */
-export type TWorkloadCapacityMap = Record<string, number>;
