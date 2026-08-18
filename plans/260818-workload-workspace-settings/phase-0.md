@@ -44,9 +44,9 @@ unchanged. This deliberately differs from core's per-user default (Sunday, `user
 
 ```jsonc
 {
-  "max_weekly_hours": 40.0,   // float, 0 <= x <= MAX_HOURS (10000)
-  "workdays": [1,2,3,4,5],    // int[], non-empty, unique, each 0..6, ascending
-  "week_start_day": 1         // int, 0..6
+  "max_weekly_hours": 40.0, // float, 0 <= x <= MAX_HOURS (10000)
+  "workdays": [1, 2, 3, 4, 5], // int[], non-empty, unique, each 0..6, ascending
+  "week_start_day": 1, // int, 0..6
 }
 ```
 
@@ -62,8 +62,8 @@ A workspace with no row returns the defaults above rather than 404 — callers n
 // packages/types/src/workload.ts
 export type TWorkSettings = {
   max_weekly_hours: number;
-  workdays: number[];      // EStartOfTheWeek values
-  week_start_day: number;  // EStartOfTheWeek value
+  workdays: number[]; // EStartOfTheWeek values
+  week_start_day: number; // EStartOfTheWeek value
 };
 ```
 
@@ -91,7 +91,21 @@ replacing the ISO `YYYY-Www` form. Day and month keys are unchanged (`YYYY-MM-DD
 
 ## Consumers of the week key
 
-_(fill during execution — the grep result is the SSOT Phase 6 works from)_
+Ran the specified grep verbatim:
+
+```bash
+grep -rn -- "-W" packages/workload-ext/src apps/web/core/components 2>/dev/null | grep -i week
+```
+
+Zero across `packages/workload-ext/src` and `apps/web/core/components`. A broader sanity sweep of
+the same two paths for `period_key`, `isocalendar`, `YYYY-Www`, and the raw `W\d\d` token also
+returned zero — no frontend code parses or reconstructs the ISO-week (`YYYY-Www`) key format
+today. The current frontend (`packages/workload-ext/src/*`) only ever echoes `period_key` values
+back as opaque object keys (e.g. `TWorkloadRow.buckets: Record<string, number>`); it never slices
+or pattern-matches the string itself. Phase 6 therefore has no in-repo consumer to migrate for
+this format change — its propagation work is limited to the sibling repos (`plane-mcp-server`,
+SDKs, docs) named in `CLAUDE.md`'s propagation table, which are outside this grep's scope by
+design (they live in separate repos, not this worktree).
 
 ## Success criteria
 
