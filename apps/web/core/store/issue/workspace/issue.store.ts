@@ -58,7 +58,12 @@ export interface IWorkspaceIssues extends IBaseIssuesStore {
 export class WorkspaceIssues extends BaseIssuesStore implements IWorkspaceIssues {
   viewFlags = {
     enableQuickAdd: true,
-    enableIssueCreation: true,
+    // The1Studio fork (views-layouts) — was `true`, which rendered a quick-add button in every
+    // layout while useWorkspaceIssueActions supplies no quickAddIssue action at all: the callback
+    // was undefined, so the button silently did nothing (no crash, no type error, which is why it
+    // went unnoticed while this store was spreadsheet-only). A workspace-wide view also has no
+    // unambiguous target project, so no button is the correct answer.
+    enableIssueCreation: false,
     enableInlineEditing: true,
   };
   // service

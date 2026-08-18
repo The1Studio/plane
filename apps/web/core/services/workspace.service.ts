@@ -270,9 +270,14 @@ export class WorkspaceService extends APIService {
   }
 
   async getViewIssues(workspaceSlug: string, params: any, config = {}): Promise<TIssuesResponse> {
+    // The1Studio fork (views-layouts) — the core /issues/ endpoint has no group_by, so Board and
+    // grouped List had no data source. views_ext mirrors it and adds grouping; its ungrouped
+    // response is shape-identical, so all global-view reads go there rather than branching on
+    // params (a branch would need re-verifying on every future param addition).
+    // The issues-detail path is left on core — it is the relation-expansion read, not a layout read.
     const path = params.expand?.includes("issue_relation")
       ? `/api/workspaces/${workspaceSlug}/issues-detail/`
-      : `/api/workspaces/${workspaceSlug}/issues/`;
+      : `/api/views-ext/workspaces/${workspaceSlug}/issues/`;
     return this.get(
       path,
       {

@@ -33,6 +33,8 @@ type ListStoreType =
   | EIssuesStoreType.CYCLE
   | EIssuesStoreType.PROJECT_VIEW
   | EIssuesStoreType.PROFILE
+  // The1Studio fork (views-layouts) — workspace-wide Views tab; sibling of PROFILE above
+  | EIssuesStoreType.GLOBAL
   | EIssuesStoreType.ARCHIVED
   | EIssuesStoreType.WORKSPACE_DRAFT
   | EIssuesStoreType.TEAM

@@ -22,7 +22,8 @@ import type {
   TSupportedFilterForUpdate,
 } from "@plane/types";
 import { EIssuesStoreType, EIssueLayoutTypes, STATIC_VIEW_TYPES } from "@plane/types";
-import { handleIssueQueryParamsByLayout } from "@plane/utils";
+// The1Studio fork (views-layouts)
+import { getGlobalViewQueryParamsByLayout } from "@plane/views-ext";
 // services
 import { WorkspaceService } from "@/services/workspace.service";
 // local imports
@@ -100,7 +101,13 @@ export class WorkspaceIssuesFilter extends IssueFilterHelperStore implements IWo
     const userFilters = this.getIssueFilters(viewId);
     if (!userFilters) return undefined;
 
-    const filteredParams = handleIssueQueryParamsByLayout(EIssueLayoutTypes.SPREADSHEET, "my_issues");
+    // The1Studio fork (views-layouts) — was hardcoded to SPREADSHEET/"my_issues", so switching
+    // layout changed the rendered component but never the request: group_by never reached the
+    // server and Board could only ever show one column. Every sibling store (cycle, module,
+    // archived, profile) already derives this from the active layout; this makes the global store
+    // match. The fork-owned builder is used because @plane/constants' my_issues table is sealed
+    // and has no kanban/calendar/gantt entries.
+    const filteredParams = getGlobalViewQueryParamsByLayout(userFilters?.displayFilters?.layout);
     if (!filteredParams) return undefined;
 
     const filteredRouteParams: Partial<Record<TIssueParams, string | boolean>> = this.computedFilteredParams(
