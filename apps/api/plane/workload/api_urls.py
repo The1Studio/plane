@@ -9,7 +9,6 @@ from django.urls import path
 
 from .api_views import (
     ProjectWorkloadAPIEndpoint,
-    WorkloadCapacityAPIEndpoint,
     WorkloadEstimateAPIEndpoint,
     WorkloadEstimatesBulkAPIEndpoint,
     WorkloadRollupsBulkAPIEndpoint,
@@ -42,11 +41,6 @@ urlpatterns = [
         "workspaces/<str:slug>/workload-rollups/",
         WorkloadRollupsBulkAPIEndpoint.as_view(),
         name="api-workload-rollups-bulk",
-    ),
-    path(
-        "workspaces/<str:slug>/workload-capacity/",
-        WorkloadCapacityAPIEndpoint.as_view(),
-        name="api-workload-capacity",
     ),
     path(
         "workspaces/<str:slug>/work-settings/",

@@ -5,7 +5,7 @@
 from rest_framework import serializers
 
 from .aggregation import MAX_HOURS, quantize_hours
-from .models import WorkloadCapacity, WorkloadEstimate, WorkloadSettings
+from .models import WorkloadEstimate, WorkloadSettings
 
 
 class WorkloadEstimateSerializer(serializers.ModelSerializer):
@@ -23,31 +23,11 @@ class WorkloadEstimateSerializer(serializers.ModelSerializer):
         return quantize_hours(value)
 
 
-class WorkloadCapacitySerializer(serializers.ModelSerializer):
-    class Meta:
-        model = WorkloadCapacity
-        fields = ["id", "member", "workspace", "project", "weekly_hours", "created_at", "updated_at"]
-        # `member` stays writable — the capacity endpoint has no member URL
-        # segment, so PUT/DELETE identify the target row via the request
-        # body (docs/plan Delta B contract). workspace/project are always
-        # server-derived (slug + v1 project=None), never client-supplied.
-        read_only_fields = ["id", "workspace", "project", "created_at", "updated_at"]
-
-    def validate_weekly_hours(self, value):
-        if value is None or value < 0:
-            raise serializers.ValidationError("weekly_hours must be a number >= 0")
-        if value > MAX_HOURS:
-            raise serializers.ValidationError(f"weekly_hours must be <= {MAX_HOURS}")
-        # Quantize via the SAME cents rounding the aggregation uses (SSOT).
-        return quantize_hours(value)
-
-
 class WorkloadSettingsSerializer(serializers.ModelSerializer):
     """Serializes/validates exactly the payload pinned in phase-0.md's
     contract (`TWorkSettings`) — no id/workspace/timestamps in the body.
     `workspace` is always server-derived from the slug, never client
-    supplied, and is not part of the wire shape at all (unlike
-    WorkloadCapacitySerializer, which exposes it as read-only)."""
+    supplied, and is not part of the wire shape at all."""
 
     class Meta:
         model = WorkloadSettings

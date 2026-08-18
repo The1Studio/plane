@@ -20,7 +20,8 @@ from plane.db.models import (
 from plane.db.models.state import StateGroup
 
 from .aggregation import capacity_for_period, from_cents, spread_estimate
-from .models import WorkloadCapacity, WorkloadEstimate
+from .constants import DEFAULT_MAX_WEEKLY_HOURS, DEFAULT_WEEK_START_DAY, DEFAULT_WORKDAYS
+from .models import WorkloadEstimate, WorkloadSettings
 
 ROW_GUARD = 50_000
 ADMIN_ROLE = 20
@@ -226,19 +227,18 @@ def _resolve_owners(issue_ids):
     return owners
 
 
-def _resolve_capacities(owner_ids, slug):
-    """Map member_id -> weekly_hours for workspace-wide (project=None)
-    WorkloadCapacity rows in this workspace. Members with no capacity row are
-    absent (caller treats as "no capacity set" -> empty capacity_buckets,
-    over=False everywhere). Mirrors _resolve_owners' shape.
+def _resolve_work_settings(slug):
+    """Read this workspace's WorkloadSettings ONCE per request (never per
+    row — every row shares the same effective capacity/workday config).
+    Falls back to the constants.py defaults when the workspace has no row
+    yet (mirrors views.settings_get: a GET never writes on read).
+
+    Returns (max_weekly_hours, workdays, week_start_day).
     """
-    owner_ids = {oid for oid in owner_ids if oid is not None}
-    if not owner_ids:
-        return {}
-    rows = WorkloadCapacity.objects.filter(
-        workspace__slug=slug, project__isnull=True, member_id__in=owner_ids
-    ).values_list("member_id", "weekly_hours")
-    return dict(rows)
+    obj = WorkloadSettings.objects.filter(workspace__slug=slug).first()
+    if obj is None:
+        return DEFAULT_MAX_WEEKLY_HOURS, list(DEFAULT_WORKDAYS), DEFAULT_WEEK_START_DAY
+    return obj.max_weekly_hours, obj.workdays, obj.week_start_day
 
 
 def compute_workload(
@@ -258,6 +258,11 @@ def compute_workload(
     )
     if not scope:
         return _empty_response(granularity, date_from, date_to)
+
+    # Read once per request — every row below shares this same effective
+    # capacity/workday config (_resolve_capacities / per-row settings reads
+    # are gone; D1).
+    max_weekly_hours, workdays, week_start_day = _resolve_work_settings(slug)
 
     # Flag-off guests see only their own assigned workload (core parity).
     restricted = _guest_restricted_projects(user, slug, scope)
@@ -305,7 +310,7 @@ def compute_workload(
         names[owner_id] = owner[1] if owner else "Unassigned"
 
         b, uns_cents, dirty = spread_estimate(
-            hours, start, target, date_from, date_to, granularity
+            hours, start, target, date_from, date_to, granularity, workdays, week_start_day
         )
         meta["issues_counted"] += 1
         if dirty:
@@ -324,30 +329,29 @@ def compute_workload(
 
     rows = []
     owner_ids = set(buckets.keys()) | set(unscheduled.keys())
-    capacities = _resolve_capacities(owner_ids, slug)
+    # Same workspace-wide capacity for every row now (D1) — computed ONCE and
+    # referenced by each row below, not rebuilt per-owner. Prorated over
+    # every period column in the response (not just a given row's populated
+    # buckets) so the matrix can render a capacity reference even for
+    # periods with zero hours logged.
+    capacity_buckets = {
+        period: capacity_for_period(max_weekly_hours, period, granularity, workdays)
+        for period in periods
+    }
+    total_capacity = sum(capacity_buckets.values())
     for owner_id in owner_ids:
         pm = buckets.get(owner_id, {})
         sparse = {k: from_cents(c) for k, c in pm.items() if c}
         total = from_cents(sum(pm.values()))
 
-        weekly_capacity = capacities.get(owner_id)
-        if weekly_capacity is not None:
-            # Prorated over every period column in the response (not just
-            # this row's populated buckets) so the matrix can render a
-            # capacity reference even for periods with zero hours logged.
-            capacity_buckets = {
-                period: capacity_for_period(weekly_capacity, period, granularity)
-                for period in periods
-            }
-            over = {
-                period: sparse.get(period, 0) > capacity_buckets[period]
-                for period in periods
-            }
-            total_over = total > sum(capacity_buckets.values())
-        else:
-            capacity_buckets = {}
-            over = {}
-            total_over = False
+        # There is always an effective capacity now (settings row or
+        # constants.py default) — every row carries over/total_over flags,
+        # not just members who used to have an explicit capacity row (D1).
+        over = {
+            period: sparse.get(period, 0) > capacity_buckets[period]
+            for period in periods
+        }
+        total_over = total > total_capacity
 
         rows.append(
             {
