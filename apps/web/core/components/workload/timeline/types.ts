@@ -1,0 +1,60 @@
+// Copyright (c) 2023-present Plane Software, Inc. and contributors
+// SPDX-License-Identifier: AGPL-3.0-only
+// See the LICENSE file for details.
+//
+// The1Studio fork (workload timeline, phase-8.md) — internal block-data shapes
+// for the workload timeline. Composed on top of core's gantt-chart primitives
+// (`GanttChartRoot`/`ChartViewRoot`), which render a flat, ordered `blockIds`
+// list with no group/swimlane seam of their own (plan.md's "Prior art" table).
+// A "swimlane" here is therefore represented as an ordered RUN of blocks: one
+// `header` block (the capacity heat row + avatar/badge sidebar cell) followed
+// by that assignee's `task` blocks — see `blocks.ts`.
+
+import type { TWorkloadRow, TWorkloadTask } from "@plane/workload-ext";
+
+/** Sentinel assignee key for the "Unassigned" swimlane (row.assignee_id is `null`). */
+export const UNASSIGNED_KEY = "unassigned";
+
+/** Stable string key for an assignee id, collapsing `null` to `UNASSIGNED_KEY`. */
+export function assigneeKey(assigneeId: string | null): string {
+  return assigneeId ?? UNASSIGNED_KEY;
+}
+
+/**
+ * The swimlane's header row: avatar + name + used/capacity badge + collapse
+ * chevron + Unscheduled/Overdue affordances (sidebar), and the per-period
+ * capacity heat cells (chart body).
+ *
+ * `start_date`/`target_date` span the WHOLE `periods[]` range (not the
+ * chart's own scroll viewport) — see `blocks.ts` for why this keeps the
+ * block's position stable across pan/zoom instead of needing to track the
+ * chart's currently-rendered window.
+ */
+export type TWorkloadHeaderBlockData = {
+  kind: "header";
+  id: string;
+  name: string;
+  assigneeId: string | null;
+  row: TWorkloadRow;
+  /** Same `periods` array as the API response — one heat cell per entry. */
+  periods: string[];
+  sort_order: number;
+  start_date: string;
+  target_date: string;
+};
+
+/** One task bar. Only tasks with a non-null `target_date` become a block —
+ * a task with no target is "Unscheduled" and is surfaced via the header
+ * row's affordance instead (see `blocks.ts`). */
+export type TWorkloadTaskBlockData = {
+  kind: "task";
+  id: string;
+  name: string;
+  assigneeId: string | null;
+  task: TWorkloadTask;
+  sort_order: number;
+  start_date: string | undefined;
+  target_date: string;
+};
+
+export type TWorkloadTimelineBlockData = TWorkloadHeaderBlockData | TWorkloadTaskBlockData;

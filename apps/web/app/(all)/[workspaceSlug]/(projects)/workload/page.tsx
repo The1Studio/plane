@@ -3,7 +3,13 @@
 // See the LICENSE file for details.
 //
 // SP2 — Workload route page (apps/web route file).
-// Imported by extended.ts; renders the @plane/workload-ext WorkloadMatrix.
+// Imported by extended.ts.
+//
+// The1Studio fork (workload timeline, phase-8.md) — renders the @plane/workload-ext
+// WorkloadToolbar (filters/granularity, kept as-is) directly, since the aggregate
+// table it used to render internally is deleted (D11); the swimlane timeline
+// lives in apps/web (D13, packages/workload-ext cannot import
+// @/components/gantt-chart) and is rendered as its own sibling below the toolbar.
 
 "use client";
 import { useCallback, useEffect } from "react";
@@ -14,11 +20,12 @@ import type { DateRange } from "@plane/propel/calendar";
 // No `maxDate` is passed to the picker on purpose: it would clamp the whole
 // calendar relative to the CURRENT `from`, making it impossible to move the
 // window forward. `clampDateRange` enforces the span cap after selection instead.
-import { clampDateRange, wlt, WorkloadMatrix } from "@plane/workload-ext";
+import { clampDateRange, wlt, WorkloadToolbar } from "@plane/workload-ext";
 import { PageHead } from "@/components/core/page-title";
 import { DateRangeDropdown } from "@/components/dropdowns/date-range";
 import { MemberDropdown } from "@/components/dropdowns/member/dropdown";
 import { ProjectDropdown } from "@/components/dropdowns/project/dropdown";
+import { WorkloadTimelineRoot } from "@/components/workload/timeline";
 import { useUserPermissions } from "@/hooks/store/user";
 import { useWorkload } from "@/hooks/store/use-workload";
 
@@ -88,9 +95,9 @@ export default observer(function WorkloadPage() {
   return (
     <>
       <PageHead title="Workload" />
-      <div className="h-full overflow-y-auto px-6 py-4">
-        <h1 className="text-xl mb-4 font-semibold">Workload</h1>
-        <WorkloadMatrix
+      <div className="flex h-full flex-col gap-4 overflow-y-auto px-6 py-4">
+        <h1 className="text-xl font-semibold">Workload</h1>
+        <WorkloadToolbar
           store={workloadStore}
           workspaceSlug={workspaceSlug}
           isAdmin={isAdmin}
@@ -122,6 +129,7 @@ export default observer(function WorkloadPage() {
             />
           }
         />
+        <WorkloadTimelineRoot store={workloadStore} />
       </div>
     </>
   );

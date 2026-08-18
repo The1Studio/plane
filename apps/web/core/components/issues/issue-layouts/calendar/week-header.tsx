@@ -10,7 +10,10 @@ import { getOrderedDays } from "@plane/utils";
 import { DAYS_LIST } from "@/constants/calendar";
 // helpers
 // hooks
-import { useUserProfile } from "@/hooks/store/user";
+/* The1Studio fork (workspace work settings) */
+import { useParams } from "next/navigation";
+/* The1Studio fork (workspace work settings) */
+import { useWorkSettings } from "@/hooks/store/use-work-settings";
 
 type Props = {
   isLoading: boolean;
@@ -20,8 +23,12 @@ type Props = {
 export const CalendarWeekHeader = observer(function CalendarWeekHeader(props: Props) {
   const { isLoading, showWeekends } = props;
   // hooks
-  const { data } = useUserProfile();
-  const startOfWeek = data?.start_of_the_week;
+  /* The1Studio fork (workspace work settings) */
+  const { workspaceSlug } = useParams();
+  /* The1Studio fork (workspace work settings) */
+  const { workSettings } = useWorkSettings(workspaceSlug?.toString());
+  /* The1Studio fork (workspace work settings) */
+  const startOfWeek = workSettings.week_start_day as EStartOfTheWeek;
 
   // derived
   const orderedDays = getOrderedDays(Object.values(DAYS_LIST), (item) => item.value, startOfWeek);

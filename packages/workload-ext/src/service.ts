@@ -1,6 +1,4 @@
 import type {
-  TWorkloadCapacity,
-  TWorkloadCapacityMap,
   TWorkloadEstimate,
   TWorkloadEstimateGetResponse,
   TWorkloadFilters,
@@ -175,54 +173,6 @@ export class WorkloadService {
       project_ids: Array.from(new Set([...(filters.project_ids ?? []), projectId])),
     };
     return this.getWorkload(workspaceSlug, mergedFilters);
-  }
-
-  // ── Capacity CRUD ──────────────────────────────────────────────────────────
-
-  /**
-   * Fetch workspace-wide weekly capacities.
-   *
-   * Contract: GET /api/workspaces/<slug>/workload-capacity/[?member=<uuid>]
-   * → { "<member-uuid>": <weekly_hours number> }   (no capacity row = absent key)
-   *
-   * `member` narrows to a single member; omit to fetch every member with a
-   * workspace-wide capacity. Roles: ADMIN/MEMBER.
-   */
-  async getCapacities(workspaceSlug: string, member?: string): Promise<TWorkloadCapacityMap> {
-    const params = member ? `?member=${member}` : "";
-    const url = `${API_BASE}/workspaces/${workspaceSlug}/workload-capacity/${params}`;
-    const res = await fetch(url, { credentials: "include" });
-    if (!res.ok) throw new Error(await res.text());
-    return res.json() as Promise<TWorkloadCapacityMap>;
-  }
-
-  /**
-   * Set (create or update) a member's workspace-wide weekly capacity.
-   *
-   * Contract: PUT /api/workspaces/<slug>/workload-capacity/ body { member, weekly_hours }
-   * (workspace resolved from slug; project is always null server-side). ADMIN-only.
-   */
-  async putCapacity(workspaceSlug: string, member: string, weeklyHours: number): Promise<TWorkloadCapacity> {
-    const url = `${API_BASE}/workspaces/${workspaceSlug}/workload-capacity/`;
-    const res = await fetch(url, {
-      method: "PUT",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ member, weekly_hours: weeklyHours }),
-    });
-    if (!res.ok) throw new Error(await res.text());
-    return res.json() as Promise<TWorkloadCapacity>;
-  }
-
-  /**
-   * Clear a member's workspace-wide weekly capacity.
-   *
-   * Contract: DELETE /api/workspaces/<slug>/workload-capacity/?member=<uuid>. ADMIN-only.
-   */
-  async deleteCapacity(workspaceSlug: string, member: string): Promise<void> {
-    const url = `${API_BASE}/workspaces/${workspaceSlug}/workload-capacity/?member=${member}`;
-    const res = await fetch(url, { method: "DELETE", credentials: "include" });
-    if (!res.ok) throw new Error(await res.text());
   }
 
   // ── Private helpers ────────────────────────────────────────────────────────

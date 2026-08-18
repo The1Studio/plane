@@ -37,19 +37,6 @@ export function useWorkloadEstimate(issueId: string): { hours: number | null; ro
   return { hours: entry?.hours ?? null, rollup };
 }
 
-/**
- * Returns a member's workspace-wide weekly capacity (hours) from the shared
- * workload store. `null` when the member has no capacity row set, or when
- * `memberId` itself is null (e.g. an unassigned row). Pure selector — the
- * caller is responsible for triggering `store.fetchCapacities` (WorkloadMatrix
- * does this on mount).
- */
-export function useWorkloadCapacity(memberId: string | null): number | null {
-  const store = useWorkload();
-  if (!memberId) return null;
-  return store.capacities[memberId] ?? null;
-}
-
 // ── Bulk fetch effect ─────────────────────────────────────────────────────────
 
 /**

@@ -1,7 +1,6 @@
 import { action, computed, makeObservable, observable, runInAction } from "mobx";
 import { WorkloadService } from "./service";
 import type {
-  TWorkloadCapacityMap,
   TWorkloadEstimate,
   TWorkloadFilters,
   TWorkloadGranularity,
@@ -38,8 +37,6 @@ export interface IWorkloadStore {
   selectedStateGroups: string[];
   workloadData: TWorkloadResponse | null;
   estimateData: Record<string, TWorkloadEstimate | null>; // keyed by issueId
-  /** Workspace-wide weekly capacity, keyed by member id. Absent key = no capacity row. */
-  capacities: TWorkloadCapacityMap;
   /** Client-side matrix filter — when true, the matrix renders only rows with `total_over`. */
   showOverCapacityOnly: boolean;
   /**
@@ -88,12 +85,6 @@ export interface IWorkloadStore {
   /** Bypasses the rollup dedup set for a single id — used by the 400 UX
    *  backstop when a PUT is rejected with PARENT_HAS_CHILDREN. */
   forceRefetchRollup: (workspaceSlug: string, issueId: string) => Promise<void>;
-  /** Refetches every member's workspace-wide capacity (unconditional — no dedup set). */
-  fetchCapacities: (workspaceSlug: string) => Promise<void>;
-  /** Sets (create/update) a member's workspace-wide weekly capacity. ADMIN-only server-side. */
-  updateCapacity: (workspaceSlug: string, member: string, weeklyHours: number) => Promise<void>;
-  /** Clears a member's workspace-wide weekly capacity. ADMIN-only server-side. */
-  deleteCapacity: (workspaceSlug: string, member: string) => Promise<void>;
 }
 
 // ── Store ─────────────────────────────────────────────────────────────────────
@@ -108,7 +99,6 @@ export class WorkloadStore implements IWorkloadStore {
   selectedStateGroups: string[] = [];
   workloadData: TWorkloadResponse | null = null;
   estimateData: Record<string, TWorkloadEstimate | null> = {};
-  capacities: TWorkloadCapacityMap = {};
   showOverCapacityOnly: boolean = false;
   rollupData: Record<string, TWorkloadRollup | null> = {};
   isLoading: boolean = false;
@@ -172,7 +162,6 @@ export class WorkloadStore implements IWorkloadStore {
       selectedStateGroups: observable,
       workloadData: observable,
       estimateData: observable,
-      capacities: observable,
       showOverCapacityOnly: observable,
       rollupData: observable,
       isLoading: observable,
@@ -195,9 +184,6 @@ export class WorkloadStore implements IWorkloadStore {
       deleteEstimate: action,
       fetchRollups: action,
       forceRefetchRollup: action,
-      fetchCapacities: action,
-      updateCapacity: action,
-      deleteCapacity: action,
     });
   }
 
@@ -474,54 +460,5 @@ export class WorkloadStore implements IWorkloadStore {
   private _invalidateRollups(): void {
     this._fetchedRollupIds.clear();
     this.rollupInvalidationVersion++;
-  }
-
-  // ── Capacity ───────────────────────────────────────────────────────────────
-
-  /**
-   * Refetch every member's workspace-wide capacity. Unlike the estimate/rollup
-   * fetches this has no per-id dedup set — capacities are workspace-scoped, not
-   * per-issue, so callers (WorkloadMatrix on mount/slug-change) fetch once per
-   * page load rather than once per row.
-   */
-  async fetchCapacities(workspaceSlug: string): Promise<void> {
-    try {
-      const data = await this.service.getCapacities(workspaceSlug);
-      runInAction(() => {
-        this.capacities = data;
-      });
-    } catch (err) {
-      runInAction(() => {
-        this.error = err instanceof Error ? err.message : String(err);
-      });
-    }
-  }
-
-  async updateCapacity(workspaceSlug: string, member: string, weeklyHours: number): Promise<void> {
-    try {
-      await this.service.putCapacity(workspaceSlug, member, weeklyHours);
-      runInAction(() => {
-        this.capacities[member] = weeklyHours;
-      });
-    } catch (err) {
-      runInAction(() => {
-        this.error = err instanceof Error ? err.message : String(err);
-      });
-      throw err;
-    }
-  }
-
-  async deleteCapacity(workspaceSlug: string, member: string): Promise<void> {
-    try {
-      await this.service.deleteCapacity(workspaceSlug, member);
-      runInAction(() => {
-        delete this.capacities[member];
-      });
-    } catch (err) {
-      runInAction(() => {
-        this.error = err instanceof Error ? err.message : String(err);
-      });
-      throw err;
-    }
   }
 }

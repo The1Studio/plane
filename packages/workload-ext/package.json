@@ -22,6 +22,7 @@
     "@plane/constants": "workspace:*",
     "@plane/propel": "workspace:*",
     "@plane/types": "workspace:*",
+    "@plane/utils": "workspace:*",
     "mobx": "catalog:",
     "mobx-react": "catalog:",
     "react": "catalog:",

@@ -8,23 +8,32 @@
 
 from collections import defaultdict
 
+import pytz
 from django.db.models import Exists, OuterRef, Q
+from django.utils import timezone as dj_timezone
 
 from plane.db.models import (
     Issue,
     IssueAssignee,
     Project,
     ProjectMember,
+    Workspace,
     WorkspaceMember,
 )
 from plane.db.models.state import StateGroup
 
-from .aggregation import capacity_for_period, from_cents, spread_estimate
-from .models import WorkloadCapacity, WorkloadEstimate
+from .aggregation import capacity_for_period, from_cents, quantize_hours, spread_estimate
+from .constants import DEFAULT_MAX_WEEKLY_HOURS, DEFAULT_WEEK_START_DAY, DEFAULT_WORKDAYS
+from .models import WorkloadEstimate, WorkloadSettings
 
 ROW_GUARD = 50_000
 ADMIN_ROLE = 20
 GUEST_ROLE = 5
+
+# Phase 7 — cap on the `tasks` array returned per assignee row
+# (phase-7.md "Truncation cap"). A workspace with thousands of estimated
+# issues would otherwise return an unbounded per-assignee array.
+WORKLOAD_MAX_TASKS_PER_ASSIGNEE = 200
 
 _DEFAULT_EXCLUDED_GROUPS = [StateGroup.COMPLETED.value, StateGroup.CANCELLED.value]
 VALID_STATE_GROUPS = {g.value for g in StateGroup}
@@ -226,19 +235,55 @@ def _resolve_owners(issue_ids):
     return owners
 
 
-def _resolve_capacities(owner_ids, slug):
-    """Map member_id -> weekly_hours for workspace-wide (project=None)
-    WorkloadCapacity rows in this workspace. Members with no capacity row are
-    absent (caller treats as "no capacity set" -> empty capacity_buckets,
-    over=False everywhere). Mirrors _resolve_owners' shape.
+def _resolve_work_settings(slug):
+    """Read this workspace's WorkloadSettings ONCE per request (never per
+    row — every row shares the same effective capacity/workday config).
+    Falls back to the constants.py defaults when the workspace has no row
+    yet (mirrors views.settings_get: a GET never writes on read).
+
+    Returns (max_weekly_hours, workdays, week_start_day).
     """
-    owner_ids = {oid for oid in owner_ids if oid is not None}
-    if not owner_ids:
-        return {}
-    rows = WorkloadCapacity.objects.filter(
-        workspace__slug=slug, project__isnull=True, member_id__in=owner_ids
-    ).values_list("member_id", "weekly_hours")
-    return dict(rows)
+    obj = WorkloadSettings.objects.filter(workspace__slug=slug).first()
+    if obj is None:
+        return DEFAULT_MAX_WEEKLY_HOURS, list(DEFAULT_WORKDAYS), DEFAULT_WEEK_START_DAY
+    return obj.max_weekly_hours, obj.workdays, obj.week_start_day
+
+
+def _resolve_today(slug):
+    """Resolve "today" in the WORKSPACE's timezone, read ONCE per request
+    (same pattern as `_resolve_work_settings` — never re-derived per row).
+
+    Phase 7 needed to confirm whether a workspace-level timezone equivalent
+    to `Project.timezone` exists before falling back to the project's own
+    value. It does: core's `Workspace` model (apps/api/plane/db/models/
+    workspace.py) already carries a workspace-level `timezone` CharField
+    (same `pytz.common_timezones` choice set as `Project.timezone`), so this
+    reads THAT field directly — no project-level fallback, and no new
+    workspace-timezone column was added (docs/FORK.md forbids new columns on
+    core models; none was needed here since the column already existed).
+
+    Falls back to UTC only defensively — a missing workspace row or an
+    unrecognised stored timezone string should not happen for a slug the
+    view has already resolved, but a task must never become overdue (or not)
+    because of a lookup failure here rather than a real date comparison.
+    """
+    tz_name = Workspace.objects.filter(slug=slug).values_list("timezone", flat=True).first()
+    try:
+        tz = pytz.timezone(tz_name) if tz_name else pytz.utc
+    except pytz.UnknownTimeZoneError:
+        tz = pytz.utc
+    return dj_timezone.now().astimezone(tz).date()
+
+
+def _task_sort_key(task):
+    """Ordering for the truncation cap (phase-7.md "Truncation cap"): by
+    `start_date` then `target_date`. Not specified: where null dates sort.
+    We put them LAST on each key — an unscheduled/no-start task is exactly
+    the kind of row a 200-task cap should drop first, ahead of dated work.
+    """
+    start = task["start_date"]
+    target = task["target_date"]
+    return (start is None, start or "", target is None, target or "")
 
 
 def compute_workload(
@@ -259,6 +304,16 @@ def compute_workload(
     if not scope:
         return _empty_response(granularity, date_from, date_to)
 
+    # Read once per request — every row below shares this same effective
+    # capacity/workday config (_resolve_capacities / per-row settings reads
+    # are gone; D1).
+    max_weekly_hours, workdays, week_start_day = _resolve_work_settings(slug)
+
+    # Read once per request — every task row's `overdue` flag below shares
+    # this same workspace-local "today" (never re-derived per row; see
+    # `_resolve_today`'s docstring for the timezone-field confirmation).
+    today = _resolve_today(slug)
+
     # Flag-off guests see only their own assigned workload (core parity).
     restricted = _guest_restricted_projects(user, slug, scope)
     scope_q = _scope_filter(scope, restricted, user)
@@ -270,8 +325,21 @@ def compute_workload(
     if qs.count() > ROW_GUARD:
         raise WorkloadTooLarge()
 
+    # Per-issue detail (name/identifier/state) is pulled in the SAME query as
+    # the aggregation already runs — no second, per-issue fetch (phase-7.md
+    # "No N+1"). `issue__project__identifier` and `issue__state__group`
+    # traverse via SQL JOIN, not a Python-side loop.
     est_rows = list(
-        qs.values_list("issue_id", "hours", "issue__start_date", "issue__target_date")
+        qs.values_list(
+            "issue_id",
+            "hours",
+            "issue__start_date",
+            "issue__target_date",
+            "issue__name",
+            "issue__sequence_id",
+            "issue__project__identifier",
+            "issue__state__group",
+        )
     )
     zero_estimate_count = WorkloadEstimate.objects.filter(
         scope_q,
@@ -288,6 +356,7 @@ def compute_workload(
 
     buckets = defaultdict(lambda: defaultdict(int))  # owner_id -> period -> cents
     unscheduled = defaultdict(int)  # owner_id -> cents
+    tasks_by_owner = defaultdict(list)  # owner_id -> [task row, ...]
     names = {}
     meta = {
         "issues_counted": 0,
@@ -297,7 +366,16 @@ def compute_workload(
         "truncated": False,
     }
 
-    for issue_id, hours, start, target in est_rows:
+    for (
+        issue_id,
+        hours,
+        start,
+        target,
+        issue_name,
+        sequence_id,
+        project_identifier,
+        state_group,
+    ) in est_rows:
         owner = owners.get(issue_id)
         owner_id = owner[0] if owner else None
         if assignee_filter is not None and owner_id not in assignee_filter:
@@ -305,7 +383,7 @@ def compute_workload(
         names[owner_id] = owner[1] if owner else "Unassigned"
 
         b, uns_cents, dirty = spread_estimate(
-            hours, start, target, date_from, date_to, granularity
+            hours, start, target, date_from, date_to, granularity, workdays, week_start_day
         )
         meta["issues_counted"] += 1
         if dirty:
@@ -317,6 +395,38 @@ def compute_workload(
         if uns_cents:
             unscheduled[owner_id] += uns_cents
 
+        # A task appears in `tasks` iff it has a visible representation in
+        # THIS request's window: either it contributed at least one bucket
+        # (`b` non-empty — may be a clipped slice of a longer span), or it is
+        # explicitly unscheduled (`target is None`, which `spread_estimate`
+        # always routes to the Unscheduled bucket regardless of window).
+        # An issue whose whole [start, target] span falls entirely outside
+        # [date_from, date_to] produces `b == {}` with a non-None target
+        # (spread_estimate's documented "span outside window" case) and is
+        # deliberately EXCLUDED here — Phase 8's timeline has no window to
+        # plot it in, and counting it would burn the truncation cap on rows
+        # invisible to the current request.
+        if b or target is None:
+            tasks_by_owner[owner_id].append(
+                {
+                    "id": str(issue_id),
+                    "identifier": f"{project_identifier}-{sequence_id}",
+                    "name": issue_name,
+                    # The WHOLE issue estimate, not the windowed slice `b`
+                    # sums to — see the docstring on the `tasks` assembly
+                    # below for why these two deliberately do not reconcile.
+                    "hours": quantize_hours(hours),
+                    "start_date": start.isoformat() if start else None,
+                    "target_date": target.isoformat() if target else None,
+                    "state_group": state_group,
+                    "overdue": bool(
+                        target is not None
+                        and target < today
+                        and state_group not in _DEFAULT_EXCLUDED_GROUPS
+                    ),
+                }
+            )
+
     period_set = set()
     for pm in buckets.values():
         period_set.update(pm.keys())
@@ -324,30 +434,43 @@ def compute_workload(
 
     rows = []
     owner_ids = set(buckets.keys()) | set(unscheduled.keys())
-    capacities = _resolve_capacities(owner_ids, slug)
+    # Same workspace-wide capacity for every row now (D1) — computed ONCE and
+    # referenced by each row below, not rebuilt per-owner. Prorated over
+    # every period column in the response (not just a given row's populated
+    # buckets) so the matrix can render a capacity reference even for
+    # periods with zero hours logged.
+    capacity_buckets = {
+        period: capacity_for_period(max_weekly_hours, period, granularity, workdays)
+        for period in periods
+    }
+    total_capacity = sum(capacity_buckets.values())
     for owner_id in owner_ids:
         pm = buckets.get(owner_id, {})
         sparse = {k: from_cents(c) for k, c in pm.items() if c}
         total = from_cents(sum(pm.values()))
 
-        weekly_capacity = capacities.get(owner_id)
-        if weekly_capacity is not None:
-            # Prorated over every period column in the response (not just
-            # this row's populated buckets) so the matrix can render a
-            # capacity reference even for periods with zero hours logged.
-            capacity_buckets = {
-                period: capacity_for_period(weekly_capacity, period, granularity)
-                for period in periods
-            }
-            over = {
-                period: sparse.get(period, 0) > capacity_buckets[period]
-                for period in periods
-            }
-            total_over = total > sum(capacity_buckets.values())
-        else:
-            capacity_buckets = {}
-            over = {}
-            total_over = False
+        # There is always an effective capacity now (settings row or
+        # constants.py default) — every row carries over/total_over flags,
+        # not just members who used to have an explicit capacity row (D1).
+        over = {
+            period: sparse.get(period, 0) > capacity_buckets[period]
+            for period in periods
+        }
+        total_over = total > total_capacity
+
+        # Phase 7 — per-task rows for the timeline (phase-7.md "Response
+        # shape"). `hours` on each task is the issue's WHOLE estimate, while
+        # `buckets` above stays the windowed, workday-spread distribution.
+        # These two DELIBERATELY do not reconcile for an issue whose span is
+        # clipped by [date_from, date_to]: a 10h task starting before the
+        # window shows `hours: 10.0` (the bar label matches the work item)
+        # even though only the in-window slice of it landed in `buckets`. A
+        # future reader diffing task hours against summed buckets is not
+        # looking at a bug.
+        raw_tasks = tasks_by_owner.get(owner_id, [])
+        raw_tasks.sort(key=_task_sort_key)
+        tasks_truncated = len(raw_tasks) > WORKLOAD_MAX_TASKS_PER_ASSIGNEE
+        tasks = raw_tasks[:WORKLOAD_MAX_TASKS_PER_ASSIGNEE]
 
         rows.append(
             {
@@ -358,6 +481,8 @@ def compute_workload(
                 "capacity_buckets": capacity_buckets,
                 "over": over,
                 "total_over": total_over,
+                "tasks": tasks,
+                "tasks_truncated": tasks_truncated,
             }
         )
     rows.sort(key=lambda r: (-r["total"], r["assignee_name"]))

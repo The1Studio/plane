@@ -8,10 +8,10 @@ from django.urls import path
 
 from .views import (
     ProjectWorkloadEndpoint,
-    WorkloadCapacityEndpoint,
     WorkloadEstimateEndpoint,
     WorkloadEstimatesBulkEndpoint,
     WorkloadRollupsBulkEndpoint,
+    WorkloadSettingsEndpoint,
     WorkspaceWorkloadEndpoint,
 )
 
@@ -42,8 +42,8 @@ urlpatterns = [
         name="workload-rollups-bulk",
     ),
     path(
-        "workspaces/<str:slug>/workload-capacity/",
-        WorkloadCapacityEndpoint.as_view(),
-        name="workload-capacity",
+        "workspaces/<str:slug>/work-settings/",
+        WorkloadSettingsEndpoint.as_view(),
+        name="work-settings",
     ),
 ]
