@@ -48,7 +48,18 @@ export type GanttStoreType =
   // The1Studio fork (views-layouts) — B3/D5: workspace-wide Timeline for the Views tab. No
   // workspace-level Gantt existed upstream. See updateBlockDates below for the reason this
   // needs its own branch rather than reusing the project-scoped `updateIssueDates` path.
-  | EIssuesStoreType.GLOBAL;
+  | EIssuesStoreType.GLOBAL
+  // The1Studio fork (profile-layouts) — the profile "Your work" pages' Timeline layout. Route
+  // `/profile/:userId/assigned` has no `:projectId` either, so it hits the identical B3/D5
+  // crash as GLOBAL. See `isWorkspaceLevelGanttStore` below.
+  | EIssuesStoreType.PROFILE;
+
+// The1Studio fork (profile-layouts) — generalises the original GLOBAL-only D5 check so the next
+// workspace-level store added to `GanttStoreType` inherits the fallback instead of reintroducing
+// the B3 crash. A "workspace-level" store here means: no `:projectId` route param, and a drag
+// selection that can span multiple projects at once.
+const isWorkspaceLevelGanttStore = (storeType: GanttStoreType): boolean =>
+  storeType === EIssuesStoreType.GLOBAL || storeType === EIssuesStoreType.PROFILE;
 
 export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRoot) {
   const { viewId, isCompletedCycle = false, isEpic = false } = props;
@@ -83,7 +94,9 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
   const issuesIds = (issues.groupedIssueIds?.[ALL_ISSUES] as string[]) ?? [];
   const nextPageResults = issues.getPaginationData(undefined, undefined)?.nextPageResults;
 
-  const { enableIssueCreation } = issues?.viewFlags || {};
+  // The1Studio fork (profile-layouts) — `enableQuickAdd` added to the destructure below so the
+  // quick-add gate can honour it (see the `quickAdd` ternary further down).
+  const { enableIssueCreation, enableQuickAdd } = issues?.viewFlags || {};
 
   const loadMoreIssues = useCallback(() => {
     fetchNextIssues();
@@ -107,14 +120,15 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
         target_date?: string;
       }[]
     ) => {
-      // The1Studio fork (views-layouts) — B3/D5: `updateIssueDates` takes one `projectId` for the
-      // whole batch, but a workspace-wide Timeline (GLOBAL store) can hold items from many
-      // projects in a single drag selection, so there is no correct single project to pass (a real
-      // API-shape mismatch, not a missing cast — see plan.md § B3). Fall back to per-item
-      // `updateIssue`, keyed by each issue's own `project_id` — the same call the per-issue write
-      // above (`updateIssueBlockStructure`) already uses. Every other store keeps the existing bulk
-      // `updateIssueDates` call, byte-for-byte unchanged.
-      if (storeType === EIssuesStoreType.GLOBAL) {
+      // The1Studio fork (views-layouts / profile-layouts) — B3/D5: `updateIssueDates` takes one
+      // `projectId` for the whole batch, but a workspace-level Timeline (GLOBAL or PROFILE store)
+      // can hold items from many projects in a single drag selection, so there is no correct
+      // single project to pass (a real API-shape mismatch, not a missing cast — see plan.md § B3).
+      // Fall back to per-item `updateIssue`, keyed by each issue's own `project_id` — the same
+      // call the per-issue write above (`updateIssueBlockStructure`) already uses. Every other
+      // (project-scoped) store keeps the existing bulk `updateIssueDates` call, byte-for-byte
+      // unchanged.
+      if (isWorkspaceLevelGanttStore(storeType)) {
         return Promise.all(
           updates.map((update) => {
             const issueProjectId = issueMap[update.id]?.project_id;
@@ -146,8 +160,17 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
     [issues, projectId, workspaceSlug, storeType, issueMap, updateIssue]
   );
 
+  // The1Studio fork (profile-layouts) — `enableQuickAdd` added to the condition. Gantt was the
+  // only one of the four base roots (list/kanban/spreadsheet all gate on both `enableQuickAdd`
+  // AND `enableIssueCreation`) that ignored `enableQuickAdd` — on the PROFILE store's
+  // assigned/created views, `enableIssueCreation` is `true` while `enableQuickAdd` is `false`
+  // (`store/issue/profile/issue.store.ts`), so Gantt would have rendered a quick-add button wired
+  // to `useProfileIssueActions`'s absent `quickAddIssue`. This aligns Gantt with its three
+  // siblings rather than adding fork-specific behaviour — `ProjectIssues.viewFlags.enableQuickAdd`
+  // is `true`, so project/cycle/module/project-view Gantt are unaffected, and the GLOBAL store
+  // stays suppressed via its own `enableIssueCreation: false`.
   const quickAdd =
-    enableIssueCreation && isAllowed && !isCompletedCycle ? (
+    enableQuickAdd && enableIssueCreation && isAllowed && !isCompletedCycle ? (
       <QuickAddIssueRoot
         layout={EIssueLayoutTypes.GANTT}
         QuickAddButton={GanttQuickAddIssueButton}

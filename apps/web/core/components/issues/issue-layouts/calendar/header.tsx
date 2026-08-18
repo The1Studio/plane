@@ -16,21 +16,25 @@ import { Row } from "@plane/ui";
 import { useCalendarView } from "@/hooks/store/use-calendar-view";
 import type { ICycleIssuesFilter } from "@/store/issue/cycle";
 import type { IModuleIssuesFilter } from "@/store/issue/module";
+import type { IProfileIssuesFilter } from "@/store/issue/profile";
 import type { IProjectIssuesFilter } from "@/store/issue/project";
 import type { IProjectViewIssuesFilter } from "@/store/issue/project-views";
 import type { IWorkspaceIssuesFilter } from "@/store/issue/workspace";
 import { CalendarMonthsDropdown, CalendarOptionsDropdown } from "./dropdowns";
 
 interface ICalendarHeader {
-  // The1Studio fork (views-layouts) — `IWorkspaceIssuesFilter` admitted for the workspace Views
-  // tab Calendar layout (GLOBAL store); see `calendar.tsx`'s `Props.issuesFilterStore` for the
-  // rationale (only `.issueFilters` is ever read in this subtree).
+  // The1Studio fork (views-layouts / profile-layouts) — `IWorkspaceIssuesFilter` admitted for the
+  // workspace Views tab Calendar layout (GLOBAL store); `IProfileIssuesFilter` admitted for the
+  // profile "Your work" pages' Calendar layout (PROFILE store). See `calendar.tsx`'s
+  // `Props.issuesFilterStore` for the rationale (only `.issueFilters` is ever read in this
+  // subtree).
   issuesFilterStore:
     | IProjectIssuesFilter
     | IModuleIssuesFilter
     | ICycleIssuesFilter
     | IProjectViewIssuesFilter
-    | IWorkspaceIssuesFilter;
+    | IWorkspaceIssuesFilter
+    | IProfileIssuesFilter;
   updateFilters?: (
     projectId: string,
     filterType: TSupportedFilterTypeForUpdate,

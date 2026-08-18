@@ -49,7 +49,13 @@ export type CalendarStoreType =
   // deliberate flag. Anyone touching either should re-check the other. Fixing calendar.tsx to
   // read the active store would make this intentional, but that changes behaviour for every
   // calendar consumer and is deliberately out of scope here.
-  | EIssuesStoreType.GLOBAL;
+  | EIssuesStoreType.GLOBAL
+  // The1Studio fork (profile-layouts) — PROFILE admitted for the "Your work" profile pages'
+  // Calendar layout. See `calendar/roots/profile-issues-root.tsx` (`ProfileIssuesCalendarLayout`).
+  // Quick-add is safe here for a stronger reason than GLOBAL's: `IProfileIssues.quickAddIssue` is
+  // `undefined` at the store level, so `quickAddCallback` is `undefined` before the
+  // `quick-add-issue-actions.tsx:82` `!projectId` null guard is even reached.
+  | EIssuesStoreType.PROFILE;
 
 interface IBaseCalendarRoot {
   QuickActions: FC<IQuickActionProps>;

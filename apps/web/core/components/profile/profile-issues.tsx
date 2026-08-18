@@ -10,10 +10,15 @@ import { useParams } from "next/navigation";
 import useSWR from "swr";
 // plane imports
 import { ISSUE_DISPLAY_FILTERS_BY_PAGE } from "@plane/constants";
-import { EIssuesStoreType } from "@plane/types";
+import { EIssuesStoreType, EIssueLayoutTypes } from "@plane/types";
 // components
+// The1Studio fork (profile-layouts) — Calendar / Spreadsheet / Gantt roots added alongside the
+// upstream List and Board roots.
+import { ProfileIssuesCalendarLayout } from "@/components/issues/issue-layouts/calendar/roots/profile-issues-root";
+import { ProfileIssuesGanttLayout } from "@/components/issues/issue-layouts/gantt/roots/profile-issues-root";
 import { ProfileIssuesKanBanLayout } from "@/components/issues/issue-layouts/kanban/roots/profile-issues-root";
 import { ProfileIssuesListLayout } from "@/components/issues/issue-layouts/list/roots/profile-issues-root";
+import { ProfileIssuesSpreadsheetLayout } from "@/components/issues/issue-layouts/spreadsheet/roots/profile-issues-root";
 import { IssuePeekOverview } from "@/components/issues/peek-overview";
 import { WorkspaceLevelWorkItemFiltersHOC } from "@/components/work-item-filters/filters-hoc/workspace-level";
 import { WorkItemFiltersRow } from "@/components/work-item-filters/filters-row";
@@ -24,6 +29,29 @@ import { IssuesStoreContext } from "@/hooks/use-issue-layout-store";
 type Props = {
   type: "assigned" | "subscribed" | "created";
 };
+
+/**
+ * The1Studio fork (profile-layouts) — replaces a hardcoded list/kanban ternary. An unhandled
+ * layout renders blank rather than throwing, so a stale persisted display-filter cannot break
+ * the page. Layout availability is declared once in PROFILE_VIEW_LAYOUTS (@plane/views-ext),
+ * which drives the switcher; this switch only needs to cover what that array can produce.
+ */
+function ProfileActiveLayout({ activeLayout }: { activeLayout: EIssueLayoutTypes | undefined }) {
+  switch (activeLayout) {
+    case EIssueLayoutTypes.LIST:
+      return <ProfileIssuesListLayout />;
+    case EIssueLayoutTypes.KANBAN:
+      return <ProfileIssuesKanBanLayout />;
+    case EIssueLayoutTypes.CALENDAR:
+      return <ProfileIssuesCalendarLayout />;
+    case EIssueLayoutTypes.SPREADSHEET:
+      return <ProfileIssuesSpreadsheetLayout />;
+    case EIssueLayoutTypes.GANTT:
+      return <ProfileIssuesGanttLayout />;
+    default:
+      return null;
+  }
+}
 
 export const ProfileIssuesPage = observer(function ProfileIssuesPage(props: Props) {
   const { type } = props;
@@ -65,11 +93,7 @@ export const ProfileIssuesPage = observer(function ProfileIssuesPage(props: Prop
             <div className="flex h-full w-full flex-col">
               {profileWorkItemsFilter && <WorkItemFiltersRow filter={profileWorkItemsFilter} />}
               <div className="relative h-full w-full overflow-auto">
-                {activeLayout === "list" ? (
-                  <ProfileIssuesListLayout />
-                ) : activeLayout === "kanban" ? (
-                  <ProfileIssuesKanBanLayout />
-                ) : null}
+                <ProfileActiveLayout activeLayout={activeLayout} />
               </div>
             </div>
             {/* peek overview */}

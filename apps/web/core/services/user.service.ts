@@ -222,7 +222,11 @@ export class UserService extends APIService {
     config = {}
   ): Promise<TIssuesResponse> {
     return this.get(
-      `/api/workspaces/${workspaceSlug}/user-issues/${userId}/`,
+      // The1Studio fork (profile-layouts) — the core endpoint ignores before/after, so profile
+      // Calendar would fetch unbounded and look correct only at small data sizes. views_ext
+      // mirrors it and adds date-range + grouping; ungrouped responses are shape-identical,
+      // and the existing assignees/created_by/subscriber narrowing params still apply.
+      `/api/views-ext/workspaces/${workspaceSlug}/user-issues/${userId}/`,
       {
         params,
       },

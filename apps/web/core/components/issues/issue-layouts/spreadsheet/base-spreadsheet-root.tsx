@@ -29,7 +29,11 @@ export type SpreadsheetStoreType =
   | EIssuesStoreType.PROJECT_VIEW
   | EIssuesStoreType.TEAM
   | EIssuesStoreType.TEAM_VIEW
-  | EIssuesStoreType.EPIC;
+  | EIssuesStoreType.EPIC
+  // The1Studio fork (profile-layouts) — PROFILE admitted for the "Your work" profile pages'
+  // Spreadsheet layout. See `spreadsheet/roots/profile-issues-root.tsx`
+  // (`ProfileIssuesSpreadsheetLayout`).
+  | EIssuesStoreType.PROFILE;
 
 interface IBaseSpreadsheetRoot {
   QuickActions: FC<IQuickActionProps>;
