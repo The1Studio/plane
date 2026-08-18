@@ -17,9 +17,10 @@ from plane.app.views.base import BaseAPIView
 from plane.db.models import Issue, Workspace
 
 from .aggregation import ALLOWED_GRANULARITIES
-from .models import WorkloadCapacity, WorkloadEstimate
+from .constants import DEFAULT_MAX_WEEKLY_HOURS, DEFAULT_WEEK_START_DAY, DEFAULT_WORKDAYS
+from .models import WorkloadCapacity, WorkloadEstimate, WorkloadSettings
 from .rollup import RollupTooLarge, compute_rollups, is_parent, parent_issue_ids
-from .serializers import WorkloadCapacitySerializer, WorkloadEstimateSerializer
+from .serializers import WorkloadCapacitySerializer, WorkloadEstimateSerializer, WorkloadSettingsSerializer
 from .service import (
     VALID_STATE_GROUPS,
     BulkEstimatesError,
@@ -236,6 +237,44 @@ def capacity_delete(request, slug):
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+# Shared work-settings handlers — reused by both the app API (this module)
+# and the public API (api_views.py). Workspace-scoped, singleton-per-workspace
+# (no id segment in the URL): GET returns the constants.py defaults when no
+# row exists yet (never 404, never writes on read); PUT is update_or_create.
+# There is no DELETE — a workspace always has effective settings.
+
+def settings_get(request, slug):
+    obj = WorkloadSettings.objects.filter(workspace__slug=slug).first()
+    if obj is None:
+        return Response(
+            {
+                "max_weekly_hours": DEFAULT_MAX_WEEKLY_HOURS,
+                "workdays": list(DEFAULT_WORKDAYS),
+                "week_start_day": DEFAULT_WEEK_START_DAY,
+            },
+            status=status.HTTP_200_OK,
+        )
+    return Response(WorkloadSettingsSerializer(obj).data, status=status.HTTP_200_OK)
+
+
+def settings_put(request, slug):
+    serializer = WorkloadSettingsSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+
+    workspace = Workspace.objects.filter(slug=slug).first()
+    if workspace is None:
+        return Response({"error": "workspace not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    obj, _created = WorkloadSettings.objects.update_or_create(
+        workspace=workspace,
+        defaults={
+            **serializer.validated_data,
+            "created_by": request.user,
+        },
+    )
+    return Response(WorkloadSettingsSerializer(obj).data, status=status.HTTP_200_OK)
+
+
 def estimate_bulk(request, slug):
     """Shared handler for the bulk estimates endpoint.
 
@@ -369,3 +408,25 @@ class WorkloadCapacityEndpoint(BaseAPIView):
     @allow_permission([ROLE.ADMIN], level="WORKSPACE")
     def delete(self, request, slug):
         return capacity_delete(request, slug)
+
+
+class WorkloadSettingsEndpoint(BaseAPIView):
+    """GET/PUT workspace-wide work configuration (max weekly hours, workdays,
+    week start day).
+
+    /api/workspaces/<slug>/work-settings/
+
+    GET returns the constants.py defaults for a workspace with no row yet
+    (never 404) and is readable by ADMIN and MEMBER — non-admins need it to
+    render correct week columns and the read-only cap badge (phase-0.md).
+    PUT is ADMIN-only and does update_or_create; there is no DELETE — a
+    workspace always has effective settings.
+    """
+
+    @allow_permission([ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def get(self, request, slug):
+        return settings_get(request, slug)
+
+    @allow_permission([ROLE.ADMIN], level="WORKSPACE")
+    def put(self, request, slug):
+        return settings_put(request, slug)

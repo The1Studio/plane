@@ -19,6 +19,8 @@ from .views import (
     estimate_get,
     estimate_put,
     rollups_bulk,
+    settings_get,
+    settings_put,
 )
 
 
@@ -92,3 +94,19 @@ class WorkloadCapacityAPIEndpoint(BaseAPIView):
     @allow_permission([ROLE.ADMIN], level="WORKSPACE")
     def delete(self, request, slug):
         return capacity_delete(request, slug)
+
+
+class WorkloadSettingsAPIEndpoint(BaseAPIView):
+    """GET/PUT /api/v1/workspaces/<slug>/work-settings/
+
+    Public-API (/api/v1/) mirror of WorkloadSettingsEndpoint.
+    API-key authenticated via plane.api.views.base.BaseAPIView.
+    """
+
+    @allow_permission([ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def get(self, request, slug):
+        return settings_get(request, slug)
+
+    @allow_permission([ROLE.ADMIN], level="WORKSPACE")
+    def put(self, request, slug):
+        return settings_put(request, slug)

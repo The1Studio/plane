@@ -12,6 +12,7 @@ from .views import (
     WorkloadEstimateEndpoint,
     WorkloadEstimatesBulkEndpoint,
     WorkloadRollupsBulkEndpoint,
+    WorkloadSettingsEndpoint,
     WorkspaceWorkloadEndpoint,
 )
 
@@ -45,5 +46,10 @@ urlpatterns = [
         "workspaces/<str:slug>/workload-capacity/",
         WorkloadCapacityEndpoint.as_view(),
         name="workload-capacity",
+    ),
+    path(
+        "workspaces/<str:slug>/work-settings/",
+        WorkloadSettingsEndpoint.as_view(),
+        name="work-settings",
     ),
 ]
