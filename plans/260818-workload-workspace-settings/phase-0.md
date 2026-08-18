@@ -18,6 +18,14 @@ One convention crosses the API: **Plane's `EStartOfTheWeek`** — `SUNDAY=0, MON
 (`packages/types/src/users.ts:15-23`). Python's `date.weekday()` is Mon=0..Sun=6 and is converted
 **only** inside `aggregation.py`:
 
+`constants.py` is the **leaf** module: it defines `MAX_HOURS` and imports nothing from
+`aggregation.py`. The dependency runs one way only — `aggregation.py` imports from `constants.py`,
+never the reverse. An earlier draft of this file implied constants re-exported `MAX_HOURS` _from_
+aggregation; that is backwards and produces a genuine `ImportError`, because Phase 2 makes
+aggregation import `to_plane_weekday` from constants and aggregation's import block sits above its
+own assignments. aggregation re-exports `MAX_HOURS` so existing importers (`models.py`,
+`serializers.py`) are untouched.
+
 ```python
 # apps/api/plane/workload/constants.py
 def to_plane_weekday(d: date) -> int:

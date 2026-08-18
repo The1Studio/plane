@@ -58,10 +58,10 @@ Shared handlers in `views.py` (the `capacity_list`/`capacity_put` pattern at
 `views.py:179-235` is the template), reused by `api_views.py` for the public API — same
 two-surface split the workload app already uses.
 
-| Route | Methods | Permission |
-|---|---|---|
-| `/api/workspaces/<slug>/work-settings/` | GET, PUT | GET `ADMIN,MEMBER` · PUT `ADMIN` |
-| `/api/v1/workspaces/<slug>/work-settings/` | GET, PUT | same |
+| Route                                      | Methods  | Permission                       |
+| ------------------------------------------ | -------- | -------------------------------- |
+| `/api/workspaces/<slug>/work-settings/`    | GET, PUT | GET `ADMIN,MEMBER` · PUT `ADMIN` |
+| `/api/v1/workspaces/<slug>/work-settings/` | GET, PUT | same                             |
 
 GET returns the defaults for a workspace with no row (never 404). PUT is `update_or_create`.
 
@@ -69,13 +69,14 @@ There is **no DELETE** — a workspace always has effective settings.
 
 ## Data seed
 
-`get_or_create` on read is *not* used (it would write on a GET). The row is created lazily by the
+`get_or_create` on read is _not_ used (it would write on a GET). The row is created lazily by the
 first PUT; reads fall back to defaults in the handler.
 
 ## Tasks
 
-1. `constants.py` import wiring; move `MAX_HOURS` re-export so `models.py` no longer reaches into
-   `aggregation.py` for it (`models.py:17` currently does).
+1. `constants.py` import wiring. **`MAX_HOURS` already moved in Phase 0** — it is defined in
+   `constants.py` and re-exported by `aggregation.py`, so `models.py:17` keeps working untouched.
+   New code imports it from `.constants`. Nothing to move here; import and move on.
 2. Model + migration. Run `makemigrations --check --dry-run` after.
 3. Serializer + validation tests.
 4. Views + URL entries in both `urls.py` and `api_urls.py`.
