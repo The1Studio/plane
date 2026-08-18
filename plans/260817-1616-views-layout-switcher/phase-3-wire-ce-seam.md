@@ -103,6 +103,22 @@ Two are NEW files, which carry near-zero rebase-conflict surface. Revised total 
 | `.../issue-layouts/list/roots/workspace-root.tsx` | NEW | New core file (Phase 2 authored) |
 | `.../issue-layouts/kanban/roots/workspace-root.tsx` | NEW | New core file (Phase 2 authored) |
 | `apps/web/core/store/issue/workspace/issue.store.ts` | 1 | Documented exception — quick-add suppression above |
+| `apps/web/core/hooks/use-group-dragndrop.ts` | 1 | **Found during verification, not planned** — see below |
+
+### `use-group-dragndrop.ts` — the union widening propagates
+
+Adding `GLOBAL` to `ListStoreType` / `KanbanStoreType` produced two real `tsc` errors: both roots
+pass `storeType` into `useGroupIssuesDragNDrop`, whose own `DNDStoreType` union also excluded
+`GLOBAL`. Not discoverable by reading the phase file — only the typecheck surfaced it.
+
+Admitting `GLOBAL` there is safe, and was checked rather than assumed: the hook reads only
+`workspaceSlug` from the route (present on `/workspace-views/`) and takes `projectId` **per issue**
+as a function argument; its cycle/module branches are unreachable for global views because D3
+excludes both from the group-by set. `DNDStoreType` already contained `PROFILE`, the same
+cross-project workspace-level store.
+
+**Final tally: 7 core files, not the 5 originally budgeted** — 5 edited as planned, plus
+`issue.store.ts` (quick-add) and `use-group-dragndrop.ts` (above). Phase 6 documents all seven.
 
 plus the originally-budgeted edits:
 
