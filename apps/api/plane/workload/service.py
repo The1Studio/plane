@@ -35,7 +35,11 @@ GUEST_ROLE = 5
 # issues would otherwise return an unbounded per-assignee array.
 WORKLOAD_MAX_TASKS_PER_ASSIGNEE = 200
 
-_DEFAULT_EXCLUDED_GROUPS = [StateGroup.COMPLETED.value, StateGroup.CANCELLED.value]
+# Terminal state groups. These are NOT excluded from the matrix -- an unselected
+# filter must return everything (see `_base_queryset`). The list exists solely so
+# the `overdue` flag can skip work that is already finished or abandoned: a
+# completed issue past its target date is done, not late.
+_TERMINAL_STATE_GROUPS = [StateGroup.COMPLETED.value, StateGroup.CANCELLED.value]
 VALID_STATE_GROUPS = {g.value for g in StateGroup}
 
 
@@ -198,8 +202,12 @@ def _base_queryset(slug, scope_q, state_groups):
     )
     if state_groups:
         qs = qs.filter(issue__state__group__in=state_groups)
-    else:
-        qs = qs.exclude(issue__state__group__in=_DEFAULT_EXCLUDED_GROUPS)
+    # No `else`: with no state filter selected, EVERY state group is returned,
+    # including completed and cancelled. A previous version silently excluded
+    # those two, so a workspace whose work was finished rendered an empty matrix
+    # while the toolbar showed all five chips unselected -- i.e. the UI claimed
+    # "no filter" while the server applied one the user could neither see nor
+    # clear. Triage is still excluded above; those are not work items yet.
     return qs
 
 
@@ -422,7 +430,7 @@ def compute_workload(
                     "overdue": bool(
                         target is not None
                         and target < today
-                        and state_group not in _DEFAULT_EXCLUDED_GROUPS
+                        and state_group not in _TERMINAL_STATE_GROUPS
                     ),
                 }
             )

@@ -282,7 +282,15 @@ class TestStateDefaults(TransactionTestCase):
         _pmember(ws, proj, u)
         return ws, proj, u
 
-    def test_cancelled_and_completed_excluded_by_default(self):
+    def test_no_state_filter_includes_completed_and_cancelled(self):
+        """An unselected filter must return EVERYTHING.
+
+        This previously asserted the opposite: completed and cancelled were
+        excluded whenever the caller passed no `state_group`. That made a
+        workspace whose work was finished render an empty matrix while the
+        toolbar showed every chip unselected -- the UI said "no filter" while
+        the server applied one the user could not see or clear.
+        """
         ws, proj, u = self._setup()
         for group in ("started", "completed", "cancelled"):
             st = _state(ws, proj, group)
@@ -291,7 +299,33 @@ class TestStateDefaults(TransactionTestCase):
             _estimate(ws, proj, issue, 5.0)
 
         data = compute_workload(u, ws.slug, "week", WIN_FROM, WIN_TO)
-        self.assertEqual(data["meta"]["issues_counted"], 1)  # only 'started'
+        self.assertEqual(data["meta"]["issues_counted"], 3)
+
+    def test_triage_still_excluded_with_no_filter(self):
+        """Triage is not a work item yet, so it stays excluded unconditionally --
+        that exclusion is a different thing from hiding real, finished work."""
+        ws, proj, u = self._setup()
+        for group in ("started", "triage"):
+            st = _state(ws, proj, group)
+            issue = _issue(ws, proj, st, u, start=date(2026, 6, 1), target=date(2026, 6, 1))
+            _assign(ws, proj, issue, u, created_at=_t(1))
+            _estimate(ws, proj, issue, 5.0)
+
+        data = compute_workload(u, ws.slug, "week", WIN_FROM, WIN_TO)
+        self.assertEqual(data["meta"]["issues_counted"], 1)
+
+    def test_completed_issue_past_target_is_not_overdue(self):
+        """Including completed work must not make it read as late."""
+        ws, proj, u = self._setup()
+        st = _state(ws, proj, "completed")
+        issue = _issue(ws, proj, st, u, start=date(2026, 6, 1), target=date(2026, 6, 1))
+        _assign(ws, proj, issue, u, created_at=_t(1))
+        _estimate(ws, proj, issue, 5.0)
+
+        data = compute_workload(u, ws.slug, "week", WIN_FROM, WIN_TO)
+        tasks = [t for row in data["rows"] for t in (row.get("tasks") or [])]
+        self.assertEqual(len(tasks), 1)
+        self.assertFalse(tasks[0]["overdue"])
 
     def test_state_group_override_includes_completed(self):
         ws, proj, u = self._setup()
