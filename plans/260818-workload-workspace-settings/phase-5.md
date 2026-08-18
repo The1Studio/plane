@@ -8,16 +8,16 @@ Parent plan: [`plan.md`](plan.md).
 
 ## Ownership
 
-| File | Change |
-|---|---|
-| `apps/web/core/components/dropdowns/date.tsx:80` | swap the read |
-| `apps/web/core/components/dropdowns/date-range.tsx:113` | swap the read |
-| `apps/web/core/components/gantt-chart/chart/root.tsx:95` | swap the read |
-| `apps/web/core/components/issues/issue-layouts/calendar/week-days.tsx:81` | swap the read |
-| `apps/web/core/components/issues/issue-layouts/calendar/week-header.tsx:24` | swap the read |
+| File                                                                        | Change                    |
+| --------------------------------------------------------------------------- | ------------------------- |
+| `apps/web/core/components/dropdowns/date.tsx:80`                            | swap the read             |
+| `apps/web/core/components/dropdowns/date-range.tsx:113`                     | swap the read             |
+| `apps/web/core/components/gantt-chart/chart/root.tsx:95`                    | swap the read             |
+| `apps/web/core/components/issues/issue-layouts/calendar/week-days.tsx:81`   | swap the read             |
+| `apps/web/core/components/issues/issue-layouts/calendar/week-header.tsx:24` | swap the read             |
 | `apps/web/core/store/issue/issue_calendar_view.store.ts:79,137,184,192,205` | store-side read (5 sites) |
-| `apps/web/core/components/profile/start-of-week-preference.tsx` | remove the control |
-| `apps/web/core/components/power-k/config/preferences-commands.ts:145` | remove the command |
+| `apps/web/core/components/profile/start-of-week-preference.tsx`             | remove the control        |
+| `apps/web/core/components/power-k/config/preferences-commands.ts:145`       | remove the command        |
 
 Each is a **core-edit exception** and must be fenced with a
 `/* The1Studio fork (workspace work settings) */` comment and registered in the `docs/FORK.md`
@@ -67,9 +67,14 @@ missing feature.
 ## Success criteria
 
 - `pnpm check` clean.
-- `grep -rn "start_of_the_week" apps/web packages | grep -v node_modules` returns hits **only** in
-  `packages/types/src/users.ts` (the type still mirrors the unread DB column) — zero in
-  `apps/web/core`.
+- `grep -rn "start_of_the_week" apps/web packages | grep -v node_modules` returns **zero hits in
+  `apps/web/core/components` and `apps/web/core/store/issue`** — the read sites this phase owns.
+  Four hits legitimately survive and are NOT missed sites: `packages/types/src/users.ts` (the type
+  still mirrors the unread DB column, per D7), two prose doc-comments in `use-work-settings.ts` and
+  `workload.ts`, and `apps/web/core/store/user/profile.store.ts` — which supplies the field's
+  default in the initial `TUserProfile` object. That last one is unavoidable: because D7 keeps the
+  DB column, the type keeps the field, so any store typed against `TUserProfile` must still provide
+  a value. It is a write of a default, never a read.
 - Changing the workspace setting visibly moves the first column in: the calendar layout, the gantt
   week view, both date dropdowns, and the workload matrix — verified manually, not assumed.
 - The profile preferences page no longer shows a start-of-week control.
