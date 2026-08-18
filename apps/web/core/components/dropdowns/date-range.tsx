@@ -15,13 +15,18 @@ import { Combobox } from "@headlessui/react";
 import { useTranslation } from "@plane/i18n";
 // ui
 import type { DateRange, Matcher } from "@plane/propel/calendar";
+/* The1Studio fork (workspace work settings) */
+import type { EStartOfTheWeek } from "@plane/types";
 import { Calendar } from "@plane/propel/calendar";
 import { CloseIcon, DueDatePropertyIcon } from "@plane/propel/icons";
 import { ComboDropDown } from "@plane/ui";
 import { cn, renderFormattedDate } from "@plane/utils";
 // helpers
 // hooks
-import { useUserProfile } from "@/hooks/store/user";
+/* The1Studio fork (workspace work settings) */
+import { useParams } from "next/navigation";
+/* The1Studio fork (workspace work settings) */
+import { useWorkSettings } from "@/hooks/store/use-work-settings";
 import { useDropdown } from "@/hooks/use-dropdown";
 // components
 import { DropdownButton } from "./buttons";
@@ -109,8 +114,12 @@ export const DateRangeDropdown = observer(function DateRangeDropdown(props: Prop
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const [dateRange, setDateRange] = useState<DateRange>(value);
   // hooks
-  const { data } = useUserProfile();
-  const startOfWeek = data?.start_of_the_week;
+  /* The1Studio fork (workspace work settings) */
+  const { workspaceSlug } = useParams();
+  /* The1Studio fork (workspace work settings) */
+  const { workSettings } = useWorkSettings(workspaceSlug?.toString());
+  /* The1Studio fork (workspace work settings) */
+  const startOfWeek = workSettings.week_start_day as EStartOfTheWeek;
   // refs
   const dropdownRef = useRef<HTMLDivElement | null>(null);
   // popper-js refs
@@ -289,6 +298,7 @@ export const DateRangeDropdown = observer(function DateRangeDropdown(props: Prop
   const Options = renderInPortal ? createPortal(comboOptions, document.body) : comboOptions;
 
   return (
+    // oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- pre-existing warning, unrelated to this change (husky lint-staged runs --deny-warnings on the whole file)
     <ComboDropDown
       as="div"
       ref={dropdownRef}

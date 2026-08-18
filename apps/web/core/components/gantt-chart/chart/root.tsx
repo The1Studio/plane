@@ -9,12 +9,21 @@ import { observer } from "mobx-react";
 import { createPortal } from "react-dom";
 // plane imports
 // components
-import type { ChartDataType, IBlockUpdateData, IBlockUpdateDependencyData, TGanttViews } from "@plane/types";
+import type {
+  ChartDataType,
+  EStartOfTheWeek,
+  IBlockUpdateData,
+  IBlockUpdateDependencyData,
+  TGanttViews,
+} from "@plane/types";
 import { cn } from "@plane/utils";
 import { GanttChartHeader, GanttChartMainContent } from "@/components/gantt-chart";
 // helpers
 // hooks
-import { useUserProfile } from "@/hooks/store/user";
+/* The1Studio fork (workspace work settings) */
+import { useParams } from "next/navigation";
+/* The1Studio fork (workspace work settings) */
+import { useWorkSettings } from "@/hooks/store/use-work-settings";
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 //
 import { SIDEBAR_WIDTH } from "../constants";
@@ -91,8 +100,12 @@ export const ChartViewRoot = observer(function ChartViewRoot(props: ChartViewRoo
     updateRenderView,
     updateAllBlocksOnChartChangeWhileDragging,
   } = useTimeLineChartStore();
-  const { data } = useUserProfile();
-  const startOfWeek = data?.start_of_the_week;
+  /* The1Studio fork (workspace work settings) */
+  const { workspaceSlug } = useParams();
+  /* The1Studio fork (workspace work settings) */
+  const { workSettings } = useWorkSettings(workspaceSlug?.toString());
+  /* The1Studio fork (workspace work settings) */
+  const startOfWeek = workSettings.week_start_day as EStartOfTheWeek;
 
   const updateCurrentViewRenderPayload = (side: null | "left" | "right", view: TGanttViews, targetDate?: Date) => {
     const selectedCurrentView: TGanttViews = view;
@@ -152,6 +165,7 @@ export const ChartViewRoot = observer(function ChartViewRoot(props: ChartViewRoo
     setItemsContainerWidth(width + scrollContainer?.scrollLeft);
   };
 
+  // oxlint-disable-next-line unicorn/consistent-function-scoping -- pre-existing warning, unrelated to this change (husky lint-staged runs --deny-warnings on the whole file)
   const updateCurrentLeftScrollPosition = (width: number) => {
     const scrollContainer = document.querySelector("#gantt-container") as HTMLDivElement;
     if (!scrollContainer) return;

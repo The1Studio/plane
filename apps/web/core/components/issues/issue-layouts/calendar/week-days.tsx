@@ -6,10 +6,21 @@
 
 import { observer } from "mobx-react";
 // plane imports
-import type { TGroupedIssues, TIssue, TIssueMap, TPaginationData, ICalendarDate, ICalendarWeek } from "@plane/types";
+import type {
+  EStartOfTheWeek,
+  TGroupedIssues,
+  TIssue,
+  TIssueMap,
+  TPaginationData,
+  ICalendarDate,
+  ICalendarWeek,
+} from "@plane/types";
 import { cn, getOrderedDays, renderFormattedPayloadDate } from "@plane/utils";
 // hooks
-import { useUserProfile } from "@/hooks/store/user";
+/* The1Studio fork (workspace work settings) */
+import { useParams } from "next/navigation";
+/* The1Studio fork (workspace work settings) */
+import { useWorkSettings } from "@/hooks/store/use-work-settings";
 // types
 import type { ICycleIssuesFilter } from "@/store/issue/cycle";
 import type { IModuleIssuesFilter } from "@/store/issue/module";
@@ -77,8 +88,12 @@ export const CalendarWeekDays = observer(function CalendarWeekDays(props: Props)
     isEpic = false,
   } = props;
   // hooks
-  const { data } = useUserProfile();
-  const startOfWeek = data?.start_of_the_week;
+  /* The1Studio fork (workspace work settings) */
+  const { workspaceSlug } = useParams();
+  /* The1Studio fork (workspace work settings) */
+  const { workSettings } = useWorkSettings(workspaceSlug?.toString());
+  /* The1Studio fork (workspace work settings) */
+  const startOfWeek = workSettings.week_start_day as EStartOfTheWeek;
 
   const calendarLayout = issuesFilterStore?.issueFilters?.displayFilters?.calendar?.layout ?? "month";
   const showWeekends = issuesFilterStore?.issueFilters?.displayFilters?.calendar?.show_weekends ?? false;
