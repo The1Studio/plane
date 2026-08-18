@@ -22,4 +22,21 @@ export const extendedRoutes: RouteConfigEntry[] = [
       ]),
     ]),
   ]),
+  // The1Studio fork (workspace work settings) — workspace settings page for
+  // max weekly hours / workdays / first day of week (docs/FORK.md touch-point 6).
+  // Mirrors the (settings) chain from core.ts:258-284 exactly so mergeRoutes
+  // deep-merges this route into the SAME settings shell (single sidebar),
+  // rather than instantiating a second settings layout.
+  layout("./(all)/layout.tsx", [
+    layout("./(all)/[workspaceSlug]/layout.tsx", [
+      layout("./(all)/[workspaceSlug]/(settings)/layout.tsx", [
+        layout("./(all)/[workspaceSlug]/(settings)/settings/(workspace)/layout.tsx", [
+          route(
+            ":workspaceSlug/settings/workload",
+            "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/workload/page.tsx"
+          ),
+        ]),
+      ]),
+    ]),
+  ]),
 ];

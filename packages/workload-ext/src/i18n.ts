@@ -45,8 +45,6 @@ export const WORKLOAD_STRINGS = {
   "matrix.no_target_date": "{percent}% of issues have no target date.",
   "matrix.issues_summary": "{counted} issues counted · {zero} with 0h estimate",
   "matrix.truncated": "Results truncated. Narrow your date range.",
-  "matrix.capacity": "Capacity",
-  "matrix.cap_short": "cap {hours}h",
   "matrix.over_capacity": "Over",
   "matrix.no_over_capacity": "No one is over capacity.",
   "granularity.day": "Day",
@@ -58,6 +56,9 @@ export const WORKLOAD_STRINGS = {
   "filters.state_groups": "Status",
   "filters.clear": "Clear filters",
   "filters.over_only": "Over capacity only",
+  // Workspace work-settings readout (The1Studio fork — workspace work settings, phase-4.md).
+  "toolbar.settings_readout": "Max {hours}h/week · {workdays} · week starts {weekStart}",
+  "toolbar.manage_settings": "Manage",
 } as const;
 
 export type TWorkloadStringKey = keyof typeof WORKLOAD_STRINGS;

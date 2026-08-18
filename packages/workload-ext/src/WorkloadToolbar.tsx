@@ -3,6 +3,8 @@ import { observer } from "mobx-react";
 import { STATE_GROUPS } from "@plane/constants";
 import { Switch } from "@plane/propel/switch";
 import { Tabs } from "@plane/propel/tabs";
+import type { TWorkSettings } from "@plane/types";
+import { joinUrlPath } from "@plane/utils";
 
 import { wlt } from "./i18n";
 import type { IWorkloadStore } from "./store";
@@ -13,6 +15,15 @@ import type { TWorkloadGranularity } from "./types";
 export type WorkloadToolbarProps = {
   store: IWorkloadStore;
   workspaceSlug: string;
+  /** Whether the current viewer is a workspace admin — gates the "Manage" link in the settings readout. */
+  isAdmin?: boolean;
+  /**
+   * Workspace-wide work settings, rendered as a read-only readout ("Max Nh/week
+   * · workdays · week starts Day"). `undefined` renders nothing — the host
+   * fetches this via the app's `useWorkSettings()` hook, since this package
+   * cannot import app hooks (context-agnostic, same inversion as `isAdmin`).
+   */
+  workSettings?: TWorkSettings;
   /**
    * App-injected filter controls. This package cannot import from `apps/web`
    * (its deps are @plane/propel, @plane/constants, @plane/types), so the host
@@ -24,6 +35,25 @@ export type WorkloadToolbarProps = {
   projectFilterSlot?: React.ReactNode;
   dateRangeSlot?: React.ReactNode;
 };
+
+/** EStartOfTheWeek numbering (@plane/types) — SUNDAY = 0 .. SATURDAY = 6. */
+const DAY_ABBR = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** Formats `hours` without a trailing ".0" (e.g. "40h", "37.5h/week"). */
+function formatWeeklyHours(hours: number): string {
+  return Number.isInteger(hours) ? `${hours}` : hours.toFixed(1);
+}
+
+/** "Max 40h/week · Mon, Tue, Wed, Thu, Fri · week starts Monday" */
+function formatWorkSettingsReadout(settings: TWorkSettings): string {
+  const workdaysLabel = settings.workdays.map((d) => DAY_ABBR[d] ?? "?").join(", ");
+  const weekStartLabel = DAY_ABBR[settings.week_start_day] ?? "?";
+  return wlt("toolbar.settings_readout", {
+    hours: formatWeeklyHours(settings.max_weekly_hours),
+    workdays: workdaysLabel,
+    weekStart: weekStartLabel,
+  });
+}
 
 const GRANULARITIES: Array<{ value: TWorkloadGranularity; labelKey: Parameters<typeof wlt>[0] }> = [
   { value: "day", labelKey: "granularity.day" },
@@ -38,6 +68,8 @@ const STATE_GROUP_KEYS = Object.values(STATE_GROUPS);
 export const WorkloadToolbar = observer(function WorkloadToolbar({
   store,
   workspaceSlug,
+  isAdmin = false,
+  workSettings,
   memberFilterSlot,
   projectFilterSlot,
   dateRangeSlot,
@@ -78,77 +110,94 @@ export const WorkloadToolbar = observer(function WorkloadToolbar({
     store.fetchWorkload(workspaceSlug);
   }
 
+  const settingsHref = joinUrlPath(workspaceSlug, "settings/workload");
+
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      {/* Granularity */}
-      <Tabs
-        value={store.granularity}
-        onValueChange={handleGranularityChange}
-        className="h-auto w-auto"
-        aria-label={wlt("filters.granularity")}
-      >
-        <Tabs.List className="w-auto">
-          {GRANULARITIES.map(({ value, labelKey }) => (
-            <Tabs.Trigger key={value} value={value} className="px-3">
-              {wlt(labelKey)}
-            </Tabs.Trigger>
-          ))}
-          <Tabs.Indicator />
-        </Tabs.List>
-      </Tabs>
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Granularity */}
+        <Tabs
+          value={store.granularity}
+          onValueChange={handleGranularityChange}
+          className="h-auto w-auto"
+          aria-label={wlt("filters.granularity")}
+        >
+          <Tabs.List className="w-auto">
+            {GRANULARITIES.map(({ value, labelKey }) => (
+              <Tabs.Trigger key={value} value={value} className="px-3">
+                {wlt(labelKey)}
+              </Tabs.Trigger>
+            ))}
+            <Tabs.Indicator />
+          </Tabs.List>
+        </Tabs>
 
-      {/* Date range (app-injected) */}
-      {dateRangeSlot}
+        {/* Date range (app-injected) */}
+        {dateRangeSlot}
 
-      {/* Member + project filters (app-injected) */}
-      {memberFilterSlot}
-      {projectFilterSlot}
+        {/* Member + project filters (app-injected) */}
+        {memberFilterSlot}
+        {projectFilterSlot}
 
-      {/* State groups */}
-      <div className="flex flex-wrap items-center gap-1" role="group" aria-label={wlt("filters.state_groups")}>
-        {STATE_GROUP_KEYS.map((group) => {
-          const isSelected = store.selectedStateGroups.includes(group.key);
-          return (
-            <button
-              key={group.key}
-              type="button"
-              aria-pressed={isSelected}
-              onClick={() => handleStateGroupToggle(group.key)}
-              className={[
-                "text-13 flex items-center gap-1.5 rounded-md border px-2 py-1 transition-colors",
-                isSelected
-                  ? "border-accent-subtle bg-accent-subtle text-accent-primary"
-                  : "border-subtle text-tertiary hover:bg-layer-transparent-hover",
-              ].join(" ")}
-            >
-              <span aria-hidden="true" className="size-2 rounded-full" style={{ backgroundColor: group.color }} />
-              {group.label}
-            </button>
-          );
-        })}
+        {/* State groups */}
+        <div className="flex flex-wrap items-center gap-1" role="group" aria-label={wlt("filters.state_groups")}>
+          {STATE_GROUP_KEYS.map((group) => {
+            const isSelected = store.selectedStateGroups.includes(group.key);
+            return (
+              <button
+                key={group.key}
+                type="button"
+                aria-pressed={isSelected}
+                onClick={() => handleStateGroupToggle(group.key)}
+                className={[
+                  "text-13 flex items-center gap-1.5 rounded-md border px-2 py-1 transition-colors",
+                  isSelected
+                    ? "border-accent-subtle bg-accent-subtle text-accent-primary"
+                    : "border-subtle text-tertiary hover:bg-layer-transparent-hover",
+                ].join(" ")}
+              >
+                <span aria-hidden="true" className="size-2 rounded-full" style={{ backgroundColor: group.color }} />
+                {group.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Over-capacity only — client-side, no refetch */}
+        <div className="ml-1 flex items-center gap-2">
+          <Switch value={store.showOverCapacityOnly} onChange={handleOverOnlyChange} label={wlt("filters.over_only")} />
+          {/* Switch renders `label` as aria-label only, so the visible text lives here. */}
+          <button
+            type="button"
+            onClick={() => handleOverOnlyChange(!store.showOverCapacityOnly)}
+            className="text-13 text-tertiary transition-colors hover:text-primary"
+          >
+            {wlt("filters.over_only")}
+          </button>
+        </div>
+
+        {hasActiveFilters && (
+          <button
+            type="button"
+            onClick={handleClearFilters}
+            className="ml-auto rounded-md px-2 py-1 text-13 text-tertiary transition-colors hover:text-primary"
+          >
+            {wlt("filters.clear")}
+          </button>
+        )}
       </div>
 
-      {/* Over-capacity only — client-side, no refetch */}
-      <div className="ml-1 flex items-center gap-2">
-        <Switch value={store.showOverCapacityOnly} onChange={handleOverOnlyChange} label={wlt("filters.over_only")} />
-        {/* Switch renders `label` as aria-label only, so the visible text lives here. */}
-        <button
-          type="button"
-          onClick={() => handleOverOnlyChange(!store.showOverCapacityOnly)}
-          className="text-13 text-tertiary transition-colors hover:text-primary"
-        >
-          {wlt("filters.over_only")}
-        </button>
-      </div>
-
-      {hasActiveFilters && (
-        <button
-          type="button"
-          onClick={handleClearFilters}
-          className="ml-auto rounded-md px-2 py-1 text-13 text-tertiary transition-colors hover:text-primary"
-        >
-          {wlt("filters.clear")}
-        </button>
+      {/* Workspace work-settings readout — read-only; undefined workSettings renders nothing
+          (the host has not wired the app's useWorkSettings() hook to this slot yet). */}
+      {workSettings && (
+        <div className="flex items-center gap-2 text-13 text-tertiary">
+          <span>{formatWorkSettingsReadout(workSettings)}</span>
+          {isAdmin && (
+            <a href={settingsHref} className="text-accent-primary hover:underline">
+              {wlt("toolbar.manage_settings")}
+            </a>
+          )}
+        </div>
       )}
     </div>
   );

@@ -1,6 +1,7 @@
 import React from "react";
 import { observer } from "mobx-react";
 import { Table, TableHeader, TableBody, TableFooter, TableRow, TableHead, TableCell } from "@plane/propel/table";
+import type { TWorkSettings } from "@plane/types";
 
 import { wlt } from "./i18n";
 import type { IWorkloadStore } from "./store";
@@ -12,83 +13,27 @@ type WorkloadMatrixProps = {
   store: IWorkloadStore;
   workspaceSlug: string;
   /**
-   * Whether the current viewer may edit per-person capacity. Capacity
-   * CRUD is ADMIN-only server-side (D-B3); this package is context-agnostic
-   * and has no access to the app's permission store, so the caller resolves
-   * the role and passes it down. Defaults to read-only.
+   * Whether the current viewer is a workspace admin. Per-person capacity no
+   * longer exists (D1, phase-4.md) — this now only gates the "manage" link in
+   * the workspace work-settings readout (see WorkloadToolbar's `workSettings`
+   * prop). Server-derived; this package is context-agnostic and has no access
+   * to the app's permission store, so the caller resolves the role and passes
+   * it down.
    */
   isAdmin?: boolean;
+  /**
+   * Workspace-wide work settings (max weekly hours / workdays / week start),
+   * rendered as a read-only toolbar readout. `undefined` renders nothing —
+   * the caller (an app-level page) is responsible for fetching these via the
+   * app's `useWorkSettings()` hook, since this package cannot import app
+   * hooks (context-agnostic, same inversion as `isAdmin` and the slot props).
+   */
+  workSettings?: TWorkSettings;
   /** Forwarded verbatim to WorkloadToolbar — see its prop docs for why slots exist. */
   memberFilterSlot?: React.ReactNode;
   projectFilterSlot?: React.ReactNode;
   dateRangeSlot?: React.ReactNode;
 };
-
-type CapacityBadgeProps = {
-  store: IWorkloadStore;
-  workspaceSlug: string;
-  assigneeId: string;
-  isAdmin: boolean;
-};
-
-/** Per-row capacity display: editable number input for admins, a read-only badge otherwise. */
-const CapacityBadge = observer(function CapacityBadge({
-  store,
-  workspaceSlug,
-  assigneeId,
-  isAdmin,
-}: CapacityBadgeProps) {
-  const capacity = store.capacities[assigneeId];
-  const [draft, setDraft] = React.useState<string>(capacity !== undefined ? String(capacity) : "");
-  const [isSaving, setIsSaving] = React.useState(false);
-
-  // Keep the draft in sync when the store value changes from elsewhere
-  // (another tab's write, or the initial fetchCapacities resolving).
-  React.useEffect(() => {
-    setDraft(capacity !== undefined ? String(capacity) : "");
-  }, [capacity]);
-
-  if (!isAdmin) {
-    if (capacity === undefined) return null;
-    return (
-      <span className="rounded bg-layer-1 px-1.5 py-0.5 text-11 text-tertiary">
-        {wlt("matrix.cap_short", { hours: capacity })}
-      </span>
-    );
-  }
-
-  async function handleBlur() {
-    const parsed = Number(draft);
-    if (draft.trim() === "" || Number.isNaN(parsed) || parsed < 0 || parsed === capacity) {
-      setDraft(capacity !== undefined ? String(capacity) : "");
-      return;
-    }
-    setIsSaving(true);
-    try {
-      await store.updateCapacity(workspaceSlug, assigneeId, parsed);
-    } catch {
-      // Error is recorded on the store (store.error); revert the draft.
-      setDraft(capacity !== undefined ? String(capacity) : "");
-    } finally {
-      setIsSaving(false);
-    }
-  }
-
-  return (
-    <input
-      type="number"
-      min={0}
-      step={0.5}
-      value={draft}
-      disabled={isSaving}
-      aria-label={wlt("matrix.capacity")}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={handleBlur}
-      onClick={(e) => e.stopPropagation()}
-      className="w-16 rounded border border-subtle bg-surface-1 px-1 py-0.5 text-11 text-primary tabular-nums focus:ring-1 focus:ring-accent-strong focus:outline-none"
-    />
-  );
-});
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -105,18 +50,11 @@ export const WorkloadMatrix = observer(function WorkloadMatrix({
   store,
   workspaceSlug,
   isAdmin = false,
+  workSettings,
   memberFilterSlot,
   projectFilterSlot,
   dateRangeSlot,
 }: WorkloadMatrixProps) {
-  // ── Effects ────────────────────────────────────────────────────────────────
-
-  // Capacities are workspace-scoped (not per-row), so fetch once per mount /
-  // workspaceSlug change rather than threading them through fetchWorkload.
-  React.useEffect(() => {
-    if (workspaceSlug) store.fetchCapacities(workspaceSlug);
-  }, [store, workspaceSlug]);
-
   // ── Loading / error / empty states ────────────────────────────────────────
 
   if (store.isLoading) {
@@ -229,14 +167,6 @@ export const WorkloadMatrix = observer(function WorkloadMatrix({
                 <TableCell className="font-medium">
                   <div className="flex items-center gap-2">
                     <span>{row.assignee_name}</span>
-                    {row.assignee_id && (
-                      <CapacityBadge
-                        store={store}
-                        workspaceSlug={workspaceSlug}
-                        assigneeId={row.assignee_id}
-                        isAdmin={isAdmin}
-                      />
-                    )}
                     {row.total_over && (
                       <span
                         className="rounded bg-danger-subtle px-1.5 py-0.5 text-11 font-medium text-danger-primary"
@@ -297,6 +227,8 @@ export const WorkloadMatrix = observer(function WorkloadMatrix({
       <WorkloadToolbar
         store={store}
         workspaceSlug={workspaceSlug}
+        isAdmin={isAdmin}
+        workSettings={workSettings}
         memberFilterSlot={memberFilterSlot}
         projectFilterSlot={projectFilterSlot}
         dateRangeSlot={dateRangeSlot}
