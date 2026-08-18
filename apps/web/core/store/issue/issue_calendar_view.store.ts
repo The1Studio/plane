@@ -77,7 +77,7 @@ export class CalendarStore implements ICalendarStore {
     /* The1Studio fork (workspace work settings) */
     // Watch for changes in the workspace's week-start-day setting and regenerate the calendar.
     reaction(
-      () => this.rootStore.rootStore.workSettingsStore.weekStartDay,
+      () => this.rootStore?.rootStore?.workSettingsStore?.weekStartDay,
       () => {
         // Regenerate calendar when the workspace's week-start-day setting changes
         this.regenerateCalendar();
@@ -184,7 +184,7 @@ export class CalendarStore implements ICalendarStore {
 
     const nextDate = new Date(date);
     /* The1Studio fork (workspace work settings) */ const startOfWeek =
-      this.rootStore.rootStore.workSettingsStore.weekStartDay ?? EStartOfTheWeek.SUNDAY;
+      this.rootStore?.rootStore?.workSettingsStore?.weekStartDay ?? EStartOfTheWeek.SUNDAY;
 
     runInAction(() => {
       this.calendarPayload = generateCalendarData(this.calendarPayload, nextDate, startOfWeek);
@@ -193,7 +193,7 @@ export class CalendarStore implements ICalendarStore {
 
   initCalendar = () => {
     /* The1Studio fork (workspace work settings) */ const startOfWeek =
-      this.rootStore.rootStore.workSettingsStore.weekStartDay ?? EStartOfTheWeek.SUNDAY;
+      this.rootStore?.rootStore?.workSettingsStore?.weekStartDay ?? EStartOfTheWeek.SUNDAY;
     const newCalendarPayload = generateCalendarData(null, new Date(), startOfWeek);
 
     runInAction(() => {
@@ -207,7 +207,7 @@ export class CalendarStore implements ICalendarStore {
    */
   regenerateCalendar = () => {
     /* The1Studio fork (workspace work settings) */ const startOfWeek =
-      this.rootStore.rootStore.workSettingsStore.weekStartDay ?? EStartOfTheWeek.SUNDAY;
+      this.rootStore?.rootStore?.workSettingsStore?.weekStartDay ?? EStartOfTheWeek.SUNDAY;
     const { activeMonthDate } = this.calendarFilters;
 
     // Force complete regeneration by passing null to clear all cached data
