@@ -37,8 +37,11 @@ New shape:
 6. Every `period_key` / `spread_estimate` / `capacity_for_period` call site passes `workdays` and
    `week_start_day` from the settings.
 
-Also update `views.py` where periods are enumerated for the response — the period list generator
-must produce week keys in the new `YYYY-MM-DD` form, week-start aligned.
+There is **no period-enumeration code in `views.py`** — an earlier draft of this file claimed there
+was. `periods` appears zero times in `views.py` and `api_views.py`; the list is built entirely
+inside `service.py` from the bucket keys `spread_estimate` returns. Once `workdays` and
+`week_start_day` are threaded through that call, the new `YYYY-MM-DD` week format falls out
+automatically and no separate generator needs updating.
 
 ## Capacity removal
 
@@ -54,6 +57,7 @@ Order matters; three migrations in sequence:
 
    Before merging, capture `SELECT * FROM workload_capacities;` into the PR body — the only
    surviving record of the discarded values.
+
 2. **`DeleteModel("WorkloadCapacity")`.**
 3. Remove `WorkloadCapacitySerializer`, `capacity_list` / `capacity_put` / `capacity_delete`
    (`views.py:179-235`), the `WorkloadCapacityEndpoint` / `WorkloadCapacityAPIEndpoint` classes,
