@@ -101,5 +101,7 @@ export const GLOBAL_VIEW_ISSUE_LAYOUT_OPTIONS: TFiltersLayoutOptions = {
 export const GLOBAL_VIEW_LAYOUTS: EIssueLayoutTypes[] = [
   EIssueLayoutTypes.LIST,
   EIssueLayoutTypes.KANBAN,
+  EIssueLayoutTypes.CALENDAR,
   EIssueLayoutTypes.SPREADSHEET,
+  EIssueLayoutTypes.GANTT,
 ];

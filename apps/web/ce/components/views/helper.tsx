@@ -8,7 +8,9 @@ import type { IProjectView } from "@plane/types";
 import { EIssueLayoutTypes } from "@plane/types";
 // The1Studio fork (views-layouts)
 import { GLOBAL_VIEW_LAYOUTS } from "@plane/views-ext";
+import { WorkspaceCalendarRoot } from "@/components/issues/issue-layouts/calendar/roots/workspace-root";
 import { LayoutSelection } from "@/components/issues/issue-layouts/filters/header/layout-selection";
+import { WorkspaceGanttRoot } from "@/components/issues/issue-layouts/gantt/roots/workspace-root";
 import { WorkspaceKanBanRoot } from "@/components/issues/issue-layouts/kanban/roots/workspace-root";
 import { WorkspaceListRoot } from "@/components/issues/issue-layouts/list/roots/workspace-root";
 import type { TWorkspaceLayoutProps } from "@/components/views/helper";
@@ -39,8 +41,13 @@ export function WorkspaceAdditionalLayouts(props: TWorkspaceLayoutProps) {
       return <WorkspaceListRoot />;
     case EIssueLayoutTypes.KANBAN:
       return <WorkspaceKanBanRoot />;
-    // Calendar and Timeline are added by later phases. An unhandled layout renders blank rather
-    // than throwing, so a stale persisted display-filter cannot break the page.
+    case EIssueLayoutTypes.CALENDAR:
+      return <WorkspaceCalendarRoot />;
+    case EIssueLayoutTypes.GANTT:
+      return <WorkspaceGanttRoot />;
+    // SPREADSHEET never reaches here — core's WorkspaceActiveLayout handles it before falling
+    // through to this component. An unhandled layout renders blank rather than throwing, so a
+    // stale persisted display-filter cannot break the page.
     default:
       return <></>;
   }
