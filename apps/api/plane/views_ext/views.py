@@ -58,15 +58,35 @@ from plane.utils.issue_filters import issue_filters
 from plane.utils.order_queryset import order_issue_queryset
 from plane.utils.paginator import GroupedOffsetPaginator, SubGroupedOffsetPaginator
 
-# group_by / sub_group_by accepted values — server field paths matching what the
-# frontend's EIssueGroupByToServerOptions already emits
-# (packages/constants/src/issue/common.ts), not UI labels. `state` (individual),
-# `cycle` and `module` are deliberately excluded (D3): they are per-project and would
-# produce ~40 near-duplicate columns across a 12-project workspace. This is a
-# decision, not an oversight — do not "fix" it to be exhaustive. Shared at module
-# scope: both grouped endpoints below accept the identical set (SSOT, avoids the two
-# classes drifting apart on what "valid group_by" means).
-GROUP_BY_FIELDS = frozenset({"state__group", "priority", "project_id", "labels__id"})
+# group_by / sub_group_by accepted values — the complete set of server field paths
+# EIssueGroupByToServerOptions can emit (packages/constants/src/issue/common.ts).
+#
+# This list validates what the SERVER can group by. It is deliberately NOT a restatement
+# of which options the workspace-level UI chooses to OFFER — that curation (D3: prefer
+# state__group / priority / project_id / labels__id, since per-project fields produce
+# near-duplicate columns across a 40-project workspace) belongs in the fork-owned
+# layout-options table in packages/views-ext, which drives the dropdown.
+#
+# Conflating the two shipped a real bug: a display filter persisted from the Work Items
+# tab (which does offer plain `state`) sends group_by=state_id, and Calendar always sends
+# group_by=target_date. Neither was in the old four-value set, so both 400'd on every
+# request — List and Board never rendered, and Calendar silently fell back to ungrouped.
+# Core's own endpoints pass group_by straight to issue_queryset_grouper with no allowlist
+# at all; this set still catches typos and injection without rejecting valid UI values.
+GROUP_BY_FIELDS = frozenset(
+    {
+        "state_id",
+        "state__group",
+        "priority",
+        "labels__id",
+        "assignees__id",
+        "cycle_id",
+        "issue_module__module_id",
+        "target_date",
+        "project_id",
+        "created_by",
+    }
+)
 
 # Group counts exclude non-terminal intake issues and drafts — verbatim from
 # WorkspaceUserProfileIssuesEndpoint's paginate() call shapes. Shared at module scope
