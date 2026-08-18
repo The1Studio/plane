@@ -59,6 +59,12 @@ export const WORKLOAD_STRINGS = {
   // Workspace work-settings readout (The1Studio fork — workspace work settings, phase-4.md).
   "toolbar.settings_readout": "Max {hours}h/week · {workdays} · week starts {weekStart}",
   "toolbar.manage_settings": "Manage",
+  // Timeline (The1Studio fork — Phase 8, replaces the matrix).
+  "timeline.unassigned": "Unassigned",
+  "timeline.unscheduled_count": "Unscheduled ({count})",
+  "timeline.overdue_count": "Overdue ({count})",
+  "timeline.showing_first_n": "Showing first {count} — narrow your filters to see the rest",
+  "timeline.no_workload_data": "No workload data.",
 } as const;
 
 export type TWorkloadStringKey = keyof typeof WORKLOAD_STRINGS;

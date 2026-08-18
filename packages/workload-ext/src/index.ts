@@ -6,5 +6,4 @@ export * from "./service";
 export * from "./store";
 export * from "./hooks";
 export * from "./dateRange";
-export * from "./WorkloadMatrix";
 export * from "./WorkloadToolbar";

@@ -5,7 +5,7 @@
  */
 
 // types
-import type { TTimelineTypeCore } from "@plane/types";
+import type { TTimelineType } from "@plane/types";
 import { GANTT_TIMELINE_TYPE } from "@plane/types";
 // Plane-web
 
@@ -14,7 +14,10 @@ import type { ITimelineStore } from "../store/timeline";
 
 export const getTimelineStore = (
   timelineStore: ITimelineStore,
-  timelineType: TTimelineTypeCore
+  /* The1Studio fork (workload timeline, phase-8.md) — widened from
+   * `TTimelineTypeCore` to `TTimelineType` so the WORKLOAD member (added to
+   * `EXTENDED_GANTT_TIMELINE_TYPE`) type-checks here. */
+  timelineType: TTimelineType
 ): IBaseTimelineStore => {
   if (timelineType === GANTT_TIMELINE_TYPE.ISSUE) {
     return timelineStore.issuesTimeLineStore as IBaseTimelineStore;
@@ -27,6 +30,10 @@ export const getTimelineStore = (
   }
   if (timelineType === GANTT_TIMELINE_TYPE.GROUPED) {
     return timelineStore.groupedTimeLineStore;
+  }
+  /* The1Studio fork (workload timeline, phase-8.md) */
+  if (timelineType === GANTT_TIMELINE_TYPE.WORKLOAD) {
+    return timelineStore.workloadTimeLineStore;
   }
   throw new Error(`Unknown timeline type: ${timelineType}`);
 };

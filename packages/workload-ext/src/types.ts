@@ -16,6 +16,35 @@ export type TWorkloadRow = {
   over?: Record<string, boolean>;
   /** True when `total` exceeds the sum of this row's `capacity_buckets`. */
   total_over?: boolean;
+  /**
+   * Per-task rows for the Phase 8 timeline (apps/api/plane/workload/service.py
+   * "Phase 7 — per-task rows for the timeline"). Capped at 200 per assignee
+   * server-side — see `tasks_truncated`. `hours` on each task is the ISSUE'S
+   * WHOLE estimate, not the windowed slice `buckets` sums to; the two
+   * deliberately do not reconcile for a task clipped by [date_from, date_to].
+   */
+  tasks: TWorkloadTask[];
+  /** True when this row's `tasks` were truncated to the server-side cap (200). */
+  tasks_truncated: boolean;
+};
+
+/**
+ * One task row within `TWorkloadRow.tasks` — the per-issue detail the Phase 8
+ * timeline renders as a bar. Mirrors the shape assembled in
+ * `apps/api/plane/workload/service.py`'s `compute_workload`.
+ */
+export type TWorkloadTask = {
+  id: string;
+  /** `"<PROJECT>-<sequence_id>"`, e.g. "ENG-42". */
+  identifier: string;
+  name: string;
+  /** The issue's whole estimate (not the windowed `buckets` slice). */
+  hours: number;
+  start_date: string | null;
+  target_date: string | null;
+  state_group: string;
+  /** True when `target_date` is in the past and the issue isn't done/cancelled. */
+  overdue: boolean;
 };
 
 export type TWorkloadUnscheduled = {
