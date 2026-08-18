@@ -97,3 +97,38 @@ export const getProfileViewQueryParamsByLayout = (layout: EIssueLayoutTypes | un
     "getProfileViewQueryParamsByLayout",
     "PROFILE_VIEW_ISSUE_LAYOUT_OPTIONS"
   );
+
+/**
+ * The1Studio fork (views-layouts, profile-layouts) — group-by values that can actually render
+ * a column set on a workspace-level page (Views tab, "Your work"), and a coercion for those
+ * that cannot.
+ *
+ * `getGroupByColumns` (apps/web/core/components/issues/issue-layouts/utils.tsx) builds columns
+ * from route/store scope, and several getters hard-require a project:
+ *   - `state`       → `store.state.projectStates` returns undefined without `router.projectId`
+ *   - `created_by`  → returns early without `projectMemberIds`
+ *   - `cycle` / `module` → return early without `currentProjectDetails`
+ * On `/workspace-views/:globalViewId` and `/profile/:userId/*` there is no `:projectId`, so those
+ * yield ZERO columns and List/Board render completely empty — no error, no console warning.
+ *
+ * This is the follow-on to the 2026-08-18 incident. Widening the server allowlist stopped the
+ * 400s but turned an unrenderable grouping into a silently blank board, because a display filter
+ * persisted from the Work Items tab (which legitimately offers `state`) still reaches these pages.
+ *
+ * `state` coerces to `state_detail.group` — the cross-project-safe parent of the same concept, so
+ * user intent survives. Anything else unsupported falls back to ungrouped rather than blank.
+ */
+const WORKSPACE_LEVEL_RENDERABLE_GROUP_BY = new Set([
+  "state_detail.group",
+  "priority",
+  "project",
+  "labels",
+  "assignees",
+]);
+
+export function sanitizeWorkspaceLevelGroupBy<T extends string | null | undefined>(groupBy: T): T | null {
+  if (!groupBy) return null;
+  if (WORKSPACE_LEVEL_RENDERABLE_GROUP_BY.has(groupBy)) return groupBy;
+  if (groupBy === "state") return "state_detail.group" as T;
+  return null;
+}

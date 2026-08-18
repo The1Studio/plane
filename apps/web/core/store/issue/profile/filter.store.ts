@@ -22,7 +22,7 @@ import type {
 } from "@plane/types";
 import { EIssuesStoreType } from "@plane/types";
 // The1Studio fork (profile-layouts)
-import { getProfileViewQueryParamsByLayout } from "@plane/views-ext";
+import { getProfileViewQueryParamsByLayout, sanitizeWorkspaceLevelGroupBy } from "@plane/views-ext";
 import { IssueFiltersService } from "@/services/issue_filter.service";
 import type { IBaseIssueFilterStore } from "../helpers/issue-filter-helper.store";
 import { IssueFilterHelperStore } from "../helpers/issue-filter-helper.store";
@@ -102,6 +102,15 @@ export class ProfileIssuesFilter extends IssueFilterHelperStore implements IProf
     if (isEmpty(displayFilters)) return undefined;
 
     const _filters: IIssueFilters = this.computedIssueFilters(displayFilters);
+
+    // The1Studio fork (profile-layouts) — coerce a group_by that cannot render columns on a
+    // workspace-level page. A filter persisted from the Work Items tab can carry
+    // group_by: "state", which needs a route :projectId to build its columns; without one
+    // List/Board render completely blank. Applied here so the request params and the column
+    // set are derived from the same corrected value.
+    if (_filters?.displayFilters) {
+      _filters.displayFilters.group_by = sanitizeWorkspaceLevelGroupBy(_filters.displayFilters.group_by);
+    }
 
     return _filters;
   }
