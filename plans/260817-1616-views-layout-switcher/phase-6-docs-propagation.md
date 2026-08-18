@@ -80,15 +80,15 @@ Use the `plane-propagate` skill; it knows the repo set and the issue format.
 
 ## Success criteria
 
-- [ ] `docs/FORK.md` frontend exception table has one row per core file actually edited — cross-check against `git diff company-main...HEAD --name-only`, not against this phase's table
-- [ ] Rebase-handling note present for the `views-layouts` fence
-- [ ] `packages/views-ext` fork-ownership clarification recorded
-- [ ] B2 rationale recorded, so the fork layout table is not later "consolidated" away
-- [ ] `views_ext` in the `docs/FORK.md` fork-app list
-- [ ] `plane-fork-doctor`: clean (no SSOT/mirror drift)
-- [ ] `plane-isolation-audit`: every flagged file is now a documented exception; zero undocumented
-- [ ] Propagation issues opened in `plane-mcp-server`, `plane-node-sdk`, `plane-python-sdk`
-- [ ] `CLAUDE.md` § Custom features entry added
+- [x] `docs/FORK.md` frontend exception table has one row per core file actually edited — cross-checked against the `The1Studio fork (views-layouts)` fence grep (no Bash/`git diff` available to this agent; see report) — 7 edited + 2 new core files documented; Calendar/Timeline rows left as placeholders (Phases 4/5 in progress concurrently)
+- [x] Rebase-handling note present for the `views-layouts` fence
+- [x] `packages/views-ext` fork-ownership clarification recorded
+- [x] B2 rationale recorded, so the fork layout table is not later "consolidated" away
+- [x] `views_ext` in the `docs/FORK.md` fork-app list
+- [ ] `plane-fork-doctor`: clean (no SSOT/mirror drift) — NOT RUN, this agent has no Bash tool; needs a teammate/lead to execute
+- [ ] `plane-isolation-audit`: every flagged file is now a documented exception; zero undocumented — NOT RUN for the same reason; classify-path output requested from a teammate, pending
+- [ ] Propagation issues opened in `plane-mcp-server`, `plane-node-sdk`, `plane-python-sdk` — DRAFTED ONLY per instruction, not filed (`propagation-drafts.md`); needs explicit user approval
+- [x] `CLAUDE.md` § Custom features entry added (note: `CLAUDE.md` did not exist in this repo prior to this session — created fresh)
 
 ## Risks
 
