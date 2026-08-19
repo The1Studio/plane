@@ -491,6 +491,27 @@ seeding Sunday would silently shift every historical week boundary by one day.
 `@plane/`-scoped package; `apps/web/core/components/workload/timeline/` is app-internal (not a
 package), and `packages/workload-ext` is already allowlisted per the SP2 workload table above.
 
+**Timeline follow-up (`plans/260818-workload-timeline-fixes/`) — ZERO new core edits.** The
+capacity-badge, single-time-control, row-layout and clickable-work-item work adds **no** row to
+the table above and **no** new touch-point. Two core edits were considered and deliberately
+avoided; both are worth knowing about before anyone reaches for them again:
+
+- **Hiding `GanttChartHeader`'s own Week/Month/Quarter switcher** would have meant threading a
+  `hideViewSwitcher` prop through `GanttChartRoot` → `ChartViewRoot` → `GanttChartHeader` —
+  three core files and three rebase-conflict points, to remove a control we can simply _adopt_.
+  Instead that switcher IS the granularity control now: `WorkloadTimelineRoot` reacts to
+  `timelineStore.currentView` and maps it onto `store.granularity`.
+- **A taller swimlane header** (name + badge on one line, the Unscheduled/Overdue strip below)
+  would have needed per-block heights, but `BLOCK_HEIGHT` is a hardcoded 44px inside core's
+  `gantt-chart/blocks/block-row.tsx`. Instead the footer strip is a THIRD BLOCK KIND, so every
+  row stays at the shared height and core is untouched. Anyone wanting variable row heights here
+  should know the uniform-height constraint was designed around, not overlooked.
+
+The same change makes the `/api/workload/workspaces/<slug>/` response carry `weekly_buckets`,
+`weekly_capacity` and `tasks[].project_id`, and makes `periods` span the requested window rather
+than only the populated buckets. `total_over` keeps its definition but changes its **value** as a
+result — the one silent behavioural change for downstream consumers.
+
 ### Fork bugfix exceptions (upstream bugs, fenced, upstream-PR candidates)
 
 Minimal fenced fixes for bugs that exist in upstream itself (verified unfixed at

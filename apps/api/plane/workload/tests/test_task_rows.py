@@ -157,6 +157,9 @@ class TestTaskAppearsOnRightAssignee(TransactionTestCase):
         self.assertEqual(len(row1["tasks"]), 1)
         task = row1["tasks"][0]
         self.assertEqual(task["id"], str(issue.id))
+        # `project_id` is what lets the UI build a work-item link / open the
+        # peek panel — the identifier string is for display, never for routing.
+        self.assertEqual(task["project_id"], str(proj.id))
         self.assertEqual(task["identifier"], f"PLANE-{issue.sequence_id}")
         self.assertEqual(task["name"], "Fix feedback release 1")
         self.assertEqual(task["hours"], 8.0)

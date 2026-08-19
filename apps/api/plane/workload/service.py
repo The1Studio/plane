@@ -22,7 +22,13 @@ from plane.db.models import (
 )
 from plane.db.models.state import StateGroup
 
-from .aggregation import capacity_for_period, from_cents, quantize_hours, spread_estimate
+from .aggregation import (
+    capacity_for_period,
+    enumerate_periods,
+    from_cents,
+    quantize_hours,
+    spread_estimate,
+)
 from .constants import DEFAULT_MAX_WEEKLY_HOURS, DEFAULT_WEEK_START_DAY, DEFAULT_WORKDAYS
 from .models import WorkloadEstimate, WorkloadSettings
 
@@ -345,6 +351,7 @@ def compute_workload(
             "issue__target_date",
             "issue__name",
             "issue__sequence_id",
+            "issue__project_id",
             "issue__project__identifier",
             "issue__state__group",
         )
@@ -381,6 +388,7 @@ def compute_workload(
         target,
         issue_name,
         sequence_id,
+        project_id,
         project_identifier,
         state_group,
     ) in est_rows:
@@ -403,6 +411,7 @@ def compute_workload(
         if uns_cents:
             unscheduled[owner_id] += uns_cents
 
+
         # A task appears in `tasks` iff it has a visible representation in
         # THIS request's window: either it contributed at least one bucket
         # (`b` non-empty — may be a clipped slice of a longer span), or it is
@@ -418,6 +427,7 @@ def compute_workload(
             tasks_by_owner[owner_id].append(
                 {
                     "id": str(issue_id),
+                    "project_id": str(project_id),
                     "identifier": f"{project_identifier}-{sequence_id}",
                     "name": issue_name,
                     # The WHOLE issue estimate, not the windowed slice `b`
@@ -438,6 +448,16 @@ def compute_workload(
     period_set = set()
     for pm in buckets.values():
         period_set.update(pm.keys())
+    # UNION with every period the window covers, never a replacement. Before
+    # this, `periods` held only buckets that received hours, so `capacity_buckets`
+    # below priced "the weeks somebody happened to be busy" rather than the
+    # requested range — a member's `total`/`total_capacity` badge moved whenever
+    # an UNRELATED member scheduled work into a new week. It also left every
+    # zero-hour column with no capacity entry and therefore no heat cell.
+    # The union direction matters: `spread_estimate` clips hours to the window
+    # but keys them off the un-clipped day, so a populated key can legitimately
+    # precede the window's first key (see `enumerate_periods`' docstring).
+    period_set.update(enumerate_periods(date_from, date_to, granularity, week_start_day))
     periods = sorted(period_set)
 
     rows = []

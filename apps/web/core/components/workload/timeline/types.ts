@@ -57,4 +57,25 @@ export type TWorkloadTaskBlockData = {
   target_date: string;
 };
 
-export type TWorkloadTimelineBlockData = TWorkloadHeaderBlockData | TWorkloadTaskBlockData;
+/**
+ * The per-assignee footer strip: "Unscheduled (N)" / "Overdue (N)" / "showing
+ * first N". Its own block kind rather than extra lines on the header, because
+ * every row in the chart is laid out at core's shared `BLOCK_HEIGHT` (44px,
+ * hardcoded in `gantt-chart/blocks/block-row.tsx`) — a taller header would
+ * mean a core edit, whereas one more 44px block needs none.
+ *
+ * Spans the same dates as its swimlane's header so `BlockRow`'s
+ * "drop blocks with no dates" guard keeps it; its chart-side render is empty.
+ */
+export type TWorkloadFooterBlockData = {
+  kind: "footer";
+  id: string;
+  name: string;
+  assigneeId: string | null;
+  row: TWorkloadRow;
+  sort_order: number;
+  start_date: string;
+  target_date: string;
+};
+
+export type TWorkloadTimelineBlockData = TWorkloadHeaderBlockData | TWorkloadTaskBlockData | TWorkloadFooterBlockData;

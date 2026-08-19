@@ -347,6 +347,19 @@ class TestCapacityOverload(TransactionTestCase):
     row gets the constants.py default applied (previously: empty/no-op)."""
 
     def test_settings_injected_and_over_flagged(self):
+        """Per-period overload still fires; `total_over` no longer does.
+
+        BEHAVIOUR CHANGE (window-complete periods): this test used to assert
+        `total_over is True` for 8h logged on ONE day of a FULL-YEAR window.
+        That only held because `periods` listed populated buckets only, so
+        `total_capacity` priced exactly the one day that had hours (1.0h) —
+        i.e. the assertion encoded the very defect that produced a "120h"
+        denominator in the UI. Against the whole window the same 8h sits
+        against ~261 workdays of capacity and is emphatically not over.
+
+        The overload signal that survives is the one the UI actually needs:
+        `over[period]` for the loaded day.
+        """
         ws = _ws()
         proj = _project(ws)
         u = _user()
@@ -363,7 +376,12 @@ class TestCapacityOverload(TransactionTestCase):
         period = monday.isoformat()
         self.assertEqual(row["capacity_buckets"][period], 1.0)
         self.assertTrue(row["over"][period])
-        self.assertTrue(row["total_over"])
+
+        # Window-wide: 8h against a year of 1.0h workdays is not over.
+        self.assertFalse(row["total_over"])
+        total_capacity = sum(row["capacity_buckets"].values())
+        self.assertGreater(total_capacity, 200.0)
+
 
     def test_settings_under_load_is_not_over(self):
         ws = _ws()
@@ -427,6 +445,96 @@ class TestCapacityOverload(TransactionTestCase):
         self.assertEqual(row["capacity_buckets"][period], 8.0)
         self.assertFalse(row["over"][period])
         self.assertFalse(row["total_over"])
+
+
+class TestWindowCompletePeriods(TransactionTestCase):
+    """`periods` is a function of the REQUESTED WINDOW, not of which buckets
+    happened to receive hours. This is what gives every visible column a
+    capacity figure and a heat cell, and what stops one member's denominator
+    from moving when an unrelated member schedules work into a new week."""
+
+    def test_zero_hour_period_still_gets_capacity_and_a_not_over_flag(self):
+        ws = _ws()
+        proj = _project(ws)
+        u = _user()
+        _pmember(ws, proj, u)
+        st = _state(ws, proj, "started")
+        monday = date(2026, 6, 15)
+        issue = _issue(ws, proj, st, u, start=monday, target=monday)
+        _assign(ws, proj, issue, u, created_at=_t(1))
+        _estimate(ws, proj, issue, 4.0)
+
+        win_from, win_to = date(2026, 6, 15), date(2026, 6, 28)  # two full weeks
+        data = compute_workload(u, ws.slug, "week", win_from, win_to)
+        row = next(r for r in data["rows"] if r["assignee_id"] == str(u.id))
+
+        # Both weeks are columns, though only the first has hours.
+        self.assertEqual(data["periods"], ["2026-06-15", "2026-06-22"])
+        self.assertNotIn("2026-06-22", row["buckets"])          # sparse: no hours
+        self.assertEqual(row["capacity_buckets"]["2026-06-22"], 40.0)  # but priced
+        self.assertFalse(row["over"]["2026-06-22"])             # and explicitly not over
+
+    def test_denominator_does_not_move_when_another_member_schedules_work(self):
+        """The reported defect, reduced: u1's capacity denominator must be
+        identical whether or not u2 has work in a week u1 never touches."""
+        ws = _ws()
+        proj = _project(ws)
+        u1, u2 = _user(), _user()
+        _pmember(ws, proj, u1)
+        _pmember(ws, proj, u2)
+        st = _state(ws, proj, "started")
+        win_from, win_to = date(2026, 6, 15), date(2026, 7, 12)
+
+        first_monday = date(2026, 6, 15)
+        i1 = _issue(ws, proj, st, u1, start=first_monday, target=first_monday)
+        _assign(ws, proj, i1, u1, created_at=_t(1))
+        _estimate(ws, proj, i1, 6.0)
+
+        before = compute_workload(u1, ws.slug, "week", win_from, win_to)
+        cap_before = sum(
+            next(r for r in before["rows"] if r["assignee_id"] == str(u1.id))[
+                "capacity_buckets"
+            ].values()
+        )
+
+        # u2 now books work in a LATER week that u1 has nothing in.
+        later_monday = date(2026, 7, 6)
+        i2 = _issue(ws, proj, st, u2, start=later_monday, target=later_monday)
+        _assign(ws, proj, i2, u2, created_at=_t(1))
+        _estimate(ws, proj, i2, 9.0)
+
+        after = compute_workload(u1, ws.slug, "week", win_from, win_to)
+        cap_after = sum(
+            next(r for r in after["rows"] if r["assignee_id"] == str(u1.id))[
+                "capacity_buckets"
+            ].values()
+        )
+
+        self.assertEqual(cap_before, cap_after)
+        self.assertEqual(before["periods"], after["periods"])
+
+    def test_populated_bucket_outside_the_window_is_kept_not_dropped(self):
+        """A week key can precede `date_from`: hours are clipped to the window
+        but keyed off the un-clipped day. The union must keep that column, or
+        those hours would render nowhere."""
+        ws = _ws()
+        proj = _project(ws)
+        u = _user()
+        _pmember(ws, proj, u)
+        st = _state(ws, proj, "started")
+
+        # Wed Jun 17; the window opens on that day, but its Monday-start week
+        # bucket is Jun 15, two days earlier.
+        wednesday = date(2026, 6, 17)
+        issue = _issue(ws, proj, st, u, start=wednesday, target=wednesday)
+        _assign(ws, proj, issue, u, created_at=_t(1))
+        _estimate(ws, proj, issue, 5.0)
+
+        data = compute_workload(u, ws.slug, "week", wednesday, date(2026, 6, 28))
+        row = next(r for r in data["rows"] if r["assignee_id"] == str(u.id))
+        self.assertIn("2026-06-15", data["periods"])
+        self.assertEqual(row["buckets"]["2026-06-15"], 5.0)
+        self.assertIn("2026-06-15", row["capacity_buckets"])
 
 
 class TestReconciliation(TransactionTestCase):

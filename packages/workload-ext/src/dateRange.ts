@@ -31,24 +31,6 @@ export function daysBetween(from: string, to: string): number {
 }
 
 /**
- * Clamp a range to the granularity's max span, moving the edge the user did
- * NOT just set. `anchor` names the edge the user changed — it is held fixed.
- *
- * The API rejects an over-long span with a 400 (`views.py` `_SPAN_CAPS`), so
- * clamping here keeps the request valid instead of surfacing a server error.
- */
-export function clampDateRange(
-  from: string,
-  to: string,
-  granularity: TWorkloadGranularity,
-  anchor: "from" | "to"
-): { from: string; to: string } {
-  const max = MAX_SPAN_DAYS[granularity];
-  if (daysBetween(from, to) <= max) return { from, to };
-  return anchor === "from" ? { from, to: shiftDate(from, max) } : { from: shiftDate(to, -max), to };
-}
-
-/**
  * The [start, end] (inclusive, both YYYY-MM-DD) calendar span a `periods[]`
  * bucket key covers, for the Phase 8 timeline's capacity heat row. Mirrors
  * `period_key()` in `apps/api/plane/workload/aggregation.py` — the key format

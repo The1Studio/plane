@@ -12,6 +12,78 @@ import type { TWorkloadGranularity, TWorkloadResponse } from "@plane/workload-ex
 import { assigneeKey } from "./types";
 import type { TWorkloadTimelineBlockData } from "./types";
 
+/**
+ * The period the swimlane badge reports on, as an inclusive date range.
+ *
+ * It follows the chart: whatever week / month / quarter sits under the centre
+ * of the viewport is what the badge measures. That keeps the number answering
+ * the question the reader is actually looking at — scroll to March and the
+ * badge is about March — instead of being pinned to today's week while the
+ * columns show something else entirely.
+ *
+ * The period is one step COARSER than the bucketing, which is what makes the
+ * badge a summary rather than a restatement of a single cell:
+ *
+ *   gantt week    -> day buckets    -> badge covers the centred WEEK
+ *   gantt month   -> week buckets   -> badge covers the centred MONTH
+ *   gantt quarter -> month buckets  -> badge covers the centred QUARTER
+ */
+export type TFocusPeriod = { from: string; to: string; label: string };
+
+function pad(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+function iso(d: Date): string {
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** The [start, end] of the week containing `date`, honouring the workspace's week start. */
+function weekRange(date: Date, weekStartDay: number): { from: string; to: string } {
+  const start = new Date(date);
+  start.setDate(start.getDate() - ((start.getDay() - weekStartDay + 7) % 7));
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6);
+  return { from: iso(start), to: iso(end) };
+}
+
+function monthRange(date: Date): { from: string; to: string } {
+  const y = date.getFullYear();
+  const m = date.getMonth();
+  return { from: `${y}-${pad(m + 1)}-01`, to: iso(new Date(y, m + 1, 0)) };
+}
+
+function quarterRange(date: Date): { from: string; to: string } {
+  const y = date.getFullYear();
+  const q = Math.floor(date.getMonth() / 3);
+  return { from: `${y}-${pad(q * 3 + 1)}-01`, to: iso(new Date(y, q * 3 + 3, 0)) };
+}
+
+/**
+ * Resolve the badge's period from the date at the centre of the viewport.
+ * `granularity` is the CURRENT bucketing, which the caller derives from the
+ * chart's zoom — see the type docstring for the pairing.
+ */
+export function focusPeriodFor(
+  centreDate: Date,
+  granularity: TWorkloadGranularity,
+  weekStartDay: number
+): TFocusPeriod {
+  if (granularity === "day") {
+    const r = weekRange(centreDate, weekStartDay);
+    return { ...r, label: `Week of ${r.from}` };
+  }
+  if (granularity === "week") {
+    const r = monthRange(centreDate);
+    return {
+      ...r,
+      label: centreDate.toLocaleDateString(undefined, { month: "long", year: "numeric" }),
+    };
+  }
+  const r = quarterRange(centreDate);
+  return { ...r, label: `Q${Math.floor(centreDate.getMonth() / 3) + 1} ${centreDate.getFullYear()}` };
+}
+
 export type TWorkloadBlocksResult = {
   blockIds: string[];
   dataById: Record<string, TWorkloadTimelineBlockData>;
@@ -81,6 +153,26 @@ export function buildWorkloadBlocks(
         sort_order: order++,
         start_date: task.start_date ?? undefined,
         target_date: task.target_date,
+      };
+    }
+
+    // Footer closes the swimlane. Emitted only when expanded (a collapsed
+    // member is one line), and only when it has something to say — an empty
+    // strip would just be 44px of blank chart.
+    const hasFooterContent =
+      row.tasks.some((t) => !t.target_date) || row.tasks.some((t) => t.overdue) || row.tasks_truncated;
+    if (hasFooterContent) {
+      const footerId = `wl-footer:${key}`;
+      blockIds.push(footerId);
+      dataById[footerId] = {
+        kind: "footer",
+        id: footerId,
+        name: row.assignee_name,
+        assigneeId: row.assignee_id,
+        row,
+        sort_order: order++,
+        start_date: headerStart,
+        target_date: headerEnd,
       };
     }
   }

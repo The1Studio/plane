@@ -366,6 +366,78 @@ def test_capacity_invalid_granularity_raises():
         pass
 
 
+# --- enumerate_periods (window-complete columns) ----------------------------
+#
+# The counterpart to period_key. These pin the property that made the badge
+# wrong before it existed: the response's column set must be a function of the
+# REQUESTED WINDOW, not of which buckets happened to receive hours.
+
+def test_enumerate_periods_day_is_every_calendar_day_inclusive():
+    keys = agg.enumerate_periods(date(2026, 8, 18), date(2026, 8, 20), "day", DEFAULT_WEEK_START_DAY)
+    assert keys == ["2026-08-18", "2026-08-19", "2026-08-20"]
+
+
+def test_enumerate_periods_single_day_window():
+    for gran, expected in (("day", ["2026-08-18"]), ("week", ["2026-08-17"]), ("month", ["2026-08"])):
+        keys = agg.enumerate_periods(date(2026, 8, 18), date(2026, 8, 18), gran, DEFAULT_WEEK_START_DAY)
+        assert keys == expected, (gran, keys)
+
+
+def test_enumerate_periods_week_starts_at_the_containing_week_not_the_window():
+    # Aug 18 2026 is a Tuesday; with a Monday week start its bucket is Aug 17,
+    # which precedes the window. The first key MUST be that bucket, otherwise
+    # hours keyed to it would have no capacity entry and no heat cell.
+    keys = agg.enumerate_periods(date(2026, 8, 18), date(2026, 8, 31), "week", DEFAULT_WEEK_START_DAY)
+    assert keys == ["2026-08-17", "2026-08-24", "2026-08-31"]
+
+
+def test_enumerate_periods_week_honours_week_start_day():
+    sunday_start = agg.enumerate_periods(date(2026, 8, 18), date(2026, 8, 25), "week", 0)
+    assert sunday_start == ["2026-08-16", "2026-08-23"]
+    monday_start = agg.enumerate_periods(date(2026, 8, 18), date(2026, 8, 25), "week", 1)
+    assert monday_start == ["2026-08-17", "2026-08-24"]
+
+
+def test_enumerate_periods_month_crosses_a_year_boundary():
+    keys = agg.enumerate_periods(date(2026, 11, 20), date(2027, 2, 3), "month", DEFAULT_WEEK_START_DAY)
+    assert keys == ["2026-11", "2026-12", "2027-01", "2027-02"]
+
+
+def test_enumerate_periods_every_key_agrees_with_period_key():
+    # The two must never drift: every day in the window must land in a bucket
+    # this function already listed.
+    win_from, win_to = date(2026, 8, 18), date(2026, 11, 10)
+    for gran in ("day", "week", "month"):
+        listed = set(agg.enumerate_periods(win_from, win_to, gran, DEFAULT_WEEK_START_DAY))
+        d = win_from
+        while d <= win_to:
+            assert agg.period_key(d, gran, DEFAULT_WEEK_START_DAY) in listed, (gran, d)
+            d += timedelta(days=1)
+
+
+def test_enumerate_periods_covers_the_reported_window():
+    # The regression this whole change exists for: Aug 18 - Nov 10 2026 at week
+    # granularity is 13 columns. The old code emitted only the populated ones,
+    # which on the reported workspace was 3 -> a "120h" capacity denominator.
+    keys = agg.enumerate_periods(date(2026, 8, 18), date(2026, 11, 10), "week", DEFAULT_WEEK_START_DAY)
+    assert len(keys) == 13
+    assert keys == sorted(keys)
+    assert len(set(keys)) == len(keys)
+
+
+def test_enumerate_periods_inverted_window_is_empty_not_an_error():
+    assert agg.enumerate_periods(date(2026, 8, 20), date(2026, 8, 18), "day", DEFAULT_WEEK_START_DAY) == []
+
+
+def test_enumerate_periods_rejects_bad_granularity():
+    try:
+        agg.enumerate_periods(date(2026, 8, 18), date(2026, 8, 20), "fortnight", DEFAULT_WEEK_START_DAY)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError for an invalid granularity")
+
+
 def _main():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

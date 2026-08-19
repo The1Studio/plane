@@ -35,6 +35,8 @@ export type TWorkloadRow = {
  */
 export type TWorkloadTask = {
   id: string;
+  /** Owning project — required to build a work-item link or open the peek panel. */
+  project_id: string;
   /** `"<PROJECT>-<sequence_id>"`, e.g. "ENG-42". */
   identifier: string;
   name: string;

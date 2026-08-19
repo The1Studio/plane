@@ -1,4 +1,7 @@
 import { action, computed, makeObservable, observable, runInAction } from "mobx";
+import { MAX_SPAN_DAYS, daysBetween, shiftDate } from "./dateRange";
+import { mergeWorkloadResponses, normalizeRanges, snapRangeToPeriods, subtractRanges } from "./merge";
+import type { TDateRange } from "./merge";
 import { WorkloadService } from "./service";
 import type {
   TWorkloadEstimate,
@@ -10,35 +13,28 @@ import type {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Format a Date as YYYY-MM-DD (local timezone). */
-function toDateString(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-/** Add `weeks` weeks to a date and return a new Date. */
-function addWeeks(d: Date, weeks: number): Date {
-  const result = new Date(d);
-  result.setDate(result.getDate() + weeks * 7);
-  return result;
-}
-
 // ── Interface ─────────────────────────────────────────────────────────────────
 
 export interface IWorkloadStore {
   // observables
   granularity: TWorkloadGranularity;
-  dateFrom: string;
-  dateTo: string;
+  /**
+   * Date spans already fetched at the CURRENT granularity + filters, normalized
+   * and non-overlapping. There is no date-range picker any more: the chart's
+   * viewport asks for what it needs and this records what has been answered.
+   */
+  loadedRanges: TDateRange[];
+  /**
+   * Bumped by `resetCoverage`. The timeline watches it to reload the viewport
+   * after a filter or zoom change — those do not scroll, so the scroll-settle
+   * path that normally drives loading would never fire on its own.
+   */
+  coverageVersion: number;
   selectedProjectIds: string[];
   selectedAssigneeIds: string[];
   selectedStateGroups: string[];
   workloadData: TWorkloadResponse | null;
   estimateData: Record<string, TWorkloadEstimate | null>; // keyed by issueId
-  /** Client-side matrix filter — when true, the matrix renders only rows with `total_over`. */
-  showOverCapacityOnly: boolean;
   /**
    * Computed rollup per issueId. `null` means the id has been fetched (via
    * either the single-issue GET or the bulk rollups endpoint) and is
@@ -67,12 +63,17 @@ export interface IWorkloadStore {
 
   // actions
   setGranularity: (g: TWorkloadGranularity) => void;
-  setDateRange: (from: string, to: string) => void;
   setProjectIds: (ids: string[]) => void;
   setAssigneeIds: (ids: string[]) => void;
   setStateGroups: (groups: string[]) => void;
-  setShowOverCapacityOnly: (value: boolean) => void;
-  fetchWorkload: (workspaceSlug: string) => Promise<void>;
+  /**
+   * Load `range` if any of it is missing, merging the result into what is held.
+   * Idempotent and safe to call on every scroll settle — a fully covered range
+   * issues no request.
+   */
+  ensureRange: (workspaceSlug: string, range: TDateRange, weekStartDay: number) => Promise<void>;
+  /** Drop every loaded range and refetch nothing — used when a filter changes. */
+  resetCoverage: () => void;
   fetchEstimate: (workspaceSlug: string, projectId: string, issueId: string) => Promise<void>;
   fetchEstimatesBulk: (workspaceSlug: string, issueIds: string[]) => Promise<void>;
   /** Updates the estimate for `issueId`. Re-throws on failure (e.g. a typed
@@ -91,15 +92,20 @@ export interface IWorkloadStore {
 
 export class WorkloadStore implements IWorkloadStore {
   // observables
-  granularity: TWorkloadGranularity = "week";
-  dateFrom: string;
-  dateTo: string;
+  /**
+   * Must agree with the timeline's DEFAULT zoom, because that zoom is the only
+   * granularity control (WorkloadTimelineRoot's VIEW_TO_GRANULARITY).
+   * `BaseTimeLineStore` defaults `currentView` to `"week"`, whose columns are
+   * per-day — so `"day"` is the matching bucketing.
+   */
+  granularity: TWorkloadGranularity = "day";
+  loadedRanges: TDateRange[] = [];
+  coverageVersion: number = 0;
   selectedProjectIds: string[] = [];
   selectedAssigneeIds: string[] = [];
   selectedStateGroups: string[] = [];
   workloadData: TWorkloadResponse | null = null;
   estimateData: Record<string, TWorkloadEstimate | null> = {};
-  showOverCapacityOnly: boolean = false;
   rollupData: Record<string, TWorkloadRollup | null> = {};
   isLoading: boolean = false;
   error: string | null = null;
@@ -146,23 +152,36 @@ export class WorkloadStore implements IWorkloadStore {
    */
   private _writeEpoch: number = 0;
   private readonly _lastWriteEpoch: Record<string, number> = {};
+  /**
+   * Spans currently being fetched, subtracted alongside `loadedRanges` so two
+   * scroll settles in quick succession never request the same dates twice.
+   */
+  private readonly _inFlight = new Map<string, TDateRange>();
 
   constructor() {
-    const today = new Date();
-    this.dateFrom = toDateString(today);
-    this.dateTo = toDateString(addWeeks(today, 12));
+    // No default window, and no picker to set one. The chart's viewport is the
+    // range: `ensureRange` is called with whatever the reader has scrolled to,
+    // and `loadedRanges` accumulates what has been answered.
+    //
+    // The window this replaced ran `today .. today + 12 weeks`, i.e. forward
+    // only, which silently hid anyone whose scheduled work had already
+    // happened — an assignee reaches `rows` only via in-window hours or
+    // genuinely unscheduled work, so somebody whose every task was scheduled
+    // AND finished was not a `0h` row but no row at all. Observed live: 71
+    // tasks and 216.5h rendering nothing, because the latest target date was
+    // one day before the window opened. A viewport-driven range cannot
+    // reproduce that: you are always loading what you are looking at.
     this.service = new WorkloadService();
 
     makeObservable(this, {
       granularity: observable,
-      dateFrom: observable,
-      dateTo: observable,
+      loadedRanges: observable,
+      coverageVersion: observable,
       selectedProjectIds: observable,
       selectedAssigneeIds: observable,
       selectedStateGroups: observable,
       workloadData: observable,
       estimateData: observable,
-      showOverCapacityOnly: observable,
       rollupData: observable,
       isLoading: observable,
       error: observable,
@@ -172,12 +191,11 @@ export class WorkloadStore implements IWorkloadStore {
       maxColumns: computed,
 
       setGranularity: action,
-      setDateRange: action,
+      resetCoverage: action,
       setProjectIds: action,
       setAssigneeIds: action,
       setStateGroups: action,
-      setShowOverCapacityOnly: action,
-      fetchWorkload: action,
+      ensureRange: action,
       fetchEstimate: action,
       fetchEstimatesBulk: action,
       updateEstimate: action,
@@ -200,40 +218,87 @@ export class WorkloadStore implements IWorkloadStore {
 
   // ── Actions ────────────────────────────────────────────────────────────────
 
+  /**
+   * Changing any of the four inputs below makes every cached range describe a
+   * query that is no longer being asked — different bucketing, or a different
+   * slice of work — so each one drops the cache rather than trying to reconcile
+   * it. The next viewport settle refetches what is on screen.
+   */
   setGranularity(g: TWorkloadGranularity): void {
+    if (g === this.granularity) return;
     this.granularity = g;
-  }
-
-  setDateRange(from: string, to: string): void {
-    this.dateFrom = from;
-    this.dateTo = to;
+    this.resetCoverage();
   }
 
   setProjectIds(ids: string[]): void {
     this.selectedProjectIds = ids;
+    this.resetCoverage();
   }
 
   setAssigneeIds(ids: string[]): void {
     this.selectedAssigneeIds = ids;
+    this.resetCoverage();
   }
 
   setStateGroups(groups: string[]): void {
     this.selectedStateGroups = groups;
+    this.resetCoverage();
   }
 
-  setShowOverCapacityOnly(value: boolean): void {
-    this.showOverCapacityOnly = value;
+  resetCoverage(): void {
+    this.loadedRanges = [];
+    this.workloadData = null;
+    this._inFlight.clear();
+    this.coverageVersion += 1;
   }
 
-  async fetchWorkload(workspaceSlug: string): Promise<void> {
+  async ensureRange(workspaceSlug: string, range: TDateRange, weekStartDay: number): Promise<void> {
+    // Snap OUTWARD to whole periods before anything else. This is what lets the
+    // merge be a key union instead of an addition: a period key can then only
+    // ever be produced by one fetch, so re-requesting can never double-count
+    // (see merge.ts's header).
+    const want = snapRangeToPeriods(range, this.granularity, weekStartDay);
+
+    // Only the parts nobody has asked for yet — this is the whole point of
+    // keeping `loadedRanges`. Panning back over seen dates issues no request.
+    const gaps = subtractRanges(want, [...this.loadedRanges, ...this._inFlight.values()]);
+    if (gaps.length === 0) return;
+
+    await Promise.all(gaps.map((gap) => this._fetchGap(workspaceSlug, gap)));
+  }
+
+  /**
+   * Fetch ONE contiguous missing span and fold it in.
+   *
+   * The span is capped at the API's own limit for this granularity
+   * (`MAX_SPAN_DAYS`, mirroring `_SPAN_CAPS` in views.py) because the server
+   * answers an over-long range with a 400 rather than a truncation. When a gap
+   * exceeds the cap the near edge is taken and the rest is left for the next
+   * settle — jumping a long way loads progressively rather than failing.
+   */
+  private async _fetchGap(workspaceSlug: string, gap: TDateRange): Promise<void> {
+    const cap = MAX_SPAN_DAYS[this.granularity];
+    const capped: TDateRange =
+      daysBetween(gap.from, gap.to) > cap ? { from: gap.from, to: shiftDate(gap.from, cap) } : gap;
+
+    // Recorded BEFORE awaiting so a second scroll settle mid-flight subtracts
+    // this span too, instead of racing a duplicate request for it.
+    this._inFlight.set(this._inFlightKey(capped), capped);
+
     const filters: TWorkloadFilters = {
       granularity: this.granularity,
-      date_from: this.dateFrom,
-      date_to: this.dateTo,
+      date_from: capped.from,
+      date_to: capped.to,
       ...(this.selectedProjectIds.length > 0 && { project_ids: this.selectedProjectIds }),
       ...(this.selectedAssigneeIds.length > 0 && { assignee_ids: this.selectedAssigneeIds }),
       ...(this.selectedStateGroups.length > 0 && { state_group: this.selectedStateGroups }),
     };
+    const requestedGranularity = this.granularity;
+    // Captured with it: a FILTER change clears the cache without touching
+    // granularity, so the granularity guard below cannot see it on its own and
+    // a response already in flight would merge into a cache that no longer
+    // describes the same query.
+    const requestedVersion = this.coverageVersion;
 
     runInAction(() => {
       this.isLoading = true;
@@ -243,15 +308,28 @@ export class WorkloadStore implements IWorkloadStore {
     try {
       const data = await this.service.getWorkload(workspaceSlug, filters);
       runInAction(() => {
-        this.workloadData = data;
-        this.isLoading = false;
+        // A zoom or filter change while this was in flight already cleared the
+        // cache; folding a stale response in would reintroduce buckets for a
+        // query nobody is asking any more, which renders as plausible-looking
+        // wrong numbers rather than as an error.
+        if (requestedGranularity !== this.granularity || requestedVersion !== this.coverageVersion) return;
+        this.workloadData = mergeWorkloadResponses(this.workloadData, data);
+        this.loadedRanges = normalizeRanges([...this.loadedRanges, capped]);
       });
     } catch (err) {
       runInAction(() => {
         this.error = err instanceof Error ? err.message : String(err);
-        this.isLoading = false;
+      });
+    } finally {
+      runInAction(() => {
+        this._inFlight.delete(this._inFlightKey(capped));
+        this.isLoading = this._inFlight.size > 0;
       });
     }
+  }
+
+  private _inFlightKey(range: TDateRange): string {
+    return `${range.from}..${range.to}`;
   }
 
   async fetchEstimate(workspaceSlug: string, projectId: string, issueId: string): Promise<void> {

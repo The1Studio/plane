@@ -1,14 +1,11 @@
 import React from "react";
 import { observer } from "mobx-react";
 import { STATE_GROUPS } from "@plane/constants";
-import { Switch } from "@plane/propel/switch";
-import { Tabs } from "@plane/propel/tabs";
 import type { TWorkSettings } from "@plane/types";
 import { joinUrlPath } from "@plane/utils";
 
 import { wlt } from "./i18n";
 import type { IWorkloadStore } from "./store";
-import type { TWorkloadGranularity } from "./types";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -55,12 +52,6 @@ function formatWorkSettingsReadout(settings: TWorkSettings): string {
   });
 }
 
-const GRANULARITIES: Array<{ value: TWorkloadGranularity; labelKey: Parameters<typeof wlt>[0] }> = [
-  { value: "day", labelKey: "granularity.day" },
-  { value: "week", labelKey: "granularity.week" },
-  { value: "month", labelKey: "granularity.month" },
-];
-
 const STATE_GROUP_KEYS = Object.values(STATE_GROUPS);
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -74,40 +65,24 @@ export const WorkloadToolbar = observer(function WorkloadToolbar({
   projectFilterSlot,
   dateRangeSlot,
 }: WorkloadToolbarProps) {
-  function handleGranularityChange(value: unknown) {
-    // base-ui can emit a null value on deselect — ignore it rather than
-    // sending `granularity=null` to the API (mirrors the propel Tabs stories).
-    if (typeof value !== "string") return;
-    store.setGranularity(value as TWorkloadGranularity);
-    store.fetchWorkload(workspaceSlug);
-  }
-
-  /** State group is a server-side filter — toggling refetches. */
+  /**
+   * State group is a server-side filter. No explicit refetch here: the setter
+   * drops the range cache, and the timeline reloads whatever is on screen.
+   */
   function handleStateGroupToggle(key: string) {
     const next = store.selectedStateGroups.includes(key)
       ? store.selectedStateGroups.filter((g) => g !== key)
       : [...store.selectedStateGroups, key];
     store.setStateGroups(next);
-    store.fetchWorkload(workspaceSlug);
-  }
-
-  /** Over-capacity is a client-side row filter (plan D-B4) — never refetches. */
-  function handleOverOnlyChange(value: boolean) {
-    store.setShowOverCapacityOnly(value);
   }
 
   const hasActiveFilters =
-    store.selectedProjectIds.length > 0 ||
-    store.selectedAssigneeIds.length > 0 ||
-    store.selectedStateGroups.length > 0 ||
-    store.showOverCapacityOnly;
+    store.selectedProjectIds.length > 0 || store.selectedAssigneeIds.length > 0 || store.selectedStateGroups.length > 0;
 
   function handleClearFilters() {
     store.setProjectIds([]);
     store.setAssigneeIds([]);
     store.setStateGroups([]);
-    store.setShowOverCapacityOnly(false);
-    store.fetchWorkload(workspaceSlug);
   }
 
   const settingsHref = joinUrlPath(workspaceSlug, "settings/workload");
@@ -115,22 +90,11 @@ export const WorkloadToolbar = observer(function WorkloadToolbar({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
-        {/* Granularity */}
-        <Tabs
-          value={store.granularity}
-          onValueChange={handleGranularityChange}
-          className="h-auto w-auto"
-          aria-label={wlt("filters.granularity")}
-        >
-          <Tabs.List className="w-auto">
-            {GRANULARITIES.map(({ value, labelKey }) => (
-              <Tabs.Trigger key={value} value={value} className="px-3">
-                {wlt(labelKey)}
-              </Tabs.Trigger>
-            ))}
-            <Tabs.Indicator />
-          </Tabs.List>
-        </Tabs>
+        {/* Granularity is NOT a control here. It is derived from the timeline's
+            own Week/Month/Quarter zoom (WorkloadTimelineRoot), so the page has
+            exactly one time-range control instead of two that disagreed: this
+            one set the server-side bucketing while the chart's set the pixel
+            zoom, and nothing kept them in step. */}
 
         {/* Date range (app-injected) */}
         {dateRangeSlot}
@@ -161,19 +125,6 @@ export const WorkloadToolbar = observer(function WorkloadToolbar({
               </button>
             );
           })}
-        </div>
-
-        {/* Over-capacity only — client-side, no refetch */}
-        <div className="ml-1 flex items-center gap-2">
-          <Switch value={store.showOverCapacityOnly} onChange={handleOverOnlyChange} label={wlt("filters.over_only")} />
-          {/* Switch renders `label` as aria-label only, so the visible text lives here. */}
-          <button
-            type="button"
-            onClick={() => handleOverOnlyChange(!store.showOverCapacityOnly)}
-            className="text-13 text-tertiary transition-colors hover:text-primary"
-          >
-            {wlt("filters.over_only")}
-          </button>
         </div>
 
         {hasActiveFilters && (
