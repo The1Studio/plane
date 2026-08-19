@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "bindings": {
+    "The1Studio/plane": {
+      "workspaceSlug": "infrastructure",
+      "projectId": "2eae4e83-f715-4e4b-8753-cdc289bbe37f",
+      "projectIdentifier": "PLANE",
+      "projectName": null,
+      "moduleId": null,
+      "moduleName": null,
+      "boundAt": "2026-08-18T16:06:54.331Z"
+    }
+  }
+}
