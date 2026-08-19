@@ -47,9 +47,10 @@ type Props = {
  * Sized against the widest realistic label rather than the common one, because
  * `hours` is a 2-decimal float (`quantize_hours` → `round(cents / 100, 2)` in
  * `plane/workload/aggregation.py`), not an integer: `10.75h` is ~34px at
- * `text-11`, and the row spends 16px on `px-2` plus 6px on `gap-1.5`. 60px
- * leaves ~38px of label room, which covers every estimate short of a
- * three-digit decimal.
+ * `text-11`, and the row spends 16px on `px-2`. 60px therefore leaves ~44px of
+ * label room at Quarter zoom — the only zoom this floor reaches, and the one
+ * zoom that drops the title, so there is no `gap-1.5` to pay for either. That
+ * covers every estimate short of a three-digit decimal.
  *
  * Which zooms this actually binds on — `dayWidth` is 180 at Week, 60 at Month,
  * 30 at Quarter (gantt-chart/data/index.ts). A bar is at minimum one full day
@@ -82,6 +83,12 @@ export const WorkloadTimelineChartBlock = observer(function WorkloadTimelineChar
     const laneBlock = getBlockById(data.id);
     const laneMarginLeft = laneBlock?.position?.marginLeft ?? 0;
     const dayWidth = currentViewData.data.dayWidth;
+    // At quarter zoom a bar spans a handful of pixels per day, so a title is
+    // never more than two or three characters before the ellipsis — it costs
+    // the whole bar and tells the reader nothing. Drop it there and show the
+    // estimate alone; the name stays one hover away in the `title` below, and
+    // in the sidebar. Week and month keep both.
+    const isQuarter = currentViewData.key === "quarter";
 
     return (
       <div className="relative h-8 w-full">
@@ -103,7 +110,10 @@ export const WorkloadTimelineChartBlock = observer(function WorkloadTimelineChar
             >
               <div
                 className={cn(
-                  "flex h-8 w-full cursor-pointer items-center gap-1.5 overflow-hidden rounded-sm px-2 text-11 font-medium transition-colors",
+                  "flex h-8 w-full cursor-pointer items-center overflow-hidden rounded-sm px-2 text-11 font-medium transition-colors",
+                  // With the title gone there is nothing to sit opposite, so
+                  // the estimate centres rather than hugging an edge.
+                  isQuarter ? "justify-center" : "gap-1.5",
                   task.overdue
                     ? "bg-danger-subtle text-danger-primary hover:bg-danger-subtle/80"
                     : "bg-accent-primary/15 text-accent-primary hover:bg-accent-primary/25"
@@ -124,8 +134,12 @@ export const WorkloadTimelineChartBlock = observer(function WorkloadTimelineChar
                     truncate) while the hours never shrink, so `Nh` is the last
                     thing standing on a narrow bar. `gap-1.5` supplies the
                     separation the old `·` used to; `overflow-hidden` on the
-                    row keeps a shrunk title from bleeding past the bar edge. */}
-                <span className="min-w-0 flex-1 truncate">{task.name}</span>
+                    row keeps a shrunk title from bleeding past the bar edge.
+
+                    At quarter zoom the title is dropped entirely rather than
+                    truncated — see `isQuarter` above. The estimate is the one
+                    element that survives every zoom. */}
+                {!isQuarter && <span className="min-w-0 flex-1 truncate">{task.name}</span>}
                 <span className="shrink-0 tabular-nums">{task.hours}h</span>
               </div>
             </WorkloadTaskLink>
