@@ -35,6 +35,32 @@ type Props = {
   workspaceSlug: string;
 };
 
+/**
+ * Floor for a task bar's rendered width, in px.
+ *
+ * A bar must stay wide enough to render its `Nh` estimate WHOLE — that number
+ * is the point of this view, and the hours span below is `shrink-0` inside an
+ * `overflow-hidden` row, so a bar too narrow for it clips the number's TAIL:
+ * `10.75h` renders as a confident, wrong `10.7`. A missing label is recoverable
+ * (the `title` still carries the value); a truncated one is a lie.
+ *
+ * Sized against the widest realistic label rather than the common one, because
+ * `hours` is a 2-decimal float (`quantize_hours` → `round(cents / 100, 2)` in
+ * `plane/workload/aggregation.py`), not an integer: `10.75h` is ~34px at
+ * `text-11`, and the row spends 16px on `px-2` plus 6px on `gap-1.5`. 60px
+ * leaves ~38px of label room, which covers every estimate short of a
+ * three-digit decimal.
+ *
+ * Which zooms this actually binds on — `dayWidth` is 180 at Week, 60 at Month,
+ * 15 at Quarter (gantt-chart/data/index.ts). A bar is at minimum one full day
+ * wide, so at Week and Month the true width already clears this floor and
+ * nothing is distorted. It binds ONLY at Quarter zoom, where a 1–3 day task is
+ * drawn 60px — up to ~4 days' worth. That is a deliberate trade: at Quarter
+ * zoom the timeline is read for load, not for duration, and an always-legible
+ * estimate is worth more there than an exact sliver.
+ */
+const MIN_BAR_WIDTH = 60;
+
 export const WorkloadTimelineChartBlock = observer(function WorkloadTimelineChartBlock({
   data,
   granularity,
@@ -61,7 +87,7 @@ export const WorkloadTimelineChartBlock = observer(function WorkloadTimelineChar
           // single-day task would otherwise have zero width.
           const endPos = getPositionFromDate(currentViewData, task.target_date!, dayWidth);
           const left = startPos - laneMarginLeft;
-          const width = Math.max(endPos - startPos, 8);
+          const width = Math.max(endPos - startPos, MIN_BAR_WIDTH);
           return (
             <WorkloadTaskLink
               key={task.id}
@@ -72,7 +98,7 @@ export const WorkloadTimelineChartBlock = observer(function WorkloadTimelineChar
             >
               <div
                 className={cn(
-                  "flex h-8 w-full cursor-pointer items-center truncate rounded-sm px-2 text-11 font-medium transition-colors",
+                  "flex h-8 w-full cursor-pointer items-center gap-1.5 overflow-hidden rounded-sm px-2 text-11 font-medium transition-colors",
                   task.overdue
                     ? "bg-danger-subtle text-danger-primary hover:bg-danger-subtle/80"
                     : "bg-accent-primary/15 text-accent-primary hover:bg-accent-primary/25"
@@ -82,10 +108,20 @@ export const WorkloadTimelineChartBlock = observer(function WorkloadTimelineChar
                 {/* Name and hours only. The identifier prefix ate a third of a
                     narrow bar's width without telling the reader anything they
                     could not get from hovering — it stays in the `title` above,
-                    and in the sidebar cell for a single-task lane. */}
-                <span className="truncate">
-                  {task.name} · {task.hours}h
-                </span>
+                    and in the sidebar cell for a single-task lane.
+
+                    These are two nodes on purpose — do NOT collapse them back
+                    into one truncating span. Sharing a single text node made
+                    the name and the hours compete for the same ellipsis, and
+                    the name always won: a long title clipped the estimate
+                    entirely. Now the title yields (`min-w-0` is what lets a
+                    flex child shrink below its content width and actually
+                    truncate) while the hours never shrink, so `Nh` is the last
+                    thing standing on a narrow bar. `gap-1.5` supplies the
+                    separation the old `·` used to; `overflow-hidden` on the
+                    row keeps a shrunk title from bleeding past the bar edge. */}
+                <span className="min-w-0 flex-1 truncate">{task.name}</span>
+                <span className="shrink-0 tabular-nums">{task.hours}h</span>
               </div>
             </WorkloadTaskLink>
           );
