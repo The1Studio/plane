@@ -53,14 +53,15 @@ layout renders core issue blocks and carries no hours label.
 
 ## Phases
 
-| Phase                                                                             | File                                              | Effort  |
-| --------------------------------------------------------------------------------- | ------------------------------------------------- | ------- |
-| [Phase 1](phase-1.md) — right-anchor the hours, raise min bar width               | `WorkloadTimelineChartBlock.tsx`                  | S (<1h) |
-| [Phase 2](phase-2.md) — month zoom: capacity cells offset from their week columns | `gantt-chart/views/month-view.ts`, `docs/FORK.md` | S (<1h) |
+| Phase                                                                             | File                                              | Effort    |
+| --------------------------------------------------------------------------------- | ------------------------------------------------- | --------- |
+| [Phase 1](phase-1.md) — right-anchor the hours, raise min bar width               | `WorkloadTimelineChartBlock.tsx`                  | S (<1h)   |
+| [Phase 2](phase-2.md) — month zoom: capacity cells offset from their week columns | `gantt-chart/views/month-view.ts`, `docs/FORK.md` | S (<1h)   |
+| [Phase 3](phase-3.md) — week bucket end date a day early west of Greenwich        | `workload-ext/src/dateRange.ts`                   | S (<0.5h) |
 
-Phase 2 was added mid-cook on a second report from the user. It is an independent
-bug with an unrelated root cause (a dropped `startOfWeek` parameter in core's month
-chart generator), sharing only the surface it shows up on.
+Phases 2 and 3 were added mid-cook — Phase 2 on a second report from the user, Phase 3
+from a finding surfaced while reading Phase 2's date math. All three are independent
+bugs with unrelated root causes, sharing only the surface they show up on.
 
 ## Risk Assessment
 
@@ -85,6 +86,8 @@ No risk scores ≥ 15.
 
 **Phase 1** touches `apps/web/core/components/workload/` only — an existing fork-owned
 directory already documented in `docs/FORK.md`.
+
+**Phase 3** touches `packages/workload-ext/` — an existing fork-owned package.
 
 **Phase 2** edits a core file (`gantt-chart/views/month-view.ts`) outside the 7
 touch-points, and is therefore recorded in `docs/FORK.md` as the ninth row of the
