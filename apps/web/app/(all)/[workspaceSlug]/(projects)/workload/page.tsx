@@ -24,6 +24,7 @@ import { PageHead } from "@/components/core/page-title";
 import { MemberDropdown } from "@/components/dropdowns/member/dropdown";
 import { ProjectDropdown } from "@/components/dropdowns/project/dropdown";
 import { IssuePeekOverview } from "@/components/issues/peek-overview";
+import { StateGroupDropdown } from "@/components/workload/StateGroupDropdown";
 import { WorkloadTimelineRoot } from "@/components/workload/timeline";
 import { useIssueDetail } from "@/hooks/store/use-issue-detail";
 import { useUserPermissions } from "@/hooks/store/user";
@@ -67,6 +68,16 @@ export default observer(function WorkloadPage() {
     [workloadStore]
   );
 
+  // Same setter the state-group chips used to call. An EMPTY selection means
+  // no filtering at all, not "show nothing" — the server treats an absent
+  // state_groups param as every group (workload/service.py `_base_queryset`).
+  const handleStateGroupChange = useCallback(
+    (keys: string[]) => {
+      workloadStore.setStateGroups(keys);
+    },
+    [workloadStore]
+  );
+
   return (
     <>
       <PageHead title="Workload" />
@@ -91,6 +102,14 @@ export default observer(function WorkloadPage() {
               onChange={handleProjectChange}
               buttonVariant="border-with-text"
               placeholder={wlt("filters.projects")}
+            />
+          }
+          stateFilterSlot={
+            <StateGroupDropdown
+              value={workloadStore.selectedStateGroups}
+              onChange={handleStateGroupChange}
+              buttonVariant="border-with-text"
+              placeholder={wlt("filters.state_groups")}
             />
           }
         />

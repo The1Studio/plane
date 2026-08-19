@@ -513,7 +513,15 @@ def compute_workload(
                 "tasks_truncated": tasks_truncated,
             }
         )
-    rows.sort(key=lambda r: (-r["total"], r["assignee_name"]))
+    # Rows read alphabetically, not by load. A reader looking for one person
+    # scans a name list; ranking by `-total` meant that list re-ordered itself
+    # every time an estimate changed, so the same member sat somewhere new on
+    # each visit. The unassigned bucket is pinned first, keyed on `assignee_id
+    # is None` (False sorts before True) rather than on the display name — a
+    # real member literally called "Unassigned" still sorts under U instead of
+    # stealing the pinned slot. `casefold`, not `lower`, so non-ASCII display
+    # names compare the way the reader expects.
+    rows.sort(key=lambda r: (r["assignee_id"] is not None, r["assignee_name"].casefold()))
 
     unscheduled_list = [
         {"assignee_id": str(oid) if oid else None, "hours": from_cents(c)}

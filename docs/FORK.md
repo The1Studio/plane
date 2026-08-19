@@ -209,7 +209,11 @@ New backend code lives in **new Django apps**:
   settings" below). `WorkloadCapacity` (per-member capacity) was **removed** —
   `migrations/0004_seed_workload_settings_from_capacity.py` +
   `0005_delete_workloadcapacity.py`; the grain is workspace-only from `company-v1.3.1-*`
-  onward.
+  onward. **Row order is part of the response contract:** `rows` come back with the
+  unassigned bucket first, then ascending by `assignee_name` case-insensitively. This
+  replaced a busiest-first (`-total`) order, so no consumer may assume `rows[0]` is the
+  heaviest load — the MCP `get_workload` tool included
+  (The1Studio/plane-mcp-server#15 tracks stating it in that tool's docstring).
 - `apps/api/plane/github_ext/` — GitHub ↔ Plane dev-workflow links (`WorkItemGithubLink`) and
   PR-driven status automation (`StateTransitionConfig`, webhook ingest)
 - `apps/api/plane/project_ext/` — project visibility (`network`) over the public API (the core
