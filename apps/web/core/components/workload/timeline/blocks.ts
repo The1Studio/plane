@@ -13,74 +13,75 @@ import { assigneeKey } from "./types";
 import type { TWorkloadTimelineBlockData } from "./types";
 
 /**
- * The week key whose figures the swimlane badge reports: the week containing
- * today, clamped into the response window.
+ * The period the swimlane badge reports on, as an inclusive date range.
  *
- * `weekly_buckets` is keyed by the containing week's FIRST DATE (never an ISO
- * week number — an arbitrary `week_start_day` has none), so this reproduces
- * `period_key(d, "week", week_start_day)` from the API's aggregation.py. That
- * duplication is unavoidable — the key has to be computed for a date the
- * response carries no bucket for — but it is confined to this one function.
+ * It follows the chart: whatever week / month / quarter sits under the centre
+ * of the viewport is what the badge measures. That keeps the number answering
+ * the question the reader is actually looking at — scroll to March and the
+ * badge is about March — instead of being pinned to today's week while the
+ * columns show something else entirely.
  *
- * `weekStartDay` is a Plane `EStartOfTheWeek` value (SUNDAY=0..SATURDAY=6),
- * which is the opposite origin from JS `Date.getDay()`... except that
- * `getDay()` is ALSO Sunday=0, so the two already agree and no conversion is
- * needed here (unlike the Python side, where `date.weekday()` is Monday=0).
+ * The period is one step COARSER than the bucketing, which is what makes the
+ * badge a summary rather than a restatement of a single cell:
+ *
+ *   gantt week    -> day buckets    -> badge covers the centred WEEK
+ *   gantt month   -> week buckets   -> badge covers the centred MONTH
+ *   gantt quarter -> month buckets  -> badge covers the centred QUARTER
  */
-export function weekKeyFor(dateStr: string, weekStartDay: number): string {
-  const d = new Date(`${dateStr}T00:00:00`);
-  const offset = (d.getDay() - weekStartDay + 7) % 7;
-  d.setDate(d.getDate() - offset);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+export type TFocusPeriod = { from: string; to: string; label: string };
+
+function pad(n: number): string {
+  return String(n).padStart(2, "0");
 }
 
-/** Local today as YYYY-MM-DD, matching the format the API speaks. */
-function todayString(): string {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, "0");
-  const d = String(now.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
+function iso(d: Date): string {
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** The [start, end] of the week containing `date`, honouring the workspace's week start. */
+function weekRange(date: Date, weekStartDay: number): { from: string; to: string } {
+  const start = new Date(date);
+  start.setDate(start.getDate() - ((start.getDay() - weekStartDay + 7) % 7));
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6);
+  return { from: iso(start), to: iso(end) };
+}
+
+function monthRange(date: Date): { from: string; to: string } {
+  const y = date.getFullYear();
+  const m = date.getMonth();
+  return { from: `${y}-${pad(m + 1)}-01`, to: iso(new Date(y, m + 1, 0)) };
+}
+
+function quarterRange(date: Date): { from: string; to: string } {
+  const y = date.getFullYear();
+  const q = Math.floor(date.getMonth() / 3);
+  return { from: `${y}-${pad(q * 3 + 1)}-01`, to: iso(new Date(y, q * 3 + 3, 0)) };
 }
 
 /**
- * The workspace's week-start day, read back off the response's own weekly keys.
- *
- * Every `weekly_buckets` key IS a week's first date, produced server-side from
- * the workspace's `week_start_day`, so its weekday is that setting. Deriving it
- * here rather than calling `useWorkSettings` has two advantages: no second GET
- * on a page that already issues one (the hook fetches per instance — it is not
- * store-backed or deduped), and the value cannot DISAGREE with the bucketing it
- * is used to index, which is the only property that actually matters.
- *
- * Falls back to Monday (`DEFAULT_WEEK_START_DAY` in the API's constants.py)
- * when no row has any weekly bucket — in which case every badge reads `0h` and
- * the key is not used to find anything.
+ * Resolve the badge's period from the date at the centre of the viewport.
+ * `granularity` is the CURRENT bucketing, which the caller derives from the
+ * chart's zoom — see the type docstring for the pairing.
  */
-function deriveWeekStartDay(data: TWorkloadResponse): number {
-  for (const row of data.rows) {
-    for (const key of Object.keys(row.weekly_buckets ?? {})) {
-      const d = new Date(`${key}T00:00:00`);
-      if (!Number.isNaN(d.getTime())) return d.getDay();
-    }
+export function focusPeriodFor(
+  centreDate: Date,
+  granularity: TWorkloadGranularity,
+  weekStartDay: number
+): TFocusPeriod {
+  if (granularity === "day") {
+    const r = weekRange(centreDate, weekStartDay);
+    return { ...r, label: `Week of ${r.from}` };
   }
-  return 1;
-}
-
-/**
- * Which week the badge reports on: today's, or the nearest edge of the window
- * when today falls outside it. Never returns a week the response has no column
- * for, so the badge is always about something the user can actually see.
- */
-export function focusWeekKey(data: TWorkloadResponse): string {
-  const weekStartDay = deriveWeekStartDay(data);
-  const today = todayString();
-  if (today < data.date_from) return weekKeyFor(data.date_from, weekStartDay);
-  if (today > data.date_to) return weekKeyFor(data.date_to, weekStartDay);
-  return weekKeyFor(today, weekStartDay);
+  if (granularity === "week") {
+    const r = monthRange(centreDate);
+    return {
+      ...r,
+      label: centreDate.toLocaleDateString(undefined, { month: "long", year: "numeric" }),
+    };
+  }
+  const r = quarterRange(centreDate);
+  return { ...r, label: `Q${Math.floor(centreDate.getMonth() / 3) + 1} ${centreDate.getFullYear()}` };
 }
 
 export type TWorkloadBlocksResult = {

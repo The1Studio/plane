@@ -37,12 +37,16 @@ import { observer } from "mobx-react";
 import { GANTT_TIMELINE_TYPE } from "@plane/types";
 import type { IBlockUpdateData, TGanttViews } from "@plane/types";
 import type { IWorkloadStore, TWorkloadGranularity } from "@plane/workload-ext";
-import { clampDateRange, wlt } from "@plane/workload-ext";
+import { wlt } from "@plane/workload-ext";
 import { TimeLineTypeContext } from "@/components/gantt-chart/contexts";
 import { GanttChartRoot } from "@/components/gantt-chart/root";
 import { useTimeLineChart } from "@/hooks/use-timeline-chart";
 import { BaseTimeLineStore } from "@/plane-web/store/timeline/base-timeline.store";
-import { buildWorkloadBlocks, focusWeekKey } from "./blocks";
+import { SIDEBAR_WIDTH } from "@/components/gantt-chart/constants";
+import { getDateFromPositionOnGantt } from "@/components/gantt-chart/views";
+import { useWorkSettings } from "@/hooks/store/use-work-settings";
+import { buildWorkloadBlocks, focusPeriodFor } from "./blocks";
+import type { TFocusPeriod } from "./blocks";
 import { WorkloadTaskLink } from "./WorkloadTaskLink";
 import { WorkloadTimelineChartBlock } from "./WorkloadTimelineChartBlock";
 import { WorkloadTimelineSidebarRow } from "./WorkloadTimelineSidebarRow";
@@ -80,6 +84,18 @@ const VIEW_TO_GRANULARITY: Record<TGanttViews, TWorkloadGranularity> = {
   quarter: "month",
 };
 
+function addDays(d: Date, days: number): Date {
+  const out = new Date(d);
+  out.setDate(out.getDate() + days);
+  return out;
+}
+
+function toDateStr(d: Date): string {
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+
 const noopBlockUpdateHandler = (_block: unknown, _payload: IBlockUpdateData) => {
   // Drag/resize/reorder are all disabled (D14, out of scope) — GanttChartRoot
   // still requires a handler prop, but it is never invoked.
@@ -110,11 +126,6 @@ export const WorkloadTimelineRoot = observer(function WorkloadTimelineRoot({ sto
     return buildWorkloadBlocks(store.workloadData, store.granularity, collapsed);
   }, [store.workloadData, store.granularity, collapsed]);
 
-  // The week the badge reports on. Derived from the response itself, so it can
-  // never index `weekly_buckets` with a key built from a different week-start
-  // convention than the server used.
-  const focusWeek = useMemo(() => (store.workloadData ? focusWeekKey(store.workloadData) : ""), [store.workloadData]);
-
   // `dataById` is a plain object, not a MobX observable — the autorun below
   // can't track it directly, so it's read through a ref updated every render.
   const dataByIdRef = useRef(dataById);
@@ -131,56 +142,134 @@ export const WorkloadTimelineRoot = observer(function WorkloadTimelineRoot({ sto
   // block's `position` current without a React re-render in the loop.
   useEffect(() => autorun(() => timelineStore.updateBlocks((id: string) => dataByIdRef.current[id])), [timelineStore]);
 
-  // The chart's zoom is the granularity control: re-bucket and refetch when it
-  // changes. `reaction` (not `autorun`) so this never fires on the initial
-  // read — the two already agree at construction.
+  // ── Viewport-driven loading ────────────────────────────────────────────────
+  //
+  // There is no date-range picker: what the reader has scrolled to IS the
+  // range. `#gantt-container` is core's scroll element (it carries a
+  // DO-NOT-REMOVE id) and `getDateFromPositionOnGantt` turns a pixel offset in
+  // its content into a date, so the visible span and its centre both fall out
+  // of `scrollLeft` + `clientWidth`.
+  //
+  // Attaching our own listener instead of reaching into `ChartViewRoot`'s
+  // `onScroll` keeps this pure composition: core is untouched and its own
+  // handler, which paginates the axis, still runs alongside this one.
+  const { workSettings } = useWorkSettings(workspaceSlug);
+  const weekStartDay = workSettings.week_start_day;
+  const [focus, setFocus] = useState<TFocusPeriod | null>(null);
+  // The last span asked for, so a zoom or filter change can reload the same
+  // view without waiting for the reader to scroll.
+  const lastRangeRef = useRef<{ from: string; to: string } | null>(null);
+
+  const syncViewport = useCallback(() => {
+    const el = document.getElementById("gantt-container");
+    const chart = timelineStore.currentViewData;
+    if (!el || !chart) return;
+
+    // The sidebar is sticky INSIDE the scroll container, overlaying the first
+    // SIDEBAR_WIDTH pixels — so the leftmost genuinely visible chart pixel sits
+    // that far past `scrollLeft`, not at it.
+    const leftPx = el.scrollLeft + SIDEBAR_WIDTH;
+    const rightPx = el.scrollLeft + el.clientWidth;
+    const from = getDateFromPositionOnGantt(leftPx, chart);
+    const to = getDateFromPositionOnGantt(rightPx, chart);
+    const centre = getDateFromPositionOnGantt((leftPx + rightPx) / 2, chart);
+    if (!from || !to || !centre) return;
+
+    setFocus(focusPeriodFor(centre, store.granularity, weekStartDay));
+
+    // Load a viewport's width either side too, so ordinary panning lands on
+    // data already held rather than on empty columns that fill in a moment
+    // later. `ensureRange` requests only what is missing, so the padding costs
+    // nothing once it has been fetched.
+    const spanDays = Math.max(1, Math.round((to.getTime() - from.getTime()) / 86_400_000));
+    const padded = { from: toDateStr(addDays(from, -spanDays)), to: toDateStr(addDays(to, spanDays)) };
+    lastRangeRef.current = padded;
+    void store.ensureRange(workspaceSlug, padded, weekStartDay);
+  }, [timelineStore, store, workspaceSlug, weekStartDay]);
+
+  // Scroll settle. Panning fires continuously, so this is debounced — without
+  // it a single drag would queue a request per frame.
+  useEffect(() => {
+    const el = document.getElementById("gantt-container");
+    if (!el) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const onScroll = () => {
+      clearTimeout(timer);
+      timer = setTimeout(syncViewport, 250);
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    // Once on mount as well: the first paint has a viewport but no scroll event.
+    syncViewport();
+    return () => {
+      clearTimeout(timer);
+      el.removeEventListener("scroll", onScroll);
+    };
+  }, [syncViewport]);
+
+  // A zoom or filter change empties the cache but does not scroll, so nothing
+  // above would fire. Re-ask for the span already on screen.
+  useEffect(() => {
+    if (store.coverageVersion === 0) return;
+    syncViewport();
+  }, [store.coverageVersion, syncViewport]);
+
+  // The chart's zoom is the granularity control. Changing it drops the range
+  // cache (the store's setter does that), and the viewport sync below reloads
+  // whatever is on screen at the new bucketing. `reaction`, not `autorun`, so
+  // it never fires on the initial read — the two already agree at construction.
   useEffect(
     () =>
       reaction(
         () => timelineStore.currentView,
         (view: TGanttViews) => {
           const next = VIEW_TO_GRANULARITY[view];
-          if (!next || next === store.granularity) return;
-          store.setGranularity(next);
-          // Load-bearing, not defensive: the API REJECTS an over-long span with
-          // a 400 rather than truncating it (views.py `_SPAN_CAPS`, mirrored by
-          // MAX_SPAN_DAYS). Zooming out to quarter and back in would otherwise
-          // carry a 730-day range into a 92-day cap and break the page. Anchor
-          // on "from" so the window keeps its start and gives up its tail.
-          const { from, to } = clampDateRange(store.dateFrom, store.dateTo, next, "from");
-          if (from !== store.dateFrom || to !== store.dateTo) store.setDateRange(from, to);
-          store.fetchWorkload(workspaceSlug);
+          if (next) store.setGranularity(next);
         }
       ),
-    [timelineStore, store, workspaceSlug]
+    [timelineStore, store]
   );
-
-  if (store.isLoading) {
-    return <div className="py-8 text-center text-13 text-tertiary">{wlt("common.loading")}</div>;
-  }
-  if (store.error) {
-    return <div className="py-4 text-13 text-danger-primary">{store.error}</div>;
-  }
-  if (!store.workloadData || store.workloadData.rows.length === 0) {
-    // "No rows" and "no data" are NOT the same thing, and conflating them is
-    // what let a real bug hide: a member with 71 estimated tasks rendered an
-    // empty board because every one of their target dates fell just before the
-    // window opened. The server already tells us the difference — `issues_counted`
-    // is the number of estimated work items it examined, before any date
-    // clipping — so say which case this is instead of a bare "no data".
-    const counted = store.workloadData?.meta?.issues_counted ?? 0;
-    return (
-      <div className="py-8 text-center text-13 text-placeholder">
-        {counted > 0 ? wlt("timeline.no_data_in_range", { count: counted }) : wlt("timeline.no_workload_data")}
-      </div>
-    );
-  }
 
   const granularity = store.granularity;
 
+  // The chart is ALWAYS rendered. Every state below is an overlay on top of it,
+  // never a replacement, for two reasons:
+  //
+  //  - Returning early on "no data yet" DEADLOCKS the page. Loading is driven
+  //    by the viewport of `#gantt-container`, so a first paint that renders a
+  //    placeholder instead of the chart never mounts that element, never
+  //    measures a viewport, and therefore never fetches the data that would
+  //    have replaced the placeholder.
+  //  - Returning early on `isLoading` would blank the whole board on every pan,
+  //    since panning is now what triggers loading.
+  const hasRows = (store.workloadData?.rows.length ?? 0) > 0;
+  const counted = store.workloadData?.meta?.issues_counted ?? 0;
+
   return (
     <TimeLineTypeContext.Provider value={GANTT_TIMELINE_TYPE.WORKLOAD}>
-      <div className="h-[70vh] w-full">
+      <div className="relative h-[70vh] w-full">
+        {!hasRows && (
+          // "No rows" and "no data" are NOT the same thing, and conflating them
+          // is what let a real bug hide: a member with 71 estimated tasks
+          // rendered an empty board because every target date fell just outside
+          // the window. `issues_counted` is counted BEFORE date clipping, so it
+          // tells the two apart.
+          <div className="pointer-events-none absolute inset-0 z-[5] flex items-start justify-center pt-24">
+            <span className="text-13 text-placeholder">
+              {store.isLoading
+                ? wlt("common.loading")
+                : counted > 0
+                  ? wlt("timeline.no_data_in_range", { count: counted })
+                  : wlt("timeline.no_workload_data")}
+            </span>
+          </div>
+        )}
+        {store.error && (
+          // Shown alongside the board, not instead of it: one failed span must
+          // not discard the spans that loaded fine.
+          <div className="absolute top-2 right-2 z-[6] rounded-md bg-danger-subtle px-2 py-1 text-11 text-danger-primary">
+            {store.error}
+          </div>
+        )}
         <GanttChartRoot
           border
           title={wlt("matrix.assignee")}
@@ -195,7 +284,7 @@ export const WorkloadTimelineRoot = observer(function WorkloadTimelineRoot({ sto
               blockIds={blockIds}
               collapsed={collapsed}
               onToggleCollapse={toggleCollapse}
-              focusWeek={focusWeek}
+              focus={focus}
               renderTaskLabel={(taskData) => (
                 <WorkloadTaskLink
                   task={taskData.task}

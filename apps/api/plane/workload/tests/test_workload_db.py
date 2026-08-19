@@ -358,7 +358,7 @@ class TestCapacityOverload(TransactionTestCase):
         against ~261 workdays of capacity and is emphatically not over.
 
         The overload signal that survives is the one the UI actually needs:
-        `over[period]` for the loaded day, and the weekly figure (D6).
+        `over[period]` for the loaded day.
         """
         ws = _ws()
         proj = _project(ws)
@@ -382,10 +382,6 @@ class TestCapacityOverload(TransactionTestCase):
         total_capacity = sum(row["capacity_buckets"].values())
         self.assertGreater(total_capacity, 200.0)
 
-        # Weekly: 8h in the week of Jun 15 against a 5.0h weekly max IS over.
-        self.assertEqual(row["weekly_capacity"], 5.0)
-        self.assertEqual(row["weekly_buckets"]["2026-06-15"], 8.0)
-        self.assertGreater(row["weekly_buckets"]["2026-06-15"], row["weekly_capacity"])
 
     def test_settings_under_load_is_not_over(self):
         ws = _ws()

@@ -25,6 +25,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { observer } from "mobx-react";
 import { wlt } from "@plane/workload-ext";
 import type { TWorkloadRow } from "@plane/workload-ext";
+import type { TFocusPeriod } from "./blocks";
 import { Avatar, Row, ERowVariant } from "@plane/ui";
 import { cn } from "@plane/utils";
 import { useMember } from "@/hooks/store/use-member";
@@ -38,43 +39,75 @@ type Props = {
   collapsed: ReadonlySet<string>;
   onToggleCollapse: (key: string) => void;
   /**
-   * The week the header badge reports on — a `weekly_buckets` key, computed
-   * once by the root from the response window and the workspace's week start
-   * (see `focusWeekKey`), not re-derived per row.
+   * The period the header badge reports on — derived once by the root from the
+   * chart's centre and zoom (see `focusPeriodFor`), never re-derived per row.
+   * `null` until the first viewport sync, when the badge reads "—" rather than
+   * inventing a period.
    */
-  focusWeek: string;
+  focus: TFocusPeriod | null;
   /** Renders a task row as a peek-opening control. Phase 4 supplies it. */
   renderTaskLabel?: (data: Extract<TWorkloadTimelineBlockData, { kind: "task" }>) => React.ReactNode;
 };
+
+/** Two-decimal rounding, so summed float buckets do not print 7.000000000000001h. */
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
 
 /** "32h/40h" — omits the fractional ".0". */
 function fmtHours(value: number): string {
   return Number.isInteger(value) ? `${value}` : value.toFixed(1);
 }
 
-/** Pretty-prints a `weekly_buckets` key ("2026-08-17") for the badge tooltip. */
-function formatWeekLabel(weekKey: string): string {
-  const d = new Date(`${weekKey}T00:00:00`);
-  if (Number.isNaN(d.getTime())) return weekKey;
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+/**
+ * Is this bucket key inside the focused period?
+ *
+ * Keys are `YYYY-MM-DD` at day/week granularity and `YYYY-MM` at month. A bare
+ * month key would compare as BEFORE its own month's first day under plain
+ * string ordering (`"2026-08" < "2026-08-01"`), so it is widened to that first
+ * day — attributing the bucket to the period containing its start, exactly as
+ * the longer keys already do.
+ */
+function isInFocus(periodKey: string, focus: TFocusPeriod): boolean {
+  const start = periodKey.length === 7 ? `${periodKey}-01` : periodKey;
+  return start >= focus.from && start <= focus.to;
 }
 
 /**
- * The badge figures: hours logged in `focusWeek` against the workspace's
- * weekly max.
+ * The badge figures: hours booked and capacity available inside the focused
+ * period, summed over the buckets that fall in it.
  *
- * This is deliberately NOT `row.total` over the summed `capacity_buckets`.
- * That window total answered a question nobody asked ("how loaded is this
- * person across the whole visible range?") in units the workspace never
- * configures — the setting is a WEEKLY maximum — and, before `periods` covered
- * the requested window, its denominator was capacity over whichever buckets
- * happened to contain hours, so it moved when an unrelated member scheduled
- * work. Per-period detail still lives on each heat cell's tooltip.
+ * Summing the VISIBLE buckets — rather than reading a dedicated per-week field
+ * — is what lets one code path serve all three zooms, and it guarantees the
+ * badge and the heat cells beside it can never disagree: they are literally the
+ * same numbers. A period key is attributed to the period containing its start,
+ * the same convention `period_key` uses server-side, so a week straddling two
+ * months counts once, in the month it began.
  */
-function weeklyFigures(row: TWorkloadRow, focusWeek: string): { used: number; capacity: number; over: boolean } {
-  const used = row.weekly_buckets?.[focusWeek] ?? 0;
-  const capacity = row.weekly_capacity ?? 0;
-  return { used, capacity, over: capacity > 0 && used > capacity };
+function periodFigures(
+  row: TWorkloadRow,
+  focus: TFocusPeriod | null
+): { used: number; capacity: number; over: boolean; hasData: boolean } {
+  let used = 0;
+  let capacity = 0;
+  let hasData = false;
+  if (!focus) return { used, capacity, over: false, hasData };
+  for (const [period, hours] of Object.entries(row.buckets ?? {})) {
+    if (!isInFocus(period, focus)) continue;
+    used += hours;
+    hasData = true;
+  }
+  for (const [period, hours] of Object.entries(row.capacity_buckets ?? {})) {
+    if (!isInFocus(period, focus)) continue;
+    capacity += hours;
+    hasData = true;
+  }
+  return {
+    used: round2(used),
+    capacity: round2(capacity),
+    over: capacity > 0 && used > capacity,
+    hasData,
+  };
 }
 
 /** A fixed-height sidebar cell — every block kind occupies exactly one. */
@@ -90,7 +123,7 @@ export const WorkloadTimelineSidebarRow = observer(function WorkloadTimelineSide
   blockIds,
   collapsed,
   onToggleCollapse,
-  focusWeek,
+  focus,
   renderTaskLabel,
 }: Props) {
   const { getBlockById } = useTimeLineChartStore();
@@ -151,7 +184,7 @@ export const WorkloadTimelineSidebarRow = observer(function WorkloadTimelineSide
         const key = assigneeKey(data.assigneeId);
         const isCollapsed = collapsed.has(key);
         const memberDetails = data.assigneeId ? getUserDetails(data.assigneeId) : undefined;
-        const { used, capacity, over } = weeklyFigures(row, focusWeek);
+        const { used, capacity, over, hasData } = periodFigures(row, focus);
 
         return (
           <SidebarCell key={blockId} className={cn("flex items-center gap-2 pr-2", { "bg-danger-subtle/40": over })}>
@@ -181,9 +214,9 @@ export const WorkloadTimelineSidebarRow = observer(function WorkloadTimelineSide
                 )}
                 // Without this the reader cannot tell WHICH week "41h/40h" is
                 // about — the chart axis may be scrolled anywhere.
-                title={wlt("timeline.week_of", { date: formatWeekLabel(focusWeek) })}
+                title={focus?.label}
               >
-                {fmtHours(used)}h/{fmtHours(capacity)}h
+                {hasData ? `${fmtHours(used)}h/${fmtHours(capacity)}h` : "—"}
               </span>
             </div>
           </SidebarCell>

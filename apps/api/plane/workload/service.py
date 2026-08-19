@@ -370,7 +370,6 @@ def compute_workload(
     assignee_filter = set(assignee_ids) if assignee_ids else None
 
     buckets = defaultdict(lambda: defaultdict(int))  # owner_id -> period -> cents
-    weekly = defaultdict(lambda: defaultdict(int))  # owner_id -> week key -> cents
     unscheduled = defaultdict(int)  # owner_id -> cents
     tasks_by_owner = defaultdict(list)  # owner_id -> [task row, ...]
     names = {}
@@ -412,21 +411,6 @@ def compute_workload(
         if uns_cents:
             unscheduled[owner_id] += uns_cents
 
-        # A SECOND, always-weekly spread (D1). The `NNh/40h` badge is defined
-        # per week, so it cannot be read off `b` — at `granularity=month` a
-        # week is not recoverable from a month bucket, and at `day` summing
-        # seven of them would re-derive the week-start convention here instead
-        # of in `period_key`. Reuse `b` verbatim on the one granularity where
-        # the two aggregations are the same computation.
-        wb = (
-            b
-            if granularity == "week"
-            else spread_estimate(
-                hours, start, target, date_from, date_to, "week", workdays, week_start_day
-            )[0]
-        )
-        for k, c in wb.items():
-            weekly[owner_id][k] += c
 
         # A task appears in `tasks` iff it has a visible representation in
         # THIS request's window: either it contributed at least one bucket
@@ -477,7 +461,7 @@ def compute_workload(
     periods = sorted(period_set)
 
     rows = []
-    owner_ids = set(buckets.keys()) | set(unscheduled.keys()) | set(weekly.keys())
+    owner_ids = set(buckets.keys()) | set(unscheduled.keys())
     # Same workspace-wide capacity for every row now (D1) — computed ONCE and
     # referenced by each row below, not rebuilt per-owner. Prorated over
     # every period column in the response (not just a given row's populated
@@ -522,14 +506,6 @@ def compute_workload(
                 "assignee_name": names.get(owner_id, "Unassigned"),
                 "buckets": sparse,
                 "total": total,
-                # Granularity-independent, for the per-week `NNh/40h` badge and
-                # the "over capacity" signal, both of which are defined per week
-                # regardless of how the columns are bucketed. Sparse, and keyed
-                # by the containing week's first date (never an ISO week number).
-                "weekly_buckets": {
-                    k: from_cents(c) for k, c in weekly.get(owner_id, {}).items() if c
-                },
-                "weekly_capacity": round(float(max_weekly_hours), 2),
                 "capacity_buckets": capacity_buckets,
                 "over": over,
                 "total_over": total_over,

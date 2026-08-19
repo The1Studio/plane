@@ -65,13 +65,15 @@ export const WorkloadToolbar = observer(function WorkloadToolbar({
   projectFilterSlot,
   dateRangeSlot,
 }: WorkloadToolbarProps) {
-  /** State group is a server-side filter — toggling refetches. */
+  /**
+   * State group is a server-side filter. No explicit refetch here: the setter
+   * drops the range cache, and the timeline reloads whatever is on screen.
+   */
   function handleStateGroupToggle(key: string) {
     const next = store.selectedStateGroups.includes(key)
       ? store.selectedStateGroups.filter((g) => g !== key)
       : [...store.selectedStateGroups, key];
     store.setStateGroups(next);
-    store.fetchWorkload(workspaceSlug);
   }
 
   const hasActiveFilters =
@@ -81,7 +83,6 @@ export const WorkloadToolbar = observer(function WorkloadToolbar({
     store.setProjectIds([]);
     store.setAssigneeIds([]);
     store.setStateGroups([]);
-    store.fetchWorkload(workspaceSlug);
   }
 
   const settingsHref = joinUrlPath(workspaceSlug, "settings/workload");
