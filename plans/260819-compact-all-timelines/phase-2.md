@@ -30,13 +30,14 @@ Every one of these assumes the sidebar occupies the first `SIDEBAR_WIDTH` px of 
 container. With no sidebar the offset must become 0, and missing one leaves bars mispositioned by
 360px:
 
-| Site                                         | Use                                                                             |
-| -------------------------------------------- | ------------------------------------------------------------------------------- |
-| `issue-layouts/gantt/blocks.tsx`             | `style={{ left: SIDEBAR_WIDTH }}` keeps the bar's label sticky past the sidebar |
-| `block-row.tsx`                              | the hidden-block button's `left`                                                |
-| `block-row.tsx`                              | `IntersectionObserver` `rootMargin: 0 0 0 -SIDEBAR_WIDTH`                       |
-| `sidebar/root.tsx`                           | the sidebar's own width                                                         |
-| `workload/timeline/WorkloadTimelineRoot.tsx` | `syncViewport` derives the visible date range from `scrollLeft + SIDEBAR_WIDTH` |
+| Site                                            | Use                                                                                  |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `issue-layouts/gantt/blocks.tsx`                | `style={{ left: SIDEBAR_WIDTH }}` keeps the bar's label sticky past the sidebar      |
+| `block-row.tsx`                                 | the hidden-block button's `left`                                                     |
+| `block-row.tsx`                                 | `IntersectionObserver` `rootMargin: 0 0 0 -SIDEBAR_WIDTH`                            |
+| `sidebar/root.tsx`                              | the sidebar's own width                                                              |
+| `workload/timeline/WorkloadTimelineRoot.tsx`    | `syncViewport` derives the visible date range from `scrollLeft + SIDEBAR_WIDTH`      |
+| `sidebar/gantt-dnd-HOC.tsx`, `sidebar/utils.ts` | reorder drag maths, dead once Phase 3 disables reorder — delete with the block lists |
 
 The workload one is ours and is the easiest to miss: get it wrong and the viewport-driven loader
 fetches the wrong range, which looks like a data bug rather than a layout one.

@@ -58,6 +58,32 @@ becomes scanning bars rather than reading a column.
 If either is unacceptable, the alternative is to compact ONLY timelines that already have
 interactions disabled, which is close to what #43 already shipped.
 
+## Working context (read first if you did not write this plan)
+
+- **Base branch is `company-main`**, not `preview`. `preview` tracks upstream Plane; this fork's
+  integration branch is `company-main`, and PRs target it.
+- **`@/plane-web/*` resolves to `./ce/*`** (`apps/web/tsconfig.json`). Several files this plan
+  edits live under `apps/web/ce/` and are invisible to a grep of `core/`.
+- **The pre-commit hook rejects ANY lint warning in staged files** — `lint-staged` runs
+  `oxlint --fix --deny-warnings`. The repo-wide baseline is ~977 warnings, so
+  `pnpm --filter web check:lint` passing does NOT mean your commit will. Run
+  `npx oxlint <your paths>` and get to zero before committing.
+- **`verify-merge.mjs` runs against `dist/`**, so it needs a build first:
+  `pnpm --filter @plane/workload-ext build && node packages/workload-ext/verify-merge.mjs`.
+  It is deliberately not wired into CI — there is no root `test` script and no JS test job.
+- **`scripts/` is gitignored repo-wide**, which is why that verifier sits at the package root
+  rather than in a `scripts/` folder. Do not "tidy" it into one; it will silently not be committed.
+- **Backend tests need a specific environment.** They are not touched by this plan, but Phase 5
+  runs them as a collateral-damage check:
+  - Python **3.12** (3.14 breaks `httpcore` at import and yields ~136 phantom failures)
+  - Postgres with **pgvector enabled on `template1`** (pytest clones template1; enabling it on
+    the `plane` DB alone does nothing under `--nomigrations`)
+  - A live **Redis**, or every endpoint test 500s
+  - If you see mass `Database test_plane couldn't be flushed`, the test DB is stale from an
+    earlier run — `DROP DATABASE test_plane` and re-run. That signature cost ~114 false failures
+    once already.
+  - Full suite takes ~12-22 min; run it in the background, not the foreground.
+
 ## Phases
 
 | Phase             | Title                               | Depends on       |

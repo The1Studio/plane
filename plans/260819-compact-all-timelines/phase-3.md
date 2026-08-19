@@ -19,7 +19,16 @@ that implements them. Depends on Phase 1. Parent: [`plan.md`](plan.md).
 | `enableDependency`                                 | on (issues)                               | Dependency arrows are drawn between row centres; with packing, two dependent items may share a row          |
 | `enableAddBlock`                                   | `isAllowed`                               | The add affordance appears on an empty row, which no longer maps to one item                                |
 
-All become `false`. **The implementing components are NOT deleted** — `ChartDraggable`, the
+All become `false`.
+
+**Two sibling layers keep rendering regardless of these props** and must be checked, not assumed
+(`chart/main-content.tsx` renders them unconditionally, between the row and bar layers):
+`TimelineDependencyPaths` and `TimelineDraggablePath`. Setting `enableDependency={false}` stops
+the _interaction_; confirm it also stops the _paths_ being drawn, or a packed board will show
+arrows between rows that no longer correspond to single items. If they render unconditionally,
+gate them here.
+
+**The implementing components are NOT deleted** — `ChartDraggable`, the
 resizables, the dependency path layer and the multi-select group stay in the tree, unreferenced by
 these consumers, because [`later.md`](later.md) restores them.
 

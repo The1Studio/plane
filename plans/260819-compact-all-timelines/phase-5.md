@@ -7,10 +7,21 @@
 ```bash
 pnpm --filter web check:types
 pnpm --filter web check:format
-pnpm --filter web check:lint          # 0 errors; 0 warnings in touched files
-pytest plane/workload                 # unchanged by this plan, but proves no collateral damage
+pnpm --filter web check:lint          # 0 errors repo-wide
+npx oxlint <paths you touched>        # must be 0 WARNINGS too — the pre-commit hook denies them
+
+pnpm --filter @plane/workload-ext build   # verify-merge runs against dist/, so build first
 node packages/workload-ext/verify-merge.mjs
+
+# Backend is untouched by this plan; run it only as a collateral-damage check.
+# Needs Python 3.12 + Postgres with pgvector on template1 + live Redis — see
+# plan.md "Working context" before assuming a red result is your fault.
+DJANGO_SETTINGS_MODULE=plane.settings.test pytest plane/workload
 ```
+
+A rebuild of `@plane/workload-ext` is required before the verifier, and is easy to forget: it
+imports from `dist/`, so without it you are testing the PREVIOUS build and every check passes
+whatever you just changed. That is a green that proves nothing.
 
 ## 5.2 — What the gates cannot tell you
 
