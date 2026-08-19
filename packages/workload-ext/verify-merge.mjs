@@ -18,6 +18,7 @@ import {
   subtractRanges,
   snapRangeToPeriods,
   periodKeyFor,
+  packTasksIntoLanes,
   mergeWorkloadResponses,
 } from "./dist/index.mjs";
 
@@ -144,6 +145,76 @@ eq("unscheduled not multiplied", m.unscheduled[0].hours, 12);
 eq("periods union", m.periods, ["2026-01-01", "2026-01-02"]);
 // idempotence: merging the same window twice must not change anything
 eq("merge is idempotent", mergeWorkloadResponses(m, b).rows[0].total, 8);
+
+// lane packing: fewest rows such that no two bars in a row overlap
+const T = (id, start, target) => ({ id, start_date: start, target_date: target });
+const ids = (lanes) => lanes.map((l) => l.map((t) => t.id));
+
+eq(
+  "disjoint tasks share one lane",
+  ids(packTasksIntoLanes([T("a", "2026-01-01", "2026-01-02"), T("b", "2026-01-05", "2026-01-06")])),
+  [["a", "b"]]
+);
+eq(
+  "overlapping tasks split lanes",
+  ids(packTasksIntoLanes([T("a", "2026-01-01", "2026-01-10"), T("b", "2026-01-05", "2026-01-06")])),
+  [["a"], ["b"]]
+);
+eq(
+  "adjacent counts as collision",
+  ids(packTasksIntoLanes([T("a", "2026-01-01", "2026-01-05"), T("b", "2026-01-05", "2026-01-07")])),
+  [["a"], ["b"]]
+);
+eq(
+  "lane count equals max concurrency",
+  packTasksIntoLanes([
+    T("a", "2026-01-01", "2026-01-10"),
+    T("b", "2026-01-02", "2026-01-09"),
+    T("c", "2026-01-03", "2026-01-08"),
+  ]).length,
+  3
+);
+eq(
+  "first-fit reuses the earliest free lane",
+  ids(
+    packTasksIntoLanes([
+      T("a", "2026-01-01", "2026-01-10"),
+      T("b", "2026-01-02", "2026-01-03"),
+      T("c", "2026-01-05", "2026-01-06"),
+    ])
+  ),
+  [["a"], ["b", "c"]]
+);
+eq(
+  "unscheduled tasks are never placed",
+  ids(packTasksIntoLanes([T("a", "2026-01-01", null), T("b", "2026-01-05", "2026-01-06")])),
+  [["b"]]
+);
+eq(
+  "target-only task occupies its single day",
+  ids(packTasksIntoLanes([T("a", null, "2026-01-05"), T("b", "2026-01-05", "2026-01-06")])),
+  [["a"], ["b"]]
+);
+eq(
+  "input array is not mutated",
+  (() => {
+    const input = [T("z", "2026-01-09", "2026-01-09"), T("a", "2026-01-01", "2026-01-02")];
+    packTasksIntoLanes(input);
+    return input.map((t) => t.id);
+  })(),
+  ["z", "a"]
+);
+eq(
+  "a long bar keeps its lane busy past a later short one",
+  ids(
+    packTasksIntoLanes([
+      T("long", "2026-01-01", "2026-01-20"),
+      T("mid", "2026-01-02", "2026-01-03"),
+      T("late", "2026-01-10", "2026-01-11"),
+    ])
+  ),
+  [["long"], ["mid", "late"]]
+);
 
 console.log(fail ? `\n${fail} FAILED` : "\nall passed");
 process.exit(fail ? 1 : 0);

@@ -162,3 +162,53 @@ export function mergeWorkloadResponses(base: TWorkloadResponse | null, add: TWor
     meta: add.meta,
   };
 }
+
+// ── Lane packing ─────────────────────────────────────────────────────────────
+
+/**
+ * Greedy interval partitioning: pack tasks into the fewest rows such that no
+ * two tasks in a row overlap in time.
+ *
+ * Sort by start, then place each task in the FIRST lane whose last bar has
+ * already ended. This is the classic algorithm and is optimal — it uses exactly
+ * as many lanes as the maximum number of tasks in flight at any instant, which
+ * is the true lower bound (you cannot draw N simultaneous bars in fewer than N
+ * rows). Sorting by start is what makes the first-fit choice safe: every
+ * later task starts no earlier, so a lane that is free now stays free.
+ *
+ * Adjacency counts as a collision. Two bars where one ends the same day the
+ * next begins are drawn touching, and the API's own semantics make that a real
+ * overlap — an issue with `start == target` occupies that whole day. Requiring
+ * a strict gap keeps them on separate rows rather than rendering them fused.
+ */
+export function packTasksIntoLanes(tasks: TWorkloadTask[]): TWorkloadTask[][] {
+  // `filter` already returns a new array, so the subsequent in-place sort never
+  // touches `tasks` — which matters, since that array belongs to the store's
+  // response object and sorting it during a render would mutate observable state.
+  const scheduled = tasks.filter((t) => t.target_date);
+  scheduled.sort((a, b) => {
+    const aStart = a.start_date ?? a.target_date ?? "";
+    const bStart = b.start_date ?? b.target_date ?? "";
+    return aStart < bStart ? -1 : aStart > bStart ? 1 : 0;
+  });
+
+  const lanes: TWorkloadTask[][] = [];
+  const laneEnds: string[] = [];
+
+  for (const task of scheduled) {
+    // A task with only a target date occupies that single day.
+    const start = task.start_date ?? task.target_date!;
+    const end = task.target_date!;
+    const lane = laneEnds.findIndex((laneEnd) => laneEnd < start);
+    if (lane === -1) {
+      lanes.push([task]);
+      laneEnds.push(end);
+    } else {
+      lanes[lane].push(task);
+      // Never move the end backwards: a long bar placed earlier still occupies
+      // this lane past a shorter one appended after it.
+      if (end > laneEnds[lane]) laneEnds[lane] = end;
+    }
+  }
+  return lanes;
+}

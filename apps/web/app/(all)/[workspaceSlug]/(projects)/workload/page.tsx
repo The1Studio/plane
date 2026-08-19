@@ -71,7 +71,6 @@ export default observer(function WorkloadPage() {
     <>
       <PageHead title="Workload" />
       <div className="flex h-full flex-col gap-4 overflow-y-auto px-6 py-4">
-        <h1 className="text-xl font-semibold">Workload</h1>
         <WorkloadToolbar
           store={workloadStore}
           workspaceSlug={workspaceSlug}

@@ -22,7 +22,7 @@
 import { observer } from "mobx-react";
 import { cn } from "@plane/utils";
 import { periodDateRange } from "@plane/workload-ext";
-import type { TWorkloadGranularity } from "@plane/workload-ext";
+import type { TWorkloadGranularity, TWorkloadTask } from "@plane/workload-ext";
 import { getPositionFromDate } from "@/components/gantt-chart/views";
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 import { heatCellColorClass } from "./heat-color";
@@ -42,24 +42,51 @@ export const WorkloadTimelineChartBlock = observer(function WorkloadTimelineChar
 }: Props) {
   const { currentViewData, getBlockById } = useTimeLineChartStore();
 
-  if (data.kind === "task") {
-    const { task } = data;
+  if (data.kind === "lane") {
+    // Every bar in the lane is positioned inside this block's own box, exactly
+    // as the header row places its heat cells: `getPositionFromDate` gives an
+    // ABSOLUTE offset from the chart's start, and subtracting the block's own
+    // marginLeft converts it to this box's coordinate space.
+    if (!currentViewData) return null;
+    const laneBlock = getBlockById(data.id);
+    const laneMarginLeft = laneBlock?.position?.marginLeft ?? 0;
+    const dayWidth = currentViewData.data.dayWidth;
+
     return (
-      <WorkloadTaskLink task={task} workspaceSlug={workspaceSlug} className="block h-8 w-full">
-        <div
-          className={cn(
-            "flex h-8 w-full cursor-pointer items-center truncate rounded-sm px-2 text-11 font-medium transition-colors",
-            task.overdue
-              ? "bg-danger-subtle text-danger-primary hover:bg-danger-subtle/80"
-              : "bg-accent-primary/15 text-accent-primary hover:bg-accent-primary/25"
-          )}
-          title={`${task.identifier} ${task.name} · ${task.hours}h${task.overdue ? " · overdue" : ""}`}
-        >
-          <span className="truncate">
-            {task.identifier} {task.name} · {task.hours}h
-          </span>
-        </div>
-      </WorkloadTaskLink>
+      <div className="relative h-8 w-full">
+        {data.tasks.map((task: TWorkloadTask) => {
+          const start = task.start_date ?? task.target_date!;
+          const startPos = getPositionFromDate(currentViewData, start, 0);
+          // Land on the END of the target day, not its start — a bar for a
+          // single-day task would otherwise have zero width.
+          const endPos = getPositionFromDate(currentViewData, task.target_date!, dayWidth);
+          const left = startPos - laneMarginLeft;
+          const width = Math.max(endPos - startPos, 8);
+          return (
+            <WorkloadTaskLink
+              key={task.id}
+              task={task}
+              workspaceSlug={workspaceSlug}
+              className="absolute top-0 block h-8"
+              style={{ left: `${left}px`, width: `${width}px` }}
+            >
+              <div
+                className={cn(
+                  "flex h-8 w-full cursor-pointer items-center truncate rounded-sm px-2 text-11 font-medium transition-colors",
+                  task.overdue
+                    ? "bg-danger-subtle text-danger-primary hover:bg-danger-subtle/80"
+                    : "bg-accent-primary/15 text-accent-primary hover:bg-accent-primary/25"
+                )}
+                title={`${task.identifier} ${task.name} · ${task.hours}h${task.overdue ? " · overdue" : ""}`}
+              >
+                <span className="truncate">
+                  {task.identifier} {task.name} · {task.hours}h
+                </span>
+              </div>
+            </WorkloadTaskLink>
+          );
+        })}
+      </div>
     );
   }
 
@@ -73,7 +100,7 @@ export const WorkloadTimelineChartBlock = observer(function WorkloadTimelineChar
 
   return (
     <div className="relative h-8 w-full">
-      {data.periods.map((period) => {
+      {data.periods.map((period: string) => {
         const { start, end } = periodDateRange(period, granularity);
         const startPos = getPositionFromDate(currentViewData, start, 0);
         // Land on the END of the last day in the period, not its start — an
