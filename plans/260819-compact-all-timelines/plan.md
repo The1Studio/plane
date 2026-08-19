@@ -58,6 +58,13 @@ becomes scanning bars rather than reading a column.
 If either is unacceptable, the alternative is to compact ONLY timelines that already have
 interactions disabled, which is close to what #43 already shipped.
 
+## Start here
+
+If you did not write this plan, read [`state.md`](state.md) FIRST. It carries what shipped this
+week and is already live, the three invariants in the workload timeline that are easy to break
+silently, what has never been visually verified by anyone, and why the first move should probably
+be a Phase 1 spike rather than Phase 1 itself.
+
 ## Working context (read first if you did not write this plan)
 
 - **Base branch is `company-main`**, not `preview`. `preview` tracks upstream Plane; this fork's
@@ -94,6 +101,10 @@ interactions disabled, which is close to what #43 already shipped.
 | [4](phase-4.md)   | Workload adopts the core packer     | 1, 2             |
 | [5](phase-5.md)   | Verification, FORK.md, propagation  | 2, 3, 4          |
 | [later](later.md) | Restore interactions on packed rows | ships separately |
+
+**Phase estimates are provisional until Phase 1 is spiked.** The first draft of this plan missed
+that the chart renders two independent, overlaid row lists — a defect that would have shipped
+silently wrong output. See [`state.md`](state.md) § "Recommended first move".
 
 ## Success criteria
 
