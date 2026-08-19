@@ -34,7 +34,15 @@
       "estimateHours": 0.5,
       "stage": "done",
       "updatedAt": "2026-08-19T10:09:13.881Z"
+    },
+    {
+      "id": "d606c87c-d662-4f86-bebc-3506e31a1672",
+      "identifier": "PLANE-79",
+      "name": "[Frontend][Fix] Timeline quarter zoom: show the estimate only, drop the bar title",
+      "estimateHours": 0.5,
+      "stage": "done",
+      "updatedAt": "2026-08-19T11:08:22.681Z"
     }
   ],
-  "updatedAt": "2026-08-19T10:09:13.881Z"
+  "updatedAt": "2026-08-19T11:08:22.681Z"
 }
