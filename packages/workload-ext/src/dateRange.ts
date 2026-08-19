@@ -15,9 +15,24 @@ export const MAX_SPAN_DAYS: Record<TWorkloadGranularity, number> = {
   month: 730,
 };
 
-/** Add/subtract days from a YYYY-MM-DD string, returning YYYY-MM-DD. */
+/**
+ * Add/subtract days from a YYYY-MM-DD string, returning YYYY-MM-DD.
+ *
+ * The `T00:00:00` suffix is load-bearing, not decoration. A bare `YYYY-MM-DD`
+ * is parsed by `Date` as **UTC** midnight, while `getDate()`/`getMonth()`/
+ * `getFullYear()` below read the **local** calendar — so at any negative UTC
+ * offset the local date is already the previous day before a single day is
+ * added, and every result comes back 24h early. Appending a time makes the
+ * string parse as local, which is the same calendar the getters use. Same
+ * idiom, same reason, as `periodKeyFor` in ./merge.ts.
+ *
+ * This is not hypothetical for callers: `periodDateRange` uses this to derive
+ * a week bucket's END date, and the workload timeline positions its capacity
+ * heat cells from that range — an off-by-one here shifts every cell in the
+ * header row for anyone west of Greenwich.
+ */
 export function shiftDate(dateStr: string, days: number): string {
-  const d = new Date(dateStr);
+  const d = new Date(`${dateStr}T00:00:00`);
   d.setDate(d.getDate() + days);
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -25,7 +40,15 @@ export function shiftDate(dateStr: string, days: number): string {
   return `${y}-${m}-${day}`;
 }
 
-/** Compute day difference between two YYYY-MM-DD strings. */
+/**
+ * Compute day difference between two YYYY-MM-DD strings.
+ *
+ * Deliberately keeps the bare (UTC) parse that `shiftDate` above had to drop:
+ * this only ever subtracts two instants, both offset identically, so the result
+ * is an exact multiple of 86_400_000 and no local calendar is consulted.
+ * Switching these to a local parse for symmetry would reintroduce DST — a
+ * spring-forward day is 23h — which is precisely what the UTC parse avoids.
+ */
 export function daysBetween(from: string, to: string): number {
   return Math.round((new Date(to).getTime() - new Date(from).getTime()) / 86_400_000);
 }

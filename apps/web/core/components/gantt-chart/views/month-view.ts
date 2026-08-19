@@ -6,6 +6,7 @@
 
 import { cloneDeep, uniqBy } from "lodash-es";
 // plane imports
+import { EStartOfTheWeek } from "@plane/types";
 import type { ChartDataType } from "@plane/types";
 // local imports
 import { months } from "../data";
@@ -35,9 +36,30 @@ export interface IMonthView {
  * Generate Month Chart data
  * @param monthPayload
  * @param side
+ * @param targetDate
+ * @param startOfWeek
  * @returns
+ *
+ * The1Studio fork (workspace work settings) — `startOfWeek` was previously
+ * accepted by the week view alone. `ChartViewRoot` has always passed it to
+ * every view's `generateChart` (chart/root.tsx), but this one dropped it, so
+ * the month view's week sub-columns fell back to the `EStartOfTheWeek.SUNDAY`
+ * default of `getWeeksBetweenTwoDates` no matter what the workspace had
+ * configured. The workload timeline's capacity heat cells are positioned by
+ * their true calendar dates, and the API buckets those weeks by the workspace's
+ * `week_start_day` (default MONDAY — `plane/workload/constants.py`), so at
+ * month zoom every cell sat one or more days out of step with the week column
+ * drawn under it. Threading the parameter through is the ninth site of the
+ * per-user → workspace-wide week-start conversion documented in docs/FORK.md;
+ * the other eight were converted, this one was missed because it had a silent
+ * default rather than a read to swap.
  */
-const generateMonthChart = (monthPayload: ChartDataType, side: null | "left" | "right", targetDate?: Date) => {
+const generateMonthChart = (
+  monthPayload: ChartDataType,
+  side: null | "left" | "right",
+  targetDate?: Date,
+  startOfWeek: EStartOfTheWeek = EStartOfTheWeek.SUNDAY
+) => {
   let renderState = cloneDeep(monthPayload);
 
   const range: number = renderState.data.approxFilterRange || 6;
@@ -55,7 +77,7 @@ const generateMonthChart = (monthPayload: ChartDataType, side: null | "left" | "
     minusDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - range, currentDate.getDate());
     plusDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + range, currentDate.getDate());
 
-    if (minusDate && plusDate) filteredDates = getMonthsViewBetweenTwoDates(minusDate, plusDate);
+    if (minusDate && plusDate) filteredDates = getMonthsViewBetweenTwoDates(minusDate, plusDate, startOfWeek);
 
     startDate = filteredDates.weeks[0]?.startDate;
     endDate = filteredDates.weeks[filteredDates.weeks.length - 1]?.endDate;
@@ -76,7 +98,7 @@ const generateMonthChart = (monthPayload: ChartDataType, side: null | "left" | "
     minusDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - range, 1);
     plusDate = new Date(chartStartDate.getFullYear(), chartStartDate.getMonth(), chartStartDate.getDate() - 1);
 
-    if (minusDate && plusDate) filteredDates = getMonthsViewBetweenTwoDates(minusDate, plusDate);
+    if (minusDate && plusDate) filteredDates = getMonthsViewBetweenTwoDates(minusDate, plusDate, startOfWeek);
 
     startDate = filteredDates.weeks[0]?.startDate;
     endDate = new Date(chartStartDate.getFullYear(), chartStartDate.getMonth(), chartStartDate.getDate() - 1);
@@ -93,7 +115,7 @@ const generateMonthChart = (monthPayload: ChartDataType, side: null | "left" | "
     minusDate = new Date(chartEndDate.getFullYear(), chartEndDate.getMonth(), chartEndDate.getDate() + 1);
     plusDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + range, 1);
 
-    if (minusDate && plusDate) filteredDates = getMonthsViewBetweenTwoDates(minusDate, plusDate);
+    if (minusDate && plusDate) filteredDates = getMonthsViewBetweenTwoDates(minusDate, plusDate, startOfWeek);
 
     startDate = new Date(chartEndDate.getFullYear(), chartEndDate.getMonth(), chartEndDate.getDate() + 1);
     endDate = filteredDates.weeks[filteredDates.weeks.length - 1]?.endDate;
@@ -115,9 +137,13 @@ const generateMonthChart = (monthPayload: ChartDataType, side: null | "left" | "
  * @param endDate
  * @returns
  */
-const getMonthsViewBetweenTwoDates = (startDate: Date, endDate: Date): IMonthView => ({
+const getMonthsViewBetweenTwoDates = (
+  startDate: Date,
+  endDate: Date,
+  startOfWeek: EStartOfTheWeek = EStartOfTheWeek.SUNDAY
+): IMonthView => ({
   months: getMonthsBetweenTwoDates(startDate, endDate),
-  weeks: getWeeksBetweenTwoDates(startDate, endDate, false),
+  weeks: getWeeksBetweenTwoDates(startDate, endDate, false, startOfWeek),
 });
 
 /**
@@ -138,6 +164,7 @@ export const getMonthsBetweenTwoDates = (startDate: Date, endDate: Date): IMonth
 
   const currentDate = new Date(startYear, startMonth);
 
+  // oxlint-disable-next-line no-unmodified-loop-condition -- pre-existing warning, unrelated to this change (husky lint-staged runs --deny-warnings on the whole file)
   while (currentDate <= endDate) {
     const currentYear = currentDate.getFullYear();
     const currentMonth = currentDate.getMonth();
