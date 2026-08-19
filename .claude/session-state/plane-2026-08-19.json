@@ -16,17 +16,17 @@
       "identifier": "PLANE-76",
       "name": "[Frontend][Fix] Workload timeline: always show a bar's estimated hours (right-anchored)",
       "estimateHours": 1,
-      "stage": "in_progress",
-      "updatedAt": "2026-08-19T08:50:37.568Z"
+      "stage": "done",
+      "updatedAt": "2026-08-19T09:51:01.225Z"
     },
     {
       "id": "4afc769a-74e7-4c73-98f4-02714a122cc5",
       "identifier": "PLANE-77",
       "name": "[Frontend][Fix] Workload timeline: month-zoom capacity cells offset from their week columns",
       "estimateHours": 1,
-      "stage": "in_progress",
-      "updatedAt": "2026-08-19T09:10:37.138Z"
+      "stage": "done",
+      "updatedAt": "2026-08-19T09:51:01.258Z"
     }
   ],
-  "updatedAt": "2026-08-19T09:10:37.138Z"
+  "updatedAt": "2026-08-19T09:51:01.258Z"
 }

@@ -72,8 +72,14 @@ export const datePreview = (date: Date, includeTime: boolean = false) => {
 };
 
 // context data
-/* The1Studio fork (wider timeline columns) — `dayWidth` tripled on all three
- * views (week 60→180, month 20→60, quarter 5→15).
+/* The1Studio fork (wider timeline columns) — `dayWidth` widened on all three
+ * views: week 60→180 and month 20→60 (×3), quarter 5→30 (×6).
+ *
+ * Quarter got a second doubling (15→30) because it reads differently from the
+ * other two. Its columns are MONTHS, sized `dayWidth * daysInMonth`
+ * (chart/views/quarter.tsx), so a ×3 that comfortably widened a day column
+ * still left a whole month under 500px and the view read as cramped. Doubling
+ * again doubles each month's width exactly.
  *
  * No upstream seam: every consumer reads `currentViewData.data.dayWidth`, which
  * originates here and nowhere else, and the objects are shared singletons that
@@ -117,7 +123,7 @@ export const VIEWS_LIST: ChartDataType[] = [
       currentDate: new Date(),
       endDate: new Date(),
       approxFilterRange: 24, // it will preview week starting dates all months data and there is 3 months limitation for preview ex: title (2, 9, 16, 23, 30)
-      dayWidth: 15,
+      dayWidth: 30,
     },
   },
 ];
