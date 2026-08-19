@@ -52,12 +52,17 @@ type Props = {
  * three-digit decimal.
  *
  * Which zooms this actually binds on — `dayWidth` is 180 at Week, 60 at Month,
- * 15 at Quarter (gantt-chart/data/index.ts). A bar is at minimum one full day
+ * 30 at Quarter (gantt-chart/data/index.ts). A bar is at minimum one full day
  * wide, so at Week and Month the true width already clears this floor and
- * nothing is distorted. It binds ONLY at Quarter zoom, where a 1–3 day task is
- * drawn 60px — up to ~4 days' worth. That is a deliberate trade: at Quarter
- * zoom the timeline is read for load, not for duration, and an always-legible
- * estimate is worth more there than an exact sliver.
+ * nothing is distorted. It binds ONLY at Quarter zoom, and only on a 1-day
+ * task, which is drawn 60px — 2 days' worth; a 2-day task already sits exactly
+ * on the floor. That is a deliberate trade: at Quarter zoom the timeline is
+ * read for load, not for duration, and an always-legible estimate is worth
+ * more there than an exact sliver.
+ *
+ * Keep this paragraph in step with `VIEWS_LIST` — widening a zoom's `dayWidth`
+ * shrinks how far this floor reaches, and the numbers above are the only place
+ * that relationship is written down.
  */
 const MIN_BAR_WIDTH = 60;
 

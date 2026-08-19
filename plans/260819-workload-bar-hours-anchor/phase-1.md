@@ -46,10 +46,11 @@ const width = Math.max(endPos - startPos, MIN_BAR_WIDTH);
 span is `shrink-0` inside an `overflow-hidden` row, so an undersized bar clips
 the number's **tail** — `10.75h` renders as a wrong `10.7`, worse than no label.
 
-The floor binds only at **Quarter** zoom: `dayWidth` is 180 / 60 / 15 for
-Week / Month / Quarter (`gantt-chart/data/index.ts`) and a bar is at minimum one
-full day, so Week and Month already clear 60px untouched. At Quarter a 1–3 day
-task is drawn up to ~4 days wide — accepted deliberately.
+The floor binds only at **Quarter** zoom: `dayWidth` is 180 / 60 / 30 for
+Week / Month / Quarter (`gantt-chart/data/index.ts`; quarter was doubled from 15
+in [Phase 4](phase-4.md)) and a bar is at minimum one full day, so Week and Month
+already clear 60px untouched. At Quarter only a 1-day task is affected, drawn
+2 days wide — accepted deliberately.
 
 The docblock on the constant must carry that reasoning; a future reader lowering
 it back to "something that fits `16h`" reintroduces the clipped-tail bug.

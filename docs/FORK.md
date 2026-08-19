@@ -516,12 +516,15 @@ seeding Sunday would silently shift every historical week boundary by one day.
 package), and `packages/workload-ext` is already allowlisted per the SP2 workload table above.
 
 **Wider timeline columns — fenced `The1Studio fork (wider timeline columns)`.** ONE core edit,
-and the first in this feature: `apps/web/core/components/gantt-chart/data/index.ts` triples
-`dayWidth` on all three views (week 60→180, month 20→60, quarter 5→15).
+and the first in this feature: `apps/web/core/components/gantt-chart/data/index.ts` widens
+`dayWidth` on all three views: week 60→180 and month 20→60 (×3), quarter 5→30 (×6).
+Quarter carries a second doubling because its columns are **months**, sized
+`dayWidth * daysInMonth` — a ×3 that suited a day column still left a whole month
+under 500px and read as cramped.
 
-| File                                                 | What                            | Why no seam                                                                                                                                                                                                                                                                                                                                                         |
-| ---------------------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/web/core/components/gantt-chart/data/index.ts` | `VIEWS_LIST[].data.dayWidth` ×3 | Every consumer reads `currentViewData.data.dayWidth`, which originates only here, and the entries are shared singletons `ChartViewRoot` mutates in place — there is no per-timeline override. Overriding on the store instead desynchronises the container width (`scrollWidth`, computed inside `ChartViewRoot` from the original value) from the block positions. |
+| File                                                 | What                                                           | Why no seam                                                                                                                                                                                                                                                                                                                                                         |
+| ---------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/core/components/gantt-chart/data/index.ts` | `VIEWS_LIST[].data.dayWidth` — ×3 on week/month, ×6 on quarter | Every consumer reads `currentViewData.data.dayWidth`, which originates only here, and the entries are shared singletons `ChartViewRoot` mutates in place — there is no per-timeline override. Overriding on the store instead desynchronises the container width (`scrollWidth`, computed inside `ChartViewRoot` from the original value) from the block positions. |
 
 **This is deliberately GLOBAL** — it widens the Timeline layout for issues, cycles and modules as
 well as the workload board. Scoping it to workload would have meant threading an override prop
