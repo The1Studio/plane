@@ -47,12 +47,8 @@ export const WORKLOAD_STRINGS = {
   "matrix.truncated": "Results truncated. Narrow your date range.",
   "matrix.over_capacity": "Over",
   "matrix.no_over_capacity": "No one is over capacity.",
-  "granularity.day": "Day",
-  "granularity.week": "Week",
-  "granularity.month": "Month",
   "filters.projects": "Projects",
   "filters.members": "Members",
-  "filters.granularity": "Granularity",
   "filters.state_groups": "Status",
   "filters.clear": "Clear filters",
   "filters.over_only": "Over capacity only",
@@ -65,6 +61,9 @@ export const WORKLOAD_STRINGS = {
   "timeline.overdue_count": "Overdue ({count})",
   "timeline.showing_first_n": "Showing first {count} — narrow your filters to see the rest",
   "timeline.no_workload_data": "No workload data.",
+  "timeline.week_of": "Week of {date}",
+  "timeline.no_over_capacity": "No one is over their weekly capacity in this range.",
+  "toolbar.range_clamped": "Range shortened to {days} days for this zoom level.",
 } as const;
 
 export type TWorkloadStringKey = keyof typeof WORKLOAD_STRINGS;

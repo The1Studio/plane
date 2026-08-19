@@ -26,32 +26,45 @@ import type { TWorkloadGranularity } from "@plane/workload-ext";
 import { getPositionFromDate } from "@/components/gantt-chart/views";
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 import { heatCellColorClass } from "./heat-color";
+import { WorkloadTaskLink } from "./WorkloadTaskLink";
 import type { TWorkloadTimelineBlockData } from "./types";
 
 type Props = {
   data: TWorkloadTimelineBlockData;
   granularity: TWorkloadGranularity;
+  workspaceSlug: string;
 };
 
-export const WorkloadTimelineChartBlock = observer(function WorkloadTimelineChartBlock({ data, granularity }: Props) {
+export const WorkloadTimelineChartBlock = observer(function WorkloadTimelineChartBlock({
+  data,
+  granularity,
+  workspaceSlug,
+}: Props) {
   const { currentViewData, getBlockById } = useTimeLineChartStore();
 
   if (data.kind === "task") {
     const { task } = data;
     return (
-      <div
-        className={cn(
-          "flex h-8 w-full items-center truncate rounded-sm px-2 text-11 font-medium",
-          task.overdue ? "bg-danger-subtle text-danger-primary" : "bg-accent-primary/15 text-accent-primary"
-        )}
-        title={`${task.identifier} ${task.name} · ${task.hours}h${task.overdue ? " · overdue" : ""}`}
-      >
-        <span className="truncate">
-          {task.identifier} {task.name} · {task.hours}h
-        </span>
-      </div>
+      <WorkloadTaskLink task={task} workspaceSlug={workspaceSlug} className="block h-8 w-full">
+        <div
+          className={cn(
+            "flex h-8 w-full cursor-pointer items-center truncate rounded-sm px-2 text-11 font-medium transition-colors",
+            task.overdue
+              ? "bg-danger-subtle text-danger-primary hover:bg-danger-subtle/80"
+              : "bg-accent-primary/15 text-accent-primary hover:bg-accent-primary/25"
+          )}
+          title={`${task.identifier} ${task.name} · ${task.hours}h${task.overdue ? " · overdue" : ""}`}
+        >
+          <span className="truncate">
+            {task.identifier} {task.name} · {task.hours}h
+          </span>
+        </div>
+      </WorkloadTaskLink>
     );
   }
+
+  // footer — sidebar-only; the chart side of the strip is intentionally blank.
+  if (data.kind === "footer") return <div className="h-8 w-full" />;
 
   // header — the capacity heat row.
   if (!currentViewData) return null;
@@ -82,7 +95,11 @@ export const WorkloadTimelineChartBlock = observer(function WorkloadTimelineChar
             style={{ left: `${left}px`, width: `${width}px` }}
             title={`${period}: ${hours}h / ${capacity}h`}
           >
-            {hours > 0 ? `${hours}h` : ""}
+            {/* `0h`, not blank. Every period in the window now has a column
+                (the API fills `periods` across the requested range), so an
+                empty cell is a real measurement — rendering nothing there
+                reads as "no data" instead of "no work booked". */}
+            {`${hours}h`}
           </div>
         );
       })}

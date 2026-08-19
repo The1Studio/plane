@@ -32,23 +32,52 @@
 // store to read from — the source is @plane/workload-ext's own MobX store).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { autorun } from "mobx";
+import { autorun, reaction } from "mobx";
 import { observer } from "mobx-react";
 import { GANTT_TIMELINE_TYPE } from "@plane/types";
-import type { IBlockUpdateData } from "@plane/types";
-import type { IWorkloadStore } from "@plane/workload-ext";
-import { wlt } from "@plane/workload-ext";
+import type { IBlockUpdateData, TGanttViews } from "@plane/types";
+import type { IWorkloadStore, TWorkloadGranularity } from "@plane/workload-ext";
+import { clampDateRange, wlt } from "@plane/workload-ext";
 import { TimeLineTypeContext } from "@/components/gantt-chart/contexts";
 import { GanttChartRoot } from "@/components/gantt-chart/root";
 import { useTimeLineChart } from "@/hooks/use-timeline-chart";
 import { BaseTimeLineStore } from "@/plane-web/store/timeline/base-timeline.store";
-import { buildWorkloadBlocks } from "./blocks";
+import { buildWorkloadBlocks, focusWeekKey } from "./blocks";
+import { WorkloadTaskLink } from "./WorkloadTaskLink";
 import { WorkloadTimelineChartBlock } from "./WorkloadTimelineChartBlock";
 import { WorkloadTimelineSidebarRow } from "./WorkloadTimelineSidebarRow";
 import type { TWorkloadTimelineBlockData } from "./types";
 
 type Props = {
   store: IWorkloadStore;
+  /** Passed down rather than re-read from `useParams` — the route page already has it. */
+  workspaceSlug: string;
+};
+
+/**
+ * The chart's zoom level IS the granularity control (phase-2.md D3).
+ *
+ * Before this, the page carried two time-range controls that could not agree:
+ * the toolbar's Day/Week/Month set the SERVER-SIDE bucketing while
+ * `GanttChartHeader`'s Week/Month/Quarter set the PIXEL ZOOM, and nothing kept
+ * them in step — picking "Month" on one did nothing to the other. The toolbar
+ * tabs are gone; this maps the surviving control onto the bucketing.
+ *
+ * The pairing is by COLUMN RESOLUTION, not by label. `VIEWS_LIST`
+ * (components/gantt-chart/data) gives the `week` view a `dayWidth` of 60 with
+ * per-day labels, `month` 20, and `quarter` 5 — so gantt-`week` is the only
+ * view whose columns can legibly host per-day heat cells, and it is therefore
+ * the view that pairs with `day` bucketing.
+ *
+ * The INITIAL pair is aligned in the workload store's own default
+ * (`granularity = "day"` against `BaseTimeLineStore`'s `currentView = "week"`),
+ * not by a mount effect here — see that field's comment for why a parent-side
+ * sync cannot work. This map therefore only has to handle CHANGES.
+ */
+const VIEW_TO_GRANULARITY: Record<TGanttViews, TWorkloadGranularity> = {
+  week: "day",
+  month: "week",
+  quarter: "month",
 };
 
 const noopBlockUpdateHandler = (_block: unknown, _payload: IBlockUpdateData) => {
@@ -56,7 +85,7 @@ const noopBlockUpdateHandler = (_block: unknown, _payload: IBlockUpdateData) => 
   // still requires a handler prop, but it is never invoked.
 };
 
-export const WorkloadTimelineRoot = observer(function WorkloadTimelineRoot({ store }: Props) {
+export const WorkloadTimelineRoot = observer(function WorkloadTimelineRoot({ store, workspaceSlug }: Props) {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   // `useTimeLineChart` is typed to return the `IBaseTimelineStore` interface
   // (shared by every timeline type), but `getTimelineStore` (ce/hooks/use-timeline-chart.ts)
@@ -78,8 +107,13 @@ export const WorkloadTimelineRoot = observer(function WorkloadTimelineRoot({ sto
   const { blockIds, dataById } = useMemo(() => {
     if (!store.workloadData)
       return { blockIds: [] as string[], dataById: {} as Record<string, TWorkloadTimelineBlockData> };
-    return buildWorkloadBlocks(store.workloadData, store.granularity, collapsed);
-  }, [store.workloadData, store.granularity, collapsed]);
+    return buildWorkloadBlocks(store.workloadData, store.granularity, collapsed, store.showOverCapacityOnly);
+  }, [store.workloadData, store.granularity, collapsed, store.showOverCapacityOnly]);
+
+  // The week the badge reports on. Derived from the response itself, so it can
+  // never index `weekly_buckets` with a key built from a different week-start
+  // convention than the server used.
+  const focusWeek = useMemo(() => (store.workloadData ? focusWeekKey(store.workloadData) : ""), [store.workloadData]);
 
   // `dataById` is a plain object, not a MobX observable — the autorun below
   // can't track it directly, so it's read through a ref updated every render.
@@ -97,6 +131,30 @@ export const WorkloadTimelineRoot = observer(function WorkloadTimelineRoot({ sto
   // block's `position` current without a React re-render in the loop.
   useEffect(() => autorun(() => timelineStore.updateBlocks((id: string) => dataByIdRef.current[id])), [timelineStore]);
 
+  // The chart's zoom is the granularity control: re-bucket and refetch when it
+  // changes. `reaction` (not `autorun`) so this never fires on the initial
+  // read — the two already agree at construction.
+  useEffect(
+    () =>
+      reaction(
+        () => timelineStore.currentView,
+        (view: TGanttViews) => {
+          const next = VIEW_TO_GRANULARITY[view];
+          if (!next || next === store.granularity) return;
+          store.setGranularity(next);
+          // Load-bearing, not defensive: the API REJECTS an over-long span with
+          // a 400 rather than truncating it (views.py `_SPAN_CAPS`, mirrored by
+          // MAX_SPAN_DAYS). Zooming out to quarter and back in would otherwise
+          // carry a 730-day range into a 92-day cap and break the page. Anchor
+          // on "from" so the window keeps its start and gives up its tail.
+          const { from, to } = clampDateRange(store.dateFrom, store.dateTo, next, "from");
+          if (from !== store.dateFrom || to !== store.dateTo) store.setDateRange(from, to);
+          store.fetchWorkload(workspaceSlug);
+        }
+      ),
+    [timelineStore, store, workspaceSlug]
+  );
+
   if (store.isLoading) {
     return <div className="py-8 text-center text-13 text-tertiary">{wlt("common.loading")}</div>;
   }
@@ -105,6 +163,13 @@ export const WorkloadTimelineRoot = observer(function WorkloadTimelineRoot({ sto
   }
   if (!store.workloadData || store.workloadData.rows.length === 0) {
     return <div className="py-8 text-center text-13 text-placeholder">{wlt("timeline.no_workload_data")}</div>;
+  }
+  // There IS data — the over-capacity filter just excluded every swimlane.
+  // Distinguishing the two matters: an empty chart under an active filter is a
+  // result, not an absence, and rendering the generic "no workload data" here
+  // would send the reader looking for a problem that does not exist.
+  if (blockIds.length === 0) {
+    return <div className="py-8 text-center text-13 text-placeholder">{wlt("timeline.no_over_capacity")}</div>;
   }
 
   const granularity = store.granularity;
@@ -119,10 +184,27 @@ export const WorkloadTimelineRoot = observer(function WorkloadTimelineRoot({ sto
           blockIds={blockIds}
           blockUpdateHandler={noopBlockUpdateHandler}
           blockToRender={(data: TWorkloadTimelineBlockData) => (
-            <WorkloadTimelineChartBlock data={data} granularity={granularity} />
+            <WorkloadTimelineChartBlock data={data} granularity={granularity} workspaceSlug={workspaceSlug} />
           )}
           sidebarToRender={() => (
-            <WorkloadTimelineSidebarRow blockIds={blockIds} collapsed={collapsed} onToggleCollapse={toggleCollapse} />
+            <WorkloadTimelineSidebarRow
+              blockIds={blockIds}
+              collapsed={collapsed}
+              onToggleCollapse={toggleCollapse}
+              focusWeek={focusWeek}
+              renderTaskLabel={(taskData) => (
+                <WorkloadTaskLink
+                  task={taskData.task}
+                  workspaceSlug={workspaceSlug}
+                  className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-primary hover:underline"
+                >
+                  <span className="flex-shrink-0 text-11 font-medium text-tertiary tabular-nums">
+                    {taskData.task.identifier}
+                  </span>
+                  <span className="truncate text-13">{taskData.task.name}</span>
+                </WorkloadTaskLink>
+              )}
+            />
           )}
           enableBlockLeftResize={false}
           enableBlockRightResize={false}

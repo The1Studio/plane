@@ -57,4 +57,39 @@ export type TWorkloadTaskBlockData = {
   target_date: string;
 };
 
-export type TWorkloadTimelineBlockData = TWorkloadHeaderBlockData | TWorkloadTaskBlockData;
+/**
+ * The per-assignee footer strip: "Unscheduled (N)" / "Overdue (N)" / "showing
+ * first N". Its own block kind rather than extra lines on the header, because
+ * every row in the chart is laid out at core's shared `BLOCK_HEIGHT` (44px,
+ * hardcoded in `gantt-chart/blocks/block-row.tsx`) — a taller header would
+ * mean a core edit, whereas one more 44px block needs none.
+ *
+ * Spans the same dates as its swimlane's header so `BlockRow`'s
+ * "drop blocks with no dates" guard keeps it; its chart-side render is empty.
+ */
+export type TWorkloadFooterBlockData = {
+  kind: "footer";
+  id: string;
+  name: string;
+  assigneeId: string | null;
+  row: TWorkloadRow;
+  sort_order: number;
+  start_date: string;
+  target_date: string;
+};
+
+export type TWorkloadTimelineBlockData = TWorkloadHeaderBlockData | TWorkloadTaskBlockData | TWorkloadFooterBlockData;
+
+/**
+ * Whether this row is over its WEEKLY capacity in any week of the response.
+ *
+ * The over-capacity signal is defined per week (the workspace configures a
+ * weekly max), so a window total is the wrong test: a member at 60h one week
+ * and idle the next is overloaded, and `total_over` — which compares the whole
+ * window's hours against the whole window's capacity — reports them as fine.
+ */
+export function isOverWeeklyCapacity(row: TWorkloadRow): boolean {
+  const capacity = row.weekly_capacity ?? 0;
+  if (capacity <= 0) return false;
+  return Object.values(row.weekly_buckets ?? {}).some((hours) => hours > capacity);
+}

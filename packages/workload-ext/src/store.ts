@@ -91,7 +91,18 @@ export interface IWorkloadStore {
 
 export class WorkloadStore implements IWorkloadStore {
   // observables
-  granularity: TWorkloadGranularity = "week";
+  /**
+   * Must agree with the timeline's DEFAULT zoom, because that zoom is now the
+   * only granularity control (WorkloadTimelineRoot's VIEW_TO_GRANULARITY).
+   * `BaseTimeLineStore` defaults `currentView` to `"week"`, whose columns are
+   * per-day — so `"day"` is the matching bucketing.
+   *
+   * They are aligned HERE, by construction, rather than by a mount effect:
+   * React runs child effects before parent ones, so a parent-side sync would
+   * fire after `ChartViewRoot` had already built its axis from the old value,
+   * and `updateCurrentView` on its own does not rebuild that render payload.
+   */
+  granularity: TWorkloadGranularity = "day";
   dateFrom: string;
   dateTo: string;
   selectedProjectIds: string[] = [];

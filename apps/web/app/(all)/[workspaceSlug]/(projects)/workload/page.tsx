@@ -12,7 +12,7 @@
 // @/components/gantt-chart) and is rendered as its own sibling below the toolbar.
 
 "use client";
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "react-router";
 import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
@@ -25,7 +25,9 @@ import { PageHead } from "@/components/core/page-title";
 import { DateRangeDropdown } from "@/components/dropdowns/date-range";
 import { MemberDropdown } from "@/components/dropdowns/member/dropdown";
 import { ProjectDropdown } from "@/components/dropdowns/project/dropdown";
+import { IssuePeekOverview } from "@/components/issues/peek-overview";
 import { WorkloadTimelineRoot } from "@/components/workload/timeline";
+import { useIssueDetail } from "@/hooks/store/use-issue-detail";
 import { useUserPermissions } from "@/hooks/store/user";
 import { useWorkload } from "@/hooks/store/use-workload";
 
@@ -47,6 +49,7 @@ export default observer(function WorkloadPage() {
   const { workspaceSlug = "" } = useParams();
   const workloadStore = useWorkload();
   const { allowPermissions } = useUserPermissions();
+  const { peekIssue } = useIssueDetail();
   // Capacity editing is admin-only (docs/FORK.md workload-capacity plan D-B3); workspace-scoped.
   const isAdmin = allowPermissions([EUserPermissions.ADMIN], EUserPermissionsLevel.WORKSPACE);
 
@@ -57,6 +60,18 @@ export default observer(function WorkloadPage() {
   useEffect(() => {
     if (workspaceSlug) workloadStore.fetchWorkload(workspaceSlug);
   }, [workloadStore, workspaceSlug]);
+
+  // Refetch once when the peek panel closes. The panel can change start date,
+  // target date, assignee and state — every field this view aggregates — so a
+  // board left as-is would be quietly stale. Refetching on close rather than
+  // diffing what changed keeps this to one request per edit session and needs
+  // no knowledge of the panel's internals.
+  const hadPeekRef = useRef(false);
+  useEffect(() => {
+    const isOpen = Boolean(peekIssue);
+    if (hadPeekRef.current && !isOpen && workspaceSlug) workloadStore.fetchWorkload(workspaceSlug);
+    hadPeekRef.current = isOpen;
+  }, [peekIssue, workloadStore, workspaceSlug]);
 
   const handleMemberChange = useCallback(
     (ids: string[]) => {
@@ -129,8 +144,12 @@ export default observer(function WorkloadPage() {
             />
           }
         />
-        <WorkloadTimelineRoot store={workloadStore} />
+        <WorkloadTimelineRoot store={workloadStore} workspaceSlug={workspaceSlug} />
       </div>
+      {/* Peek is not global — every layout that supports it mounts its own
+          (cf. issue-layouts/roots/all-issue-layout-root.tsx). It self-fetches
+          the work item, so nothing has to be preloaded into an issue store. */}
+      <IssuePeekOverview />
     </>
   );
 });

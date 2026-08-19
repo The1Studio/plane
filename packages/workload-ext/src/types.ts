@@ -12,6 +12,19 @@ export type TWorkloadRow = {
    * periods). Members with no workspace-wide capacity row get `{}`.
    */
   capacity_buckets?: Record<string, number>;
+  /**
+   * Hours per WEEK, independent of `granularity` — the basis for the
+   * `NNh/40h` badge and for the over-capacity signal, both of which are
+   * defined per week however the columns happen to be bucketed. Sparse.
+   *
+   * The key is the containing week's FIRST DATE (`"2026-08-17"`), never an
+   * ISO week number — an arbitrary `week_start_day` has none. Same convention
+   * as a `week`-granularity `buckets` key, so `periodDateRange(k, "week")`
+   * reverses it.
+   */
+  weekly_buckets?: Record<string, number>;
+  /** The workspace-wide weekly max (`max_weekly_hours`) — the badge's denominator. */
+  weekly_capacity?: number;
   /** Per-period overload flag, keyed identically to `capacity_buckets`. */
   over?: Record<string, boolean>;
   /** True when `total` exceeds the sum of this row's `capacity_buckets`. */
@@ -35,6 +48,8 @@ export type TWorkloadRow = {
  */
 export type TWorkloadTask = {
   id: string;
+  /** Owning project — required to build a work-item link or open the peek panel. */
+  project_id: string;
   /** `"<PROJECT>-<sequence_id>"`, e.g. "ENG-42". */
   identifier: string;
   name: string;

@@ -67,6 +67,54 @@ def period_key(d: date, granularity: str, week_start_day: int) -> str:
     raise ValueError(f"invalid granularity: {granularity!r}")
 
 
+def enumerate_periods(win_from: date, win_to: date, granularity: str, week_start_day: int) -> list:
+    """Every bucket key the window [win_from, win_to] covers, in sorted order.
+
+    The counterpart to `period_key`, which maps ONE date to its bucket: this
+    maps a whole window to the bucket set that window touches, so the response
+    can carry a column (and therefore a capacity figure and a heat cell) for a
+    period in which nobody logged an hour.
+
+    Delegates every key to `period_key` rather than re-deriving the formats —
+    the week key in particular is the containing week's first ISO date, never
+    an ISO week number, and that convention must live in exactly one place.
+
+    Callers must UNION this with the populated bucket keys, never substitute it:
+    `spread_estimate` clips hours to the window but computes the key from the
+    un-clipped day, so an issue starting a day or two before `win_from` can
+    legitimately produce a week or month key that precedes this window's first
+    key. Replacing rather than unioning would silently drop those hours from
+    the heat row.
+
+    >>> enumerate_periods(date(2026, 8, 18), date(2026, 8, 20), "day", 1)
+    ['2026-08-18', '2026-08-19', '2026-08-20']
+    >>> enumerate_periods(date(2026, 8, 18), date(2026, 8, 31), "week", 1)
+    ['2026-08-17', '2026-08-24', '2026-08-31']
+    >>> enumerate_periods(date(2026, 8, 18), date(2026, 10, 2), "month", 1)
+    ['2026-08', '2026-09', '2026-10']
+    """
+    if win_from > win_to:
+        return []
+    if granularity == "day":
+        n = (win_to - win_from).days
+        return [(win_from + timedelta(days=i)).isoformat() for i in range(n + 1)]
+    if granularity == "week":
+        keys = []
+        cursor = date.fromisoformat(period_key(win_from, "week", week_start_day))
+        while cursor <= win_to:
+            keys.append(cursor.isoformat())
+            cursor += timedelta(days=7)
+        return keys
+    if granularity == "month":
+        keys = []
+        year, month = win_from.year, win_from.month
+        while (year, month) <= (win_to.year, win_to.month):
+            keys.append(f"{year:04d}-{month:02d}")
+            year, month = (year + 1, 1) if month == 12 else (year, month + 1)
+        return keys
+    raise ValueError(f"invalid granularity: {granularity!r}")
+
+
 def spread_estimate(hours, start, target, win_from, win_to, granularity, workdays, week_start_day):
     """Spread one issue's hours across its [start, target] span, clipped to the
     request window [win_from, win_to].
