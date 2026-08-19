@@ -58,11 +58,14 @@ layout renders core issue blocks and carries no hours label.
 | [Phase 1](phase-1.md) — right-anchor the hours, raise min bar width               | `WorkloadTimelineChartBlock.tsx`                  | S (<1h)   |
 | [Phase 2](phase-2.md) — month zoom: capacity cells offset from their week columns | `gantt-chart/views/month-view.ts`, `docs/FORK.md` | S (<1h)   |
 | [Phase 3](phase-3.md) — week bucket end date a day early west of Greenwich        | `workload-ext/src/dateRange.ts`                   | S (<0.5h) |
+| [Phase 4](phase-4.md) — quarter zoom cramped; double each month's width           | `gantt-chart/data/index.ts`, `docs/FORK.md`       | S (<0.5h) |
+| [Phase 5](phase-5.md) — quarter zoom: estimate only, drop the bar title           | `WorkloadTimelineChartBlock.tsx`                  | S (<0.5h) |
 
-Phases 2 and 3 were added mid-cook — Phase 2 on a second report from the user, Phase 3
-from a finding surfaced while reading Phase 2's date math. Phase 4 came after PR #47
-merged. All four are independent, with unrelated root causes, sharing only the surface
-they show up on; Phase 4 additionally narrows the distortion Phase 1 accepted.
+Only Phase 1 was planned up front. Phases 2 and 4 came from further user reports, Phase 3
+from a finding surfaced while reading Phase 2's date math, and Phase 5 after Phase 4's
+widening failed to resolve the same complaint. Phases 1–4 have unrelated root causes and
+share only the surface they show up on; Phase 4 narrows the distortion Phase 1 accepted,
+and Phase 5 supersedes Phase 4's approach to quarter-zoom density (space → content).
 
 ## Risk Assessment
 
@@ -77,11 +80,14 @@ No risk scores ≥ 15.
 
 ## Timeline
 
-| Phase     | Effort  | Notes                                                             |
-| --------- | ------- | ----------------------------------------------------------------- |
-| Phase 1   | S (<1h) | Single file, no API or package change, no migration               |
-| Phase 2   | S (<1h) | One core file + FORK.md exception row; no API or migration change |
-| **Total** | **S**   | Phases are independent; either can ship alone                     |
+| Phase     | Effort    | Notes                                                                                                     |
+| --------- | --------- | --------------------------------------------------------------------------------------------------------- |
+| Phase 1   | S (<1h)   | Single file, no API or package change, no migration                                                       |
+| Phase 2   | S (<1h)   | One core file + FORK.md exception row; no API or migration change                                         |
+| Phase 3   | S (<0.5h) | One package file; `dist/` is gitignored, nothing to commit                                                |
+| Phase 4   | S (<0.5h) | One core file (existing FORK.md exception row, amended)                                                   |
+| Phase 5   | S (<0.5h) | One fork-owned file; refines Phases 1 and 4                                                               |
+| **Total** | **S**     | Phases are independent; any can ship alone. Phases 1–3 shipped in PR #47, Phase 4 in #48, Phase 5 in #49. |
 
 ## Fork discipline
 
