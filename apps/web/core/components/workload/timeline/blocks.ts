@@ -91,8 +91,9 @@ export type TWorkloadBlocksResult = {
 
 /**
  * Builds the flat blockIds run for every swimlane: `[header, task, task, ...,
- * header, task, ...]`, in `data.rows` order (already sorted server-side by
- * `-total, assignee_name` — service.py `rows.sort`). Collapsing a member
+ * header, task, ...]`, in `data.rows` order (already sorted server-side —
+ * `Unassigned` first, then ascending by `assignee_name`, case-insensitively;
+ * see service.py `rows.sort`). Collapsing a member
  * removes its task blockIds but KEEPS its header — this is what satisfies the
  * "collapsing hides bars but keeps the axis aligned" success criterion,
  * since every OTHER row's block is untouched and BlockRow stacks purely by

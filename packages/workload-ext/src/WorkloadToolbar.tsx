@@ -1,6 +1,5 @@
 import React from "react";
 import { observer } from "mobx-react";
-import { STATE_GROUPS } from "@plane/constants";
 import type { TWorkSettings } from "@plane/types";
 import { joinUrlPath } from "@plane/utils";
 
@@ -30,6 +29,15 @@ export type WorkloadToolbarProps = {
    */
   memberFilterSlot?: React.ReactNode;
   projectFilterSlot?: React.ReactNode;
+  /**
+   * State-group filter. Injected for the same reason as the two slots above —
+   * it is Plane's own dropdown chrome (`@plane/ui`'s `ComboDropDown` +
+   * `@/components/dropdowns/buttons`), none of which this package's dependency
+   * set can reach. It replaced an inline row of toggle chips rendered here: the
+   * chips worked, but sat beside two real dropdowns and read as a different
+   * kind of control for what is the same kind of filter.
+   */
+  stateFilterSlot?: React.ReactNode;
   dateRangeSlot?: React.ReactNode;
 };
 
@@ -52,8 +60,6 @@ function formatWorkSettingsReadout(settings: TWorkSettings): string {
   });
 }
 
-const STATE_GROUP_KEYS = Object.values(STATE_GROUPS);
-
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export const WorkloadToolbar = observer(function WorkloadToolbar({
@@ -63,19 +69,9 @@ export const WorkloadToolbar = observer(function WorkloadToolbar({
   workSettings,
   memberFilterSlot,
   projectFilterSlot,
+  stateFilterSlot,
   dateRangeSlot,
 }: WorkloadToolbarProps) {
-  /**
-   * State group is a server-side filter. No explicit refetch here: the setter
-   * drops the range cache, and the timeline reloads whatever is on screen.
-   */
-  function handleStateGroupToggle(key: string) {
-    const next = store.selectedStateGroups.includes(key)
-      ? store.selectedStateGroups.filter((g) => g !== key)
-      : [...store.selectedStateGroups, key];
-    store.setStateGroups(next);
-  }
-
   const hasActiveFilters =
     store.selectedProjectIds.length > 0 || store.selectedAssigneeIds.length > 0 || store.selectedStateGroups.length > 0;
 
@@ -103,29 +99,8 @@ export const WorkloadToolbar = observer(function WorkloadToolbar({
         {memberFilterSlot}
         {projectFilterSlot}
 
-        {/* State groups */}
-        <div className="flex flex-wrap items-center gap-1" role="group" aria-label={wlt("filters.state_groups")}>
-          {STATE_GROUP_KEYS.map((group) => {
-            const isSelected = store.selectedStateGroups.includes(group.key);
-            return (
-              <button
-                key={group.key}
-                type="button"
-                aria-pressed={isSelected}
-                onClick={() => handleStateGroupToggle(group.key)}
-                className={[
-                  "text-13 flex items-center gap-1.5 rounded-md border px-2 py-1 transition-colors",
-                  isSelected
-                    ? "border-accent-subtle bg-accent-subtle text-accent-primary"
-                    : "border-subtle text-tertiary hover:bg-layer-transparent-hover",
-                ].join(" ")}
-              >
-                <span aria-hidden="true" className="size-2 rounded-full" style={{ backgroundColor: group.color }} />
-                {group.label}
-              </button>
-            );
-          })}
-        </div>
+        {/* State groups (app-injected) */}
+        {stateFilterSlot}
 
         {hasActiveFilters && (
           <button

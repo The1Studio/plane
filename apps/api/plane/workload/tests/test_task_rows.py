@@ -49,14 +49,21 @@ def _ws(slug=None, timezone_name="UTC"):
     )
 
 
-def _user(email=None, is_bot=False):
+def _user(email=None, is_bot=False, display_name=None):
     from plane.db.models import User
 
     uid = uuid.uuid4().hex[:8]
     email = email or f"u-{uid}@test.invalid"
-    return User.objects.create_user(
+    user = User.objects.create_user(
         username=f"user_{uid}", email=email, password="x", is_bot=is_bot
     )
+    # `User.save()` derives `display_name` from the email when it is blank, so
+    # a test that asserts on ROW ORDER has to set it explicitly — otherwise
+    # every name is a random hex slug and any ordering assertion is luck.
+    if display_name is not None:
+        User.objects.filter(pk=user.pk).update(display_name=display_name)
+        user.refresh_from_db()
+    return user
 
 
 def _project(ws, identifier=None):
@@ -456,3 +463,93 @@ class TestNoNPlusOne(TransactionTestCase):
         with self.assertNumQueries(baseline):
             data_many = compute_workload(u, ws.slug, "day", WIN_FROM, WIN_TO)
         self.assertEqual(len(_rowfor(data_many, u)["tasks"]), 27)
+
+
+class TestRowOrdering(TransactionTestCase):
+    """`rows` is ordered for a reader scanning for a name, not for a manager
+    scanning for the busiest person: `Unassigned` first, then ascending by
+    `assignee_name` case-insensitively.
+
+    The fixture is built so the two orderings genuinely DISAGREE — the
+    early-alphabet member carries the SMALLEST load and the late-alphabet
+    member the largest. Under the previous `-total` sort these assertions
+    fail; a fixture where load and name happen to agree would pass either way
+    and prove nothing.
+    """
+
+    def test_unassigned_first_then_case_insensitive_alphabetical(self):
+        ws = _ws()
+        proj = _project(ws)
+        st = _state(ws, proj, "started")
+        author = _user()
+        _pmember(ws, proj, author)
+
+        # Mixed case on purpose: a case-SENSITIVE sort would put every
+        # capitalised name ahead of every lowercase one, so "Zulu" would
+        # precede "alpha" and this test would catch it.
+        alpha = _user(display_name="alpha")
+        Mike = _user(display_name="Mike")
+        Zulu = _user(display_name="Zulu")
+        for u in (alpha, Mike, Zulu):
+            _pmember(ws, proj, u)
+
+        day = date(2026, 6, 15)
+
+        def _task(assignee, hours):
+            issue = _issue(ws, proj, st, author, start=day, target=day)
+            if assignee is not None:
+                _assign(ws, proj, issue, assignee, created_at=_t(1))
+            _estimate(ws, proj, issue, hours)
+
+        # Load runs OPPOSITE to the alphabet.
+        _task(alpha, 1.0)
+        _task(Mike, 5.0)
+        _task(Zulu, 20.0)
+        # An issue with no active assignee produces the `Unassigned` row.
+        _task(None, 3.0)
+
+        data = compute_workload(author, ws.slug, "day", WIN_FROM, WIN_TO)
+        names = [r["assignee_name"] for r in data["rows"]]
+
+        self.assertIsNone(data["rows"][0]["assignee_id"])
+        self.assertEqual(names, ["Unassigned", "alpha", "Mike", "Zulu"])
+
+        # Restate the two properties independently of the literal list above,
+        # so a future fixture change cannot quietly weaken the test.
+        rest = data["rows"][1:]
+        self.assertEqual(
+            [r["assignee_name"] for r in rest],
+            sorted((r["assignee_name"] for r in rest), key=str.casefold),
+        )
+        self.assertGreater(
+            _rowfor(data, Zulu)["total"], _rowfor(data, alpha)["total"]
+        )
+
+    def test_a_member_named_unassigned_is_not_pinned(self):
+        """The pin is keyed on `assignee_id is None`, not on the display name,
+        so a real member called "Unassigned" sorts under U like anyone else."""
+        ws = _ws()
+        proj = _project(ws)
+        st = _state(ws, proj, "started")
+        author = _user()
+        _pmember(ws, proj, author)
+
+        impostor = _user(display_name="Unassigned")
+        alpha = _user(display_name="alpha")
+        for u in (impostor, alpha):
+            _pmember(ws, proj, u)
+
+        day = date(2026, 6, 15)
+        for assignee in (impostor, alpha):
+            issue = _issue(ws, proj, st, author, start=day, target=day)
+            _assign(ws, proj, issue, assignee, created_at=_t(1))
+            _estimate(ws, proj, issue, 2.0)
+
+        data = compute_workload(author, ws.slug, "day", WIN_FROM, WIN_TO)
+
+        # No genuinely-unassigned work here, so nothing is pinned and the
+        # impostor sorts after "alpha" on name alone.
+        self.assertEqual(
+            [r["assignee_name"] for r in data["rows"]], ["alpha", "Unassigned"]
+        )
+        self.assertIsNotNone(data["rows"][1]["assignee_id"])
