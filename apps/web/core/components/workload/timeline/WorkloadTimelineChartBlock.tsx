@@ -79,8 +79,12 @@ export const WorkloadTimelineChartBlock = observer(function WorkloadTimelineChar
                 )}
                 title={`${task.identifier} ${task.name} · ${task.hours}h${task.overdue ? " · overdue" : ""}`}
               >
+                {/* Name and hours only. The identifier prefix ate a third of a
+                    narrow bar's width without telling the reader anything they
+                    could not get from hovering — it stays in the `title` above,
+                    and in the sidebar cell for a single-task lane. */}
                 <span className="truncate">
-                  {task.identifier} {task.name} · {task.hours}h
+                  {task.name} · {task.hours}h
                 </span>
               </div>
             </WorkloadTaskLink>
