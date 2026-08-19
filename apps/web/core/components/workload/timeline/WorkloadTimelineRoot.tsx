@@ -47,7 +47,6 @@ import { getDateFromPositionOnGantt } from "@/components/gantt-chart/views";
 import { useWorkSettings } from "@/hooks/store/use-work-settings";
 import { buildWorkloadBlocks, focusPeriodFor } from "./blocks";
 import type { TFocusPeriod } from "./blocks";
-import { WorkloadTaskLink } from "./WorkloadTaskLink";
 import { WorkloadTimelineChartBlock } from "./WorkloadTimelineChartBlock";
 import { WorkloadTimelineSidebarRow } from "./WorkloadTimelineSidebarRow";
 import type { TWorkloadTimelineBlockData } from "./types";
@@ -246,7 +245,15 @@ export const WorkloadTimelineRoot = observer(function WorkloadTimelineRoot({ sto
 
   return (
     <TimeLineTypeContext.Provider value={GANTT_TIMELINE_TYPE.WORKLOAD}>
-      <div className="relative h-[70vh] w-full">
+      {/* `isolate` confines every z-index inside the chart to this container.
+          Without it the gantt sidebar (`sticky z-10`, sidebar/root.tsx) ties with
+          the toolbar dropdowns' panels (`fixed z-10`, e.g. dropdowns/project/base.tsx)
+          and wins on DOM order, because the timeline is rendered after the
+          toolbar — so an open Projects/Members dropdown was painted UNDER the
+          board. Isolating here fixes it without editing either core file.
+          Full-screen mode is unaffected: it `createPortal`s out to
+          #full-screen-portal, which is not inside this container. */}
+      <div className="relative isolate h-[70vh] w-full">
         {!hasRows && (
           // "No rows" and "no data" are NOT the same thing, and conflating them
           // is what let a real bug hide: a member with 71 estimated tasks
@@ -285,18 +292,6 @@ export const WorkloadTimelineRoot = observer(function WorkloadTimelineRoot({ sto
               collapsed={collapsed}
               onToggleCollapse={toggleCollapse}
               focus={focus}
-              renderTaskLabel={(taskData) => (
-                <WorkloadTaskLink
-                  task={taskData.task}
-                  workspaceSlug={workspaceSlug}
-                  className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-primary hover:underline"
-                >
-                  <span className="flex-shrink-0 text-11 font-medium text-tertiary tabular-nums">
-                    {taskData.task.identifier}
-                  </span>
-                  <span className="truncate text-13">{taskData.task.name}</span>
-                </WorkloadTaskLink>
-              )}
             />
           )}
           enableBlockLeftResize={false}

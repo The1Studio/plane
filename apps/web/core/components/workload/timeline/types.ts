@@ -43,17 +43,29 @@ export type TWorkloadHeaderBlockData = {
   target_date: string;
 };
 
-/** One task bar. Only tasks with a non-null `target_date` become a block —
- * a task with no target is "Unscheduled" and is surfaced via the header
- * row's affordance instead (see `blocks.ts`). */
-export type TWorkloadTaskBlockData = {
-  kind: "task";
+/**
+ * One LANE of task bars — a set of tasks whose date ranges do not overlap, so
+ * they can share a single row without colliding.
+ *
+ * The chart lays out one row per blockId at a fixed `BLOCK_HEIGHT`, so packing
+ * cannot be done by giving several blocks the same row. Instead a lane is ONE
+ * block spanning min(start)..max(target) of its tasks, and the bars are
+ * positioned inside its box — the same technique the header row already uses to
+ * place per-period heat cells (see WorkloadTimelineChartBlock).
+ *
+ * Only tasks with a non-null `target_date` are placed. A task with no target is
+ * "Unscheduled": the timeline has no window to plot it in, and it is surfaced
+ * on the footer row instead, never as a bar.
+ */
+export type TWorkloadLaneBlockData = {
+  kind: "lane";
   id: string;
   name: string;
   assigneeId: string | null;
-  task: TWorkloadTask;
+  /** Non-overlapping, ordered by start date. */
+  tasks: TWorkloadTask[];
   sort_order: number;
-  start_date: string | undefined;
+  start_date: string;
   target_date: string;
 };
 
@@ -78,4 +90,4 @@ export type TWorkloadFooterBlockData = {
   target_date: string;
 };
 
-export type TWorkloadTimelineBlockData = TWorkloadHeaderBlockData | TWorkloadTaskBlockData | TWorkloadFooterBlockData;
+export type TWorkloadTimelineBlockData = TWorkloadHeaderBlockData | TWorkloadLaneBlockData | TWorkloadFooterBlockData;

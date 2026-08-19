@@ -24,7 +24,7 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { observer } from "mobx-react";
 import { wlt } from "@plane/workload-ext";
-import type { TWorkloadRow } from "@plane/workload-ext";
+import type { TWorkloadRow, TWorkloadTask } from "@plane/workload-ext";
 import type { TFocusPeriod } from "./blocks";
 import { Avatar, Row, ERowVariant } from "@plane/ui";
 import { cn } from "@plane/utils";
@@ -45,8 +45,6 @@ type Props = {
    * inventing a period.
    */
   focus: TFocusPeriod | null;
-  /** Renders a task row as a peek-opening control. Phase 4 supplies it. */
-  renderTaskLabel?: (data: Extract<TWorkloadTimelineBlockData, { kind: "task" }>) => React.ReactNode;
 };
 
 /** Two-decimal rounding, so summed float buckets do not print 7.000000000000001h. */
@@ -124,7 +122,6 @@ export const WorkloadTimelineSidebarRow = observer(function WorkloadTimelineSide
   collapsed,
   onToggleCollapse,
   focus,
-  renderTaskLabel,
 }: Props) {
   const { getBlockById } = useTimeLineChartStore();
   const { getUserDetails } = useMember();
@@ -136,22 +133,15 @@ export const WorkloadTimelineSidebarRow = observer(function WorkloadTimelineSide
         const data = block?.data as TWorkloadTimelineBlockData | undefined;
         if (!data) return null;
 
-        // ── task ────────────────────────────────────────────────────────────
-        if (data.kind === "task") {
-          const { task } = data;
+        // ── lane ────────────────────────────────────────────────────────────
+        if (data.kind === "lane") {
+          // A lane holds several non-overlapping tasks, so no single name can
+          // label it. The bars carry their own identifier + name + hours and are
+          // the click targets; this cell just says how many share the row.
+          const count = data.tasks.length;
           return (
-            <SidebarCell key={blockId} className="flex items-center gap-2 pr-2 pl-7">
-              {renderTaskLabel ? (
-                renderTaskLabel(data)
-              ) : (
-                <div className="flex min-w-0 flex-1 items-center gap-1.5 truncate">
-                  <span className="flex-shrink-0 text-11 font-medium text-tertiary tabular-nums">
-                    {task.identifier}
-                  </span>
-                  <span className="truncate text-13">{task.name}</span>
-                </div>
-              )}
-              <span className="flex-shrink-0 text-11 text-tertiary tabular-nums">{fmtHours(task.hours)}h</span>
+            <SidebarCell key={blockId} className="flex items-center gap-2 pr-2 pl-7 text-11 text-tertiary">
+              <span className="truncate">{count === 1 ? data.tasks[0].identifier : `${count} items`}</span>
             </SidebarCell>
           );
         }
@@ -159,8 +149,8 @@ export const WorkloadTimelineSidebarRow = observer(function WorkloadTimelineSide
         // ── footer ──────────────────────────────────────────────────────────
         if (data.kind === "footer") {
           const { row } = data;
-          const unscheduledCount = row.tasks.filter((t) => !t.target_date).length;
-          const overdueCount = row.tasks.filter((t) => t.overdue).length;
+          const unscheduledCount = row.tasks.filter((t: TWorkloadTask) => !t.target_date).length;
+          const overdueCount = row.tasks.filter((t: TWorkloadTask) => t.overdue).length;
           return (
             <SidebarCell key={blockId} className="flex items-center gap-3 pr-2 pl-7 text-11 text-tertiary">
               {unscheduledCount > 0 && <span>{wlt("timeline.unscheduled_count", { count: unscheduledCount })}</span>}

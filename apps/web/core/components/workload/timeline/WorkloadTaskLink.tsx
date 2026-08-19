@@ -30,6 +30,8 @@ type Props = {
   task: TWorkloadTask;
   workspaceSlug: string;
   className?: string;
+  /** Absolute positioning for a bar inside its lane box (see the lane renderer). */
+  style?: React.CSSProperties;
   children: React.ReactNode;
 };
 
@@ -37,6 +39,7 @@ export const WorkloadTaskLink = observer(function WorkloadTaskLink({
   task,
   workspaceSlug,
   className,
+  style,
   children,
 }: Props) {
   const { setPeekIssue } = useIssueDetail();
@@ -61,7 +64,7 @@ export const WorkloadTaskLink = observer(function WorkloadTaskLink({
   };
 
   return (
-    <ControlLink href={href} onClick={handleClick} className={className}>
+    <ControlLink href={href} onClick={handleClick} className={className} style={style}>
       {children}
     </ControlLink>
   );

@@ -7,7 +7,7 @@
 // `GanttChartRoot` needs. Kept dependency-free of React/MobX so it's testable
 // in isolation.
 
-import { periodDateRange } from "@plane/workload-ext";
+import { packTasksIntoLanes, periodDateRange } from "@plane/workload-ext";
 import type { TWorkloadGranularity, TWorkloadResponse } from "@plane/workload-ext";
 import { assigneeKey } from "./types";
 import type { TWorkloadTimelineBlockData } from "./types";
@@ -136,25 +136,28 @@ export function buildWorkloadBlocks(
 
     if (collapsedAssigneeKeys.has(key)) continue;
 
-    for (const task of row.tasks) {
-      // A task with no target_date is "Unscheduled" (mirrors service.py's own
-      // routing: `target is None` always lands in the Unscheduled bucket).
-      // The timeline has no window to plot it in — it's surfaced via the
-      // header row's "Unscheduled (N)" affordance instead, never a bar.
-      if (!task.target_date) continue;
-      const taskId = `wl-task:${task.id}`;
-      blockIds.push(taskId);
-      dataById[taskId] = {
-        kind: "task",
-        id: taskId,
-        name: task.name,
+    // Compact: several non-overlapping tasks share one row. A member with 49
+    // scheduled tasks was 49 rows tall; packed, it is as many rows as they have
+    // genuinely concurrent work, which is usually a handful.
+    const lanes = packTasksIntoLanes(row.tasks);
+    lanes.forEach((laneTasks, laneIndex) => {
+      const laneId = `wl-lane:${key}:${laneIndex}`;
+      // The lane's own box spans its first bar's start to its last bar's end;
+      // each bar is then positioned INSIDE that box by the chart renderer.
+      const laneStart = laneTasks[0].start_date ?? laneTasks[0].target_date!;
+      const laneEnd = laneTasks.reduce((latest, t) => (t.target_date! > latest ? t.target_date! : latest), laneStart);
+      blockIds.push(laneId);
+      dataById[laneId] = {
+        kind: "lane",
+        id: laneId,
+        name: laneTasks[0].name,
         assigneeId: row.assignee_id,
-        task,
+        tasks: laneTasks,
         sort_order: order++,
-        start_date: task.start_date ?? undefined,
-        target_date: task.target_date,
+        start_date: laneStart,
+        target_date: laneEnd,
       };
-    }
+    });
 
     // Footer closes the swimlane. Emitted only when expanded (a collapsed
     // member is one line), and only when it has something to say — an empty

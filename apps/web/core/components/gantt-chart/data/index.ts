@@ -72,6 +72,20 @@ export const datePreview = (date: Date, includeTime: boolean = false) => {
 };
 
 // context data
+/* The1Studio fork (wider timeline columns) — `dayWidth` tripled on all three
+ * views (week 60→180, month 20→60, quarter 5→15).
+ *
+ * No upstream seam: every consumer reads `currentViewData.data.dayWidth`, which
+ * originates here and nowhere else, and the objects are shared singletons that
+ * `ChartViewRoot` mutates in place — so there is no per-timeline override to
+ * hook. Overriding it on the store instead does not work either: the container
+ * width (`scrollWidth`) is computed inside `ChartViewRoot` from the ORIGINAL
+ * value, so the block positions and the scroll container would disagree.
+ *
+ * Deliberately GLOBAL: this widens the Timeline layout for issues, cycles and
+ * modules as well as the workload board. Scoping it to workload alone would
+ * have meant threading an override prop through GanttChartRoot AND
+ * ChartViewRoot — two core files instead of one. */
 export const VIEWS_LIST: ChartDataType[] = [
   {
     key: "week",
@@ -81,7 +95,7 @@ export const VIEWS_LIST: ChartDataType[] = [
       currentDate: new Date(),
       endDate: new Date(),
       approxFilterRange: 4, // it will preview week dates with weekends highlighted with 1 week limitations ex: title (Wed 1, Thu 2, Fri 3)
-      dayWidth: 60,
+      dayWidth: 180,
     },
   },
   {
@@ -92,7 +106,7 @@ export const VIEWS_LIST: ChartDataType[] = [
       currentDate: new Date(),
       endDate: new Date(),
       approxFilterRange: 6, // it will preview monthly all dates with weekends highlighted with no limitations ex: title (1, 2, 3)
-      dayWidth: 20,
+      dayWidth: 60,
     },
   },
   {
@@ -103,7 +117,7 @@ export const VIEWS_LIST: ChartDataType[] = [
       currentDate: new Date(),
       endDate: new Date(),
       approxFilterRange: 24, // it will preview week starting dates all months data and there is 3 months limitation for preview ex: title (2, 9, 16, 23, 30)
-      dayWidth: 5,
+      dayWidth: 15,
     },
   },
 ];

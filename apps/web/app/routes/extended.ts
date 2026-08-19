@@ -18,7 +18,12 @@ export const extendedRoutes: RouteConfigEntry[] = [
   layout("./(all)/layout.tsx", [
     layout("./(all)/[workspaceSlug]/layout.tsx", [
       layout("./(all)/[workspaceSlug]/(projects)/layout.tsx", [
-        route(":workspaceSlug/workload", "./(all)/[workspaceSlug]/(projects)/workload/page.tsx"),
+        // Nested in its own layout so the tab mounts an <AppHeader>, the same
+        // as every core workspace page. Without it the app-sidebar toggle never
+        // renders and a collapsed sidebar cannot be reopened from this tab.
+        layout("./(all)/[workspaceSlug]/(projects)/workload/layout.tsx", [
+          route(":workspaceSlug/workload", "./(all)/[workspaceSlug]/(projects)/workload/page.tsx"),
+        ]),
       ]),
     ]),
   ]),
