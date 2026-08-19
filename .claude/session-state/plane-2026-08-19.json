@@ -26,7 +26,15 @@
       "estimateHours": 1,
       "stage": "done",
       "updatedAt": "2026-08-19T09:51:01.258Z"
+    },
+    {
+      "id": "0f824230-1120-4630-8103-a3ad87b63c7e",
+      "identifier": "PLANE-78",
+      "name": "[Frontend][Fix] Timeline quarter zoom is cramped — double each month's width",
+      "estimateHours": 0.5,
+      "stage": "done",
+      "updatedAt": "2026-08-19T10:09:13.881Z"
     }
   ],
-  "updatedAt": "2026-08-19T09:51:01.258Z"
+  "updatedAt": "2026-08-19T10:09:13.881Z"
 }
