@@ -107,8 +107,8 @@ export const WorkloadTimelineRoot = observer(function WorkloadTimelineRoot({ sto
   const { blockIds, dataById } = useMemo(() => {
     if (!store.workloadData)
       return { blockIds: [] as string[], dataById: {} as Record<string, TWorkloadTimelineBlockData> };
-    return buildWorkloadBlocks(store.workloadData, store.granularity, collapsed, store.showOverCapacityOnly);
-  }, [store.workloadData, store.granularity, collapsed, store.showOverCapacityOnly]);
+    return buildWorkloadBlocks(store.workloadData, store.granularity, collapsed);
+  }, [store.workloadData, store.granularity, collapsed]);
 
   // The week the badge reports on. Derived from the response itself, so it can
   // never index `weekly_buckets` with a key built from a different week-start
@@ -162,14 +162,18 @@ export const WorkloadTimelineRoot = observer(function WorkloadTimelineRoot({ sto
     return <div className="py-4 text-13 text-danger-primary">{store.error}</div>;
   }
   if (!store.workloadData || store.workloadData.rows.length === 0) {
-    return <div className="py-8 text-center text-13 text-placeholder">{wlt("timeline.no_workload_data")}</div>;
-  }
-  // There IS data — the over-capacity filter just excluded every swimlane.
-  // Distinguishing the two matters: an empty chart under an active filter is a
-  // result, not an absence, and rendering the generic "no workload data" here
-  // would send the reader looking for a problem that does not exist.
-  if (blockIds.length === 0) {
-    return <div className="py-8 text-center text-13 text-placeholder">{wlt("timeline.no_over_capacity")}</div>;
+    // "No rows" and "no data" are NOT the same thing, and conflating them is
+    // what let a real bug hide: a member with 71 estimated tasks rendered an
+    // empty board because every one of their target dates fell just before the
+    // window opened. The server already tells us the difference — `issues_counted`
+    // is the number of estimated work items it examined, before any date
+    // clipping — so say which case this is instead of a bare "no data".
+    const counted = store.workloadData?.meta?.issues_counted ?? 0;
+    return (
+      <div className="py-8 text-center text-13 text-placeholder">
+        {counted > 0 ? wlt("timeline.no_data_in_range", { count: counted }) : wlt("timeline.no_workload_data")}
+      </div>
+    );
   }
 
   const granularity = store.granularity;

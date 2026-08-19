@@ -1,7 +1,6 @@
 import React from "react";
 import { observer } from "mobx-react";
 import { STATE_GROUPS } from "@plane/constants";
-import { Switch } from "@plane/propel/switch";
 import type { TWorkSettings } from "@plane/types";
 import { joinUrlPath } from "@plane/utils";
 
@@ -75,22 +74,13 @@ export const WorkloadToolbar = observer(function WorkloadToolbar({
     store.fetchWorkload(workspaceSlug);
   }
 
-  /** Over-capacity is a client-side row filter (plan D-B4) — never refetches. */
-  function handleOverOnlyChange(value: boolean) {
-    store.setShowOverCapacityOnly(value);
-  }
-
   const hasActiveFilters =
-    store.selectedProjectIds.length > 0 ||
-    store.selectedAssigneeIds.length > 0 ||
-    store.selectedStateGroups.length > 0 ||
-    store.showOverCapacityOnly;
+    store.selectedProjectIds.length > 0 || store.selectedAssigneeIds.length > 0 || store.selectedStateGroups.length > 0;
 
   function handleClearFilters() {
     store.setProjectIds([]);
     store.setAssigneeIds([]);
     store.setStateGroups([]);
-    store.setShowOverCapacityOnly(false);
     store.fetchWorkload(workspaceSlug);
   }
 
@@ -134,19 +124,6 @@ export const WorkloadToolbar = observer(function WorkloadToolbar({
               </button>
             );
           })}
-        </div>
-
-        {/* Over-capacity only — client-side, no refetch */}
-        <div className="ml-1 flex items-center gap-2">
-          <Switch value={store.showOverCapacityOnly} onChange={handleOverOnlyChange} label={wlt("filters.over_only")} />
-          {/* Switch renders `label` as aria-label only, so the visible text lives here. */}
-          <button
-            type="button"
-            onClick={() => handleOverOnlyChange(!store.showOverCapacityOnly)}
-            className="text-13 text-tertiary transition-colors hover:text-primary"
-          >
-            {wlt("filters.over_only")}
-          </button>
         </div>
 
         {hasActiveFilters && (

@@ -9,7 +9,7 @@
 
 import { periodDateRange } from "@plane/workload-ext";
 import type { TWorkloadGranularity, TWorkloadResponse } from "@plane/workload-ext";
-import { assigneeKey, isOverWeeklyCapacity } from "./types";
+import { assigneeKey } from "./types";
 import type { TWorkloadTimelineBlockData } from "./types";
 
 /**
@@ -100,8 +100,7 @@ export type TWorkloadBlocksResult = {
 export function buildWorkloadBlocks(
   data: TWorkloadResponse,
   granularity: TWorkloadGranularity,
-  collapsedAssigneeKeys: ReadonlySet<string>,
-  showOverCapacityOnly: boolean = false
+  collapsedAssigneeKeys: ReadonlySet<string>
 ): TWorkloadBlocksResult {
   const blockIds: string[] = [];
   const dataById: Record<string, TWorkloadTimelineBlockData> = {};
@@ -117,16 +116,8 @@ export function buildWorkloadBlocks(
   const headerStart = firstPeriod ? periodDateRange(firstPeriod, granularity).start : data.date_from;
   const headerEnd = lastPeriod ? periodDateRange(lastPeriod, granularity).end : data.date_to;
 
-  // The over-capacity switch hides whole swimlanes (phase-8.md "the
-  // over-capacity filter now hides whole swimlanes rather than table rows").
-  // It had been WIRED NOWHERE since the aggregate matrix was deleted: the
-  // store field was written by the toolbar and read by no renderer, so the
-  // control silently did nothing. The test is weekly, not window-total — see
-  // `isOverWeeklyCapacity`.
-  const rows = showOverCapacityOnly ? data.rows.filter(isOverWeeklyCapacity) : data.rows;
-
   let order = 0;
-  for (const row of rows) {
+  for (const row of data.rows) {
     const key = assigneeKey(row.assignee_id);
     const headerId = `wl-header:${key}`;
     blockIds.push(headerId);

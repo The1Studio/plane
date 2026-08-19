@@ -46,12 +46,10 @@ export const WORKLOAD_STRINGS = {
   "matrix.issues_summary": "{counted} issues counted · {zero} with 0h estimate",
   "matrix.truncated": "Results truncated. Narrow your date range.",
   "matrix.over_capacity": "Over",
-  "matrix.no_over_capacity": "No one is over capacity.",
   "filters.projects": "Projects",
   "filters.members": "Members",
   "filters.state_groups": "Status",
   "filters.clear": "Clear filters",
-  "filters.over_only": "Over capacity only",
   // Workspace work-settings readout (The1Studio fork — workspace work settings, phase-4.md).
   "toolbar.settings_readout": "Max {hours}h/week · {workdays} · week starts {weekStart}",
   "toolbar.manage_settings": "Manage",
@@ -62,8 +60,8 @@ export const WORKLOAD_STRINGS = {
   "timeline.showing_first_n": "Showing first {count} — narrow your filters to see the rest",
   "timeline.no_workload_data": "No workload data.",
   "timeline.week_of": "Week of {date}",
-  "timeline.no_over_capacity": "No one is over their weekly capacity in this range.",
-  "toolbar.range_clamped": "Range shortened to {days} days for this zoom level.",
+  "timeline.no_data_in_range":
+    "{count} estimated work items exist, but none fall in this date range — widen it to see them.",
 } as const;
 
 export type TWorkloadStringKey = keyof typeof WORKLOAD_STRINGS;

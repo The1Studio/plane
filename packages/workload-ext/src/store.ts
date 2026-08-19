@@ -37,8 +37,6 @@ export interface IWorkloadStore {
   selectedStateGroups: string[];
   workloadData: TWorkloadResponse | null;
   estimateData: Record<string, TWorkloadEstimate | null>; // keyed by issueId
-  /** Client-side matrix filter — when true, the matrix renders only rows with `total_over`. */
-  showOverCapacityOnly: boolean;
   /**
    * Computed rollup per issueId. `null` means the id has been fetched (via
    * either the single-issue GET or the bulk rollups endpoint) and is
@@ -71,7 +69,6 @@ export interface IWorkloadStore {
   setProjectIds: (ids: string[]) => void;
   setAssigneeIds: (ids: string[]) => void;
   setStateGroups: (groups: string[]) => void;
-  setShowOverCapacityOnly: (value: boolean) => void;
   fetchWorkload: (workspaceSlug: string) => Promise<void>;
   fetchEstimate: (workspaceSlug: string, projectId: string, issueId: string) => Promise<void>;
   fetchEstimatesBulk: (workspaceSlug: string, issueIds: string[]) => Promise<void>;
@@ -110,7 +107,6 @@ export class WorkloadStore implements IWorkloadStore {
   selectedStateGroups: string[] = [];
   workloadData: TWorkloadResponse | null = null;
   estimateData: Record<string, TWorkloadEstimate | null> = {};
-  showOverCapacityOnly: boolean = false;
   rollupData: Record<string, TWorkloadRollup | null> = {};
   isLoading: boolean = false;
   error: string | null = null;
@@ -159,9 +155,24 @@ export class WorkloadStore implements IWorkloadStore {
   private readonly _lastWriteEpoch: Record<string, number> = {};
 
   constructor() {
+    // The window opens in the RECENT PAST, not at today.
+    //
+    // It used to run `today .. today + 12 weeks`, which silently hid anyone
+    // whose scheduled work had already happened. An assignee reaches `rows`
+    // only by having in-window hours or genuinely unscheduled work (no target
+    // date); somebody whose every task is scheduled and finished last week
+    // matches neither and vanishes from the board entirely — not as a `0h`
+    // row, but as no row at all. Observed live: a member with 71 tasks and
+    // 216.5h of estimates rendered nothing, because their latest target date
+    // was one day before today.
+    //
+    // A workload view is about who is loaded NOW, and the weeks just gone —
+    // overdue work above all — are the most relevant context there is. The
+    // span is 84 days, inside `MAX_SPAN_DAYS.day` (92) so the default
+    // `granularity` of "day" is always valid without a clamp.
     const today = new Date();
-    this.dateFrom = toDateString(today);
-    this.dateTo = toDateString(addWeeks(today, 12));
+    this.dateFrom = toDateString(addWeeks(today, -4));
+    this.dateTo = toDateString(addWeeks(today, 8));
     this.service = new WorkloadService();
 
     makeObservable(this, {
@@ -173,7 +184,6 @@ export class WorkloadStore implements IWorkloadStore {
       selectedStateGroups: observable,
       workloadData: observable,
       estimateData: observable,
-      showOverCapacityOnly: observable,
       rollupData: observable,
       isLoading: observable,
       error: observable,
@@ -187,7 +197,6 @@ export class WorkloadStore implements IWorkloadStore {
       setProjectIds: action,
       setAssigneeIds: action,
       setStateGroups: action,
-      setShowOverCapacityOnly: action,
       fetchWorkload: action,
       fetchEstimate: action,
       fetchEstimatesBulk: action,
@@ -230,10 +239,6 @@ export class WorkloadStore implements IWorkloadStore {
 
   setStateGroups(groups: string[]): void {
     this.selectedStateGroups = groups;
-  }
-
-  setShowOverCapacityOnly(value: boolean): void {
-    this.showOverCapacityOnly = value;
   }
 
   async fetchWorkload(workspaceSlug: string): Promise<void> {

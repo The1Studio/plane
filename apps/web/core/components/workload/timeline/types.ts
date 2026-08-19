@@ -79,17 +79,3 @@ export type TWorkloadFooterBlockData = {
 };
 
 export type TWorkloadTimelineBlockData = TWorkloadHeaderBlockData | TWorkloadTaskBlockData | TWorkloadFooterBlockData;
-
-/**
- * Whether this row is over its WEEKLY capacity in any week of the response.
- *
- * The over-capacity signal is defined per week (the workspace configures a
- * weekly max), so a window total is the wrong test: a member at 60h one week
- * and idle the next is overloaded, and `total_over` — which compares the whole
- * window's hours against the whole window's capacity — reports them as fine.
- */
-export function isOverWeeklyCapacity(row: TWorkloadRow): boolean {
-  const capacity = row.weekly_capacity ?? 0;
-  if (capacity <= 0) return false;
-  return Object.values(row.weekly_buckets ?? {}).some((hours) => hours > capacity);
-}
