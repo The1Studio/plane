@@ -4,7 +4,7 @@
  * See the LICENSE file for details.
  */
 
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { observer } from "mobx-react";
 // i18n
 import { useTranslation } from "@plane/i18n";
@@ -37,17 +37,9 @@ import { useMember } from "@/hooks/store/use-member";
 import { useProject } from "@/hooks/store/use-project";
 import { useProjectState } from "@/hooks/store/use-project-state";
 // The1Studio fork (SP2 workload) — shared estimate store (SSOT with the list/spreadsheet column)
-import { setToast, TOAST_TYPE } from "@plane/propel/toast";
-import {
-  formatRollupHours,
-  formatRollupTooltip,
-  PARENT_HAS_CHILDREN_ERROR_CODE,
-  ProgressBar,
-  resolveProgress,
-  WorkloadEstimateApiError,
-  wlt,
-} from "@plane/workload-ext";
+import { formatRollupHours, formatRollupTooltip, ProgressBar, resolveProgress, wlt } from "@plane/workload-ext";
 import { useWorkload } from "@/hooks/store/use-workload";
+import { useWorkloadEstimateEditor } from "@/hooks/store/use-workload-estimate-editor";
 // plane web components
 // components
 import { WorkItemAdditionalSidebarProperties } from "@/plane-web/components/issues/issue-details/additional-properties";
@@ -100,12 +92,12 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
   // read/write one source of truth. The displayed value reflects the live store value unless
   // the user is actively editing — so a grid edit shows here without reopening the panel.
   const workloadStore = useWorkload();
-  const storeHours = workloadStore.estimateData[issueId]?.hours ?? null;
   const rollup = workloadStore.rollupData[issueId] ?? null;
-  const [estimateDraft, setEstimateDraft] = useState<number | "">("");
-  const [estimateFocused, setEstimateFocused] = useState(false);
-  const [estimateSaving, setEstimateSaving] = useState(false);
   const estimateFetchedRef = useRef(false);
+
+  // Shared commit lifecycle: 800 ms after typing stops, on Enter (focus kept),
+  // or on blur. See hooks/store/use-workload-estimate-editor.ts.
+  const estimate = useWorkloadEstimateEditor({ workspaceSlug, projectId, issueId });
 
   useEffect(() => {
     if (!workspaceSlug || !projectId || !issueId || estimateFetchedRef.current) return;
@@ -118,48 +110,6 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
       }
     })();
   }, [workspaceSlug, projectId, issueId, workloadStore]);
-
-  // Live store value when idle; local draft while the user is typing.
-  const estimatedHoursValue = estimateFocused ? estimateDraft : (storeHours ?? "");
-
-  const handleEstimateFocus = () => {
-    setEstimateDraft(storeHours ?? "");
-    setEstimateFocused(true);
-  };
-
-  const handleEstimateChange = (val: number | "") => {
-    setEstimateDraft(val);
-  };
-
-  const handleEstimateBlur = async () => {
-    setEstimateFocused(false);
-    if (!workspaceSlug || !projectId || !issueId) return;
-    if (estimateDraft === "" || Number(estimateDraft) < 0) return;
-    setEstimateSaving(true);
-    try {
-      await workloadStore.updateEstimate(
-        workspaceSlug.toString(),
-        projectId.toString(),
-        issueId,
-        Number(estimateDraft)
-      );
-    } catch (err) {
-      // 400 UX backstop (plan §P4 item 4): a sub-issue was likely added
-      // concurrently, so the backend now considers this issue a parent.
-      // Refetch its rollup (flips the field read-only) and explain why the
-      // edit didn't apply.
-      if (err instanceof WorkloadEstimateApiError && err.errorCode === PARENT_HAS_CHILDREN_ERROR_CODE) {
-        void workloadStore.forceRefetchRollup(workspaceSlug.toString(), issueId);
-        setToast({
-          type: TOAST_TYPE.ERROR,
-          title: wlt("estimate.parent_has_children_toast_title"),
-          message: wlt("estimate.parent_has_children_toast_message"),
-        });
-      }
-    } finally {
-      setEstimateSaving(false);
-    }
-  };
 
   return (
     <>
@@ -271,8 +221,8 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
             <SidebarPropertyListItem icon={EstimatePropertyIcon} label={wlt("estimate.label")}>
               <div className="flex h-7.5 items-center gap-1 px-2">
                 {rollup ? (
-                  // Parent issue — read-only rollup summary, disable gate =
-                  // !isEditable || estimateSaving || rollup present (plan §P4 item 5).
+                  // Parent issue — read-only rollup summary; a rollup replaces the
+                  // input entirely, so there is no disable gate to compute.
                   <span
                     className="w-full truncate text-body-xs-regular text-secondary"
                     title={formatRollupTooltip(rollup)}
@@ -285,16 +235,19 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
                     min={0}
                     max={10000}
                     step={0.5}
-                    value={estimatedHoursValue}
-                    onFocus={handleEstimateFocus}
-                    onChange={(e) => handleEstimateChange(e.target.value === "" ? "" : Number(e.target.value))}
-                    onBlur={handleEstimateBlur}
-                    disabled={!isEditable || estimateSaving}
+                    value={estimate.value}
+                    onFocus={estimate.onFocus}
+                    onChange={estimate.onChange}
+                    onBlur={estimate.onBlur}
+                    onKeyDown={estimate.onKeyDown}
+                    // NOTE: `estimate.isSaving` must NOT appear here. Saves now fire while
+                    // the user is still typing, so disabling on save drops focus mid-edit.
+                    disabled={!isEditable}
                     placeholder={wlt("common.none")}
                     className="w-full bg-transparent text-body-xs-regular text-primary outline-none placeholder:text-placeholder"
                   />
                 )}
-                {estimateSaving && <span className="text-xs text-secondary">{wlt("common.saving")}</span>}
+                {estimate.isSaving && <span className="text-xs text-secondary">{wlt("common.saving")}</span>}
               </div>
             </SidebarPropertyListItem>
 

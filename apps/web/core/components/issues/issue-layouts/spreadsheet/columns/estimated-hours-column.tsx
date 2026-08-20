@@ -12,20 +12,12 @@
  * requires no @plane/types edit.
  */
 
-import { useState } from "react";
 import { observer } from "mobx-react";
-import { setToast, TOAST_TYPE } from "@plane/propel/toast";
 // workload i18n (fork-owned strings — no @plane/i18n edit)
-import {
-  formatRollupHours,
-  formatRollupTooltip,
-  PARENT_HAS_CHILDREN_ERROR_CODE,
-  WorkloadEstimateApiError,
-  wlt,
-} from "@plane/workload-ext";
+import { formatRollupHours, formatRollupTooltip, wlt } from "@plane/workload-ext";
 // hooks
-import { useWorkload } from "@/hooks/store/use-workload";
 import { useWorkloadEstimate } from "@/hooks/store/use-workload-estimate";
+import { useWorkloadEstimateEditor } from "@/hooks/store/use-workload-estimate-editor";
 
 // ── Header cell ───────────────────────────────────────────────────────────────
 
@@ -73,63 +65,12 @@ interface EstimatedHoursBodyCellProps {
 export const EstimatedHoursBodyCell = observer(function EstimatedHoursBodyCell(props: EstimatedHoursBodyCellProps) {
   const { issueId, projectId, workspaceSlug, disableUserActions } = props;
 
-  // Read current value from shared store via selector hook.
-  const { hours, rollup } = useWorkloadEstimate(issueId);
+  // Rollup presence is the parent signal — a parent renders read-only.
+  const { rollup } = useWorkloadEstimate(issueId);
 
-  // Local controlled value keeps the input responsive during typing.
-  const [localValue, setLocalValue] = useState<string>("");
-  const [isFocused, setIsFocused] = useState(false);
-  const [saving, setSaving] = useState(false);
-
-  const store = useWorkload();
-
-  // While the field is focused we use the local draft value; otherwise we
-  // display the persisted store value so it updates when the bulk fetch lands.
-  const displayValue = isFocused ? localValue : hours !== null ? String(hours) : "";
-
-  const handleFocus = () => {
-    // Seed the local draft from the current stored value.
-    setLocalValue(hours !== null ? String(hours) : "");
-    setIsFocused(true);
-  };
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setLocalValue(e.target.value);
-  };
-
-  const handleBlur = async () => {
-    setIsFocused(false);
-
-    if (!workspaceSlug || !projectId) return;
-
-    // An empty field is treated as 0 (MEMBER-allowed PUT).
-    // The ADMIN-only delete path is intentionally avoided.
-    const parsed = localValue === "" ? 0 : Number(localValue);
-
-    // Skip the round-trip when the value hasn't changed.
-    const currentHours = hours ?? 0;
-    if (parsed === currentHours) return;
-
-    setSaving(true);
-    try {
-      await store.updateEstimate(workspaceSlug, projectId, issueId, parsed);
-    } catch (err) {
-      // 400 UX backstop (plan §P4 item 4): a sub-issue was likely added
-      // concurrently, so the backend now considers this issue a parent.
-      // Refetch its rollup (flips the cell read-only) and explain why the
-      // edit didn't apply.
-      if (err instanceof WorkloadEstimateApiError && err.errorCode === PARENT_HAS_CHILDREN_ERROR_CODE) {
-        void store.forceRefetchRollup(workspaceSlug, issueId);
-        setToast({
-          type: TOAST_TYPE.ERROR,
-          title: wlt("estimate.parent_has_children_toast_title"),
-          message: wlt("estimate.parent_has_children_toast_message"),
-        });
-      }
-    } finally {
-      setSaving(false);
-    }
-  };
+  // Shared commit lifecycle: 800 ms after typing stops, on Enter (focus kept),
+  // or on blur. See hooks/store/use-workload-estimate-editor.ts.
+  const estimate = useWorkloadEstimateEditor({ workspaceSlug, projectId, issueId });
 
   return (
     // The1Studio fork (SP2 workload) — fixed body column, not in spreadsheetColumnsList
@@ -150,16 +91,19 @@ export const EstimatedHoursBodyCell = observer(function EstimatedHoursBodyCell(p
             min={0}
             max={10000}
             step={0.5}
-            value={displayValue}
-            onFocus={handleFocus}
-            onChange={handleChange}
-            onBlur={handleBlur}
-            disabled={disableUserActions || saving || !projectId}
+            value={estimate.value}
+            onFocus={estimate.onFocus}
+            onChange={estimate.onChange}
+            onBlur={estimate.onBlur}
+            onKeyDown={estimate.onKeyDown}
+            // NOTE: `estimate.isSaving` must NOT appear here. Saves now fire while
+            // the user is still typing, so disabling on save drops focus mid-edit.
+            disabled={disableUserActions || !projectId}
             placeholder={wlt("common.none")}
             className="w-full bg-transparent text-13 text-primary outline-none placeholder:text-placeholder disabled:cursor-not-allowed disabled:opacity-60"
           />
         )}
-        {saving && <span className="text-xs shrink-0 text-secondary">{wlt("common.saving")}</span>}
+        {estimate.isSaving && <span className="text-xs shrink-0 text-secondary">{wlt("common.saving")}</span>}
       </div>
     </td>
   );
