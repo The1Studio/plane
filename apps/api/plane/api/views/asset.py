@@ -500,7 +500,7 @@ class GenericAssetEndpoint(BaseAPIView):
         Supports various file types and includes external source tracking for integrations.
         """
         name = sanitize_filename(request.data.get("name"))
-        type = request.data.get("type")
+        type = request.data.get("type") or "application/octet-stream"
         size = int(request.data.get("size", settings.FILE_SIZE_LIMIT))
         project_id = request.data.get("project_id")
         external_id = request.data.get("external_id")

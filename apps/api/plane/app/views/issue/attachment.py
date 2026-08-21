@@ -99,7 +99,7 @@ class IssueAttachmentV2Endpoint(BaseAPIView):
     @allow_permission([ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST])
     def post(self, request, slug, project_id, issue_id):
         name = sanitize_filename(request.data.get("name")) or "unnamed"
-        type = request.data.get("type", False)
+        type = request.data.get("type") or "application/octet-stream"
         size = int(request.data.get("size", settings.FILE_SIZE_LIMIT))
 
         if not type or type not in settings.ATTACHMENT_MIME_TYPES:

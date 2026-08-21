@@ -1860,7 +1860,7 @@ class IssueAttachmentListCreateAPIEndpoint(BaseAPIView):
             )
 
         name = sanitize_filename(request.data.get("name"))
-        type = request.data.get("type", False)
+        type = request.data.get("type") or "application/octet-stream"
         size = request.data.get("size")
         external_id = request.data.get("external_id")
         external_source = request.data.get("external_source")
