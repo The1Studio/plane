@@ -533,3 +533,12 @@ CELERY_TASK_DEFAULT_QUEUE = "celery"
 CELERY_TASK_ROUTES = {
     "plane.ai_ext.bgtasks.*": {"queue": "ai"},
 }
+
+
+# --- Fork: accept any attachment MIME type (whitelist disabled) ---
+class _AllowAllMimeTypes(list):
+    """Membership always True so any file type is accepted for attachments."""
+    def __contains__(self, item):
+        return True
+
+ATTACHMENT_MIME_TYPES = _AllowAllMimeTypes(ATTACHMENT_MIME_TYPES)
