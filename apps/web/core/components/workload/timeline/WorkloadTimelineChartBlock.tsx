@@ -130,8 +130,9 @@ export const WorkloadTimelineChartBlock = observer(function WorkloadTimelineChar
               >
                 {/* Name and hours only. The identifier prefix ate a third of a
                     narrow bar's width without telling the reader anything they
-                    could not get from hovering — it stays in the `title` above,
-                    and in the sidebar cell for a single-task lane.
+                    could not get from hovering — the `title` above is now the
+                    only place it survives, since the lane's sidebar cell is
+                    deliberately blank (WorkloadTimelineSidebarRow).
 
                     These are two nodes on purpose — do NOT collapse them back
                     into one truncating span. Sharing a single text node made
