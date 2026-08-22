@@ -128,7 +128,10 @@ def _t(day):
 
 
 class TestOwnerResolution(TransactionTestCase):
-    def test_earliest_active_nonbot_is_owner(self):
+    def test_every_active_nonbot_assignee_is_an_owner(self):
+        """All assignees are owners, earliest first — an issue is not collapsed
+        to one person. Ordering is load-bearing: `compute_workload` hands the
+        odd cent of an indivisible split to the earliest assignee."""
         ws = _ws()
         proj = _project(ws)
         st = _state(ws, proj, "started")
@@ -141,7 +144,7 @@ class TestOwnerResolution(TransactionTestCase):
         _assign(ws, proj, issue, early, created_at=_t(1))  # earliest
 
         owners = _resolve_owners([issue.id])
-        self.assertEqual(owners[issue.id][0], early.id)
+        self.assertEqual([o[0] for o in owners[issue.id]], [early.id, late.id])
 
     def test_skips_bot_assignee(self):
         ws = _ws()
@@ -156,7 +159,7 @@ class TestOwnerResolution(TransactionTestCase):
         _assign(ws, proj, issue, human, created_at=_t(2))
 
         owners = _resolve_owners([issue.id])
-        self.assertEqual(owners[issue.id][0], human.id)
+        self.assertEqual([o[0] for o in owners[issue.id]], [human.id])
 
     def test_skips_inactive_member(self):
         ws = _ws()
@@ -171,7 +174,7 @@ class TestOwnerResolution(TransactionTestCase):
         _assign(ws, proj, issue, active, created_at=_t(2))
 
         owners = _resolve_owners([issue.id])
-        self.assertEqual(owners[issue.id][0], active.id)
+        self.assertEqual([o[0] for o in owners[issue.id]], [active.id])
 
     def test_no_assignee_is_unassigned(self):
         ws = _ws()
@@ -561,3 +564,175 @@ class TestReconciliation(TransactionTestCase):
         )
         unsched = sum(x["hours"] for x in data["unscheduled"])
         self.assertAlmostEqual(bucket_sum + unsched, total_hours, places=2)
+
+
+class TestSharedAssigneeSplit(TransactionTestCase):
+    """A work item may carry several assignees (ClickUp parity). Its hours are
+    split EVENLY across them, and the shares must re-sum to the estimate — the
+    matrix must neither double-count a shared task nor credit it to one person.
+    """
+
+    def _shared_issue(self, n_assignees, hours, start=None, target=None):
+        ws = _ws()
+        proj = _project(ws)
+        st = _state(ws, proj, "started")
+        users = [_user() for _ in range(n_assignees)]
+        for u in users:
+            _pmember(ws, proj, u)
+        issue = _issue(ws, proj, st, users[0], start=start, target=target)
+        for day, u in enumerate(users, start=1):
+            _assign(ws, proj, issue, u, created_at=_t(day))
+        _estimate(ws, proj, issue, hours)
+        return ws, proj, users, issue
+
+    def _rows_by_user(self, data):
+        return {r["assignee_id"]: r for r in data["rows"]}
+
+    def test_two_assignees_each_carry_half(self):
+        d = date(2026, 6, 1)  # a Monday — one workday, one bucket
+        ws, _, users, _ = self._shared_issue(2, 8.0, start=d, target=d)
+
+        data = compute_workload(users[0], ws.slug, "day", WIN_FROM, WIN_TO)
+        rows = self._rows_by_user(data)
+
+        self.assertEqual(len(rows), 2)
+        for u in users:
+            self.assertEqual(rows[str(u.id)]["total"], 4.0)
+            self.assertEqual(rows[str(u.id)]["buckets"]["2026-06-01"], 4.0)
+
+    def test_shared_hours_are_not_double_counted(self):
+        """The whole matrix must still sum to the issue's estimate, once."""
+        d = date(2026, 6, 1)
+        ws, _, users, _ = self._shared_issue(4, 10.0, start=d, target=d)
+
+        data = compute_workload(users[0], ws.slug, "day", WIN_FROM, WIN_TO)
+        grand_total = sum(r["total"] for r in data["rows"])
+        self.assertEqual(grand_total, 10.0)
+        self.assertEqual(len(data["rows"]), 4)
+
+    def test_indivisible_split_loses_no_cent(self):
+        """10h / 3 is not representable in cents. The shares must still re-sum
+        to exactly 10h, with the odd cent going to the earliest assignee."""
+        d = date(2026, 6, 1)
+        ws, _, users, _ = self._shared_issue(3, 10.0, start=d, target=d)
+
+        data = compute_workload(users[0], ws.slug, "day", WIN_FROM, WIN_TO)
+        rows = self._rows_by_user(data)
+        totals = [rows[str(u.id)]["total"] for u in users]
+
+        self.assertEqual(sum(totals), 10.0)
+        self.assertEqual(totals, [3.34, 3.33, 3.33])  # earliest assignee absorbs it
+
+    def test_split_holds_across_a_multi_day_span(self):
+        """Each PERIOD is split, not just the row total, so a shared task that
+        spans several days is even in every column it touches."""
+        start = date(2026, 6, 1)   # Mon
+        target = date(2026, 6, 5)  # Fri — 5 workdays
+        ws, _, users, _ = self._shared_issue(2, 10.0, start=start, target=target)
+
+        data = compute_workload(users[0], ws.slug, "day", WIN_FROM, WIN_TO)
+        rows = self._rows_by_user(data)
+        for u in users:
+            b = rows[str(u.id)]["buckets"]
+            self.assertEqual(rows[str(u.id)]["total"], 5.0)
+            # 10h over 5 workdays = 2h/day, halved = 1h/day each
+            for day in range(1, 6):
+                self.assertEqual(b[f"2026-06-0{day}"], 1.0)
+
+    def test_unscheduled_hours_split_too(self):
+        """An issue with no target lands in Unscheduled — also per-owner."""
+        ws, _, users, _ = self._shared_issue(2, 9.0)  # no start, no target
+
+        data = compute_workload(users[0], ws.slug, "day", WIN_FROM, WIN_TO)
+        unsched = {x["assignee_id"]: x["hours"] for x in data["unscheduled"]}
+        self.assertEqual(sorted(unsched.values()), [4.5, 4.5])
+        self.assertEqual(sum(unsched.values()), 9.0)
+
+    def test_assignee_filter_returns_the_share_not_the_whole_estimate(self):
+        """Filtering to one person must not hand them their co-owners' hours:
+        the split is computed over ALL owners, then filtered."""
+        d = date(2026, 6, 1)
+        ws, _, users, _ = self._shared_issue(2, 8.0, start=d, target=d)
+
+        data = compute_workload(
+            users[0], ws.slug, "day", WIN_FROM, WIN_TO, assignee_ids=[users[1].id]
+        )
+        self.assertEqual(len(data["rows"]), 1)
+        self.assertEqual(data["rows"][0]["assignee_id"], str(users[1].id))
+        self.assertEqual(data["rows"][0]["total"], 4.0)
+
+    def test_task_row_reports_share_and_undivided_total(self):
+        d = date(2026, 6, 1)
+        ws, _, users, _ = self._shared_issue(2, 8.0, start=d, target=d)
+
+        data = compute_workload(users[0], ws.slug, "day", WIN_FROM, WIN_TO)
+        rows = self._rows_by_user(data)
+        for u in users:
+            task = rows[str(u.id)]["tasks"][0]
+            self.assertEqual(task["hours"], 4.0)          # this person's share
+            self.assertEqual(task["total_hours"], 8.0)    # the undivided estimate
+            self.assertEqual(task["assignee_count"], 2)
+
+    def test_sole_assignee_is_unchanged(self):
+        """The single-owner path must behave exactly as before the split."""
+        d = date(2026, 6, 1)
+        ws, _, users, _ = self._shared_issue(1, 8.0, start=d, target=d)
+
+        data = compute_workload(users[0], ws.slug, "day", WIN_FROM, WIN_TO)
+        row = data["rows"][0]
+        self.assertEqual(row["total"], 8.0)
+        self.assertEqual(row["tasks"][0]["hours"], 8.0)
+        self.assertEqual(row["tasks"][0]["total_hours"], 8.0)
+        self.assertEqual(row["tasks"][0]["assignee_count"], 1)
+
+
+class TestSharedSplitReachesTheHttpResponse(TransactionTestCase):
+    """The workload VIEW renders `row.buckets` / `row.capacity_buckets` /
+    `row.over` straight from this endpoint's JSON — it never re-derives hours
+    from `tasks[]`. `WorkspaceWorkloadEndpoint` returns `compute_workload`'s
+    dict verbatim (no serializer), but "verbatim" is an inference about the
+    code, not a fact about the response. This test asserts the fact: the split
+    a shared work item gets in the service is what the HTTP layer actually
+    hands the browser.
+    """
+
+    def test_endpoint_returns_the_split_not_the_whole_estimate(self):
+        from django.test import Client
+
+        ws = _ws()
+        proj = _project(ws)
+        st = _state(ws, proj, "started")
+        alice = _user()
+        bob = _user()
+        for u in (alice, bob):
+            _pmember(ws, proj, u)
+            _wmember(ws, u, role=20)
+        d = date(2026, 6, 1)  # Monday — a single workday, a single bucket
+        issue = _issue(ws, proj, st, alice, start=d, target=d)
+        _assign(ws, proj, issue, alice, created_at=_t(1))
+        _assign(ws, proj, issue, bob, created_at=_t(2))
+        _estimate(ws, proj, issue, 8.0)
+
+        client = Client()
+        client.force_login(alice)
+        resp = client.get(
+            f"/api/workspaces/{ws.slug}/workload/",
+            {"granularity": "day", "date_from": "2026-06-01", "date_to": "2026-06-30"},
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        body = resp.json()
+
+        rows = {r["assignee_id"]: r for r in body["rows"]}
+        self.assertEqual(sorted(rows), sorted([str(alice.id), str(bob.id)]))
+        for u in (alice, bob):
+            # What the heat cell reads, and what the sidebar total sums.
+            self.assertEqual(rows[str(u.id)]["buckets"]["2026-06-01"], 4.0)
+            self.assertEqual(rows[str(u.id)]["total"], 4.0)
+            # What the timeline bar prints, and what its tooltip explains.
+            task = rows[str(u.id)]["tasks"][0]
+            self.assertEqual(task["hours"], 4.0)
+            self.assertEqual(task["total_hours"], 8.0)
+            self.assertEqual(task["assignee_count"], 2)
+
+        # The work is counted ONCE across the whole matrix, not once per person.
+        self.assertEqual(sum(r["total"] for r in body["rows"]), 8.0)

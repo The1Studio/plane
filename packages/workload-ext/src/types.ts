@@ -19,9 +19,10 @@ export type TWorkloadRow = {
   /**
    * Per-task rows for the Phase 8 timeline (apps/api/plane/workload/service.py
    * "Phase 7 — per-task rows for the timeline"). Capped at 200 per assignee
-   * server-side — see `tasks_truncated`. `hours` on each task is the ISSUE'S
-   * WHOLE estimate, not the windowed slice `buckets` sums to; the two
-   * deliberately do not reconcile for a task clipped by [date_from, date_to].
+   * server-side — see `tasks_truncated`. `hours` on each task is THIS ROW'S
+   * ASSIGNEE'S SHARE of the issue's whole estimate (see `TWorkloadTask.hours`),
+   * not the windowed slice `buckets` sums to; the two deliberately do not
+   * reconcile for a task clipped by [date_from, date_to].
    */
   tasks: TWorkloadTask[];
   /** True when this row's `tasks` were truncated to the server-side cap (200). */
@@ -40,8 +41,18 @@ export type TWorkloadTask = {
   /** `"<PROJECT>-<sequence_id>"`, e.g. "ENG-42". */
   identifier: string;
   name: string;
-  /** The issue's whole estimate (not the windowed `buckets` slice). */
+  /**
+   * THIS row's assignee's share of the issue's estimate (not the windowed
+   * `buckets` slice). A work item may carry several assignees, as in ClickUp;
+   * its hours are split evenly across them, so a shared 8h task reports 4h on
+   * each of two assignees' rows. Use `total_hours` for the undivided estimate.
+   */
   hours: number;
+  /** The issue's whole, undivided estimate — `hours * assignee_count`, modulo
+   * the odd cent of an indivisible split. */
+  total_hours: number;
+  /** How many assignees the estimate was split across. 1 for an unshared task. */
+  assignee_count: number;
   start_date: string | null;
   target_date: string | null;
   state_group: string;
