@@ -31,13 +31,27 @@ class WorkloadSettingsSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = WorkloadSettings
-        fields = ["max_weekly_hours", "workdays", "week_start_day"]
+        fields = ["max_daily_hours", "workdays", "week_start_day"]
 
-    def validate_max_weekly_hours(self, value):
+    def validate(self, attrs):
+        # D2 (plans/260822-workload-daily-hours) — no backward-compat alias:
+        # the retired weekly key is REJECTED, not silently ignored. Without
+        # this guard DRF would drop the unknown field, `max_daily_hours`
+        # (required=False, model default) would be absent from validated_data,
+        # and a PUT carrying only the old key would succeed at 200 while
+        # resetting a created row's cap to the default — a silent reset is
+        # exactly what the rename must not do.
+        if isinstance(getattr(self, "initial_data", None), dict) and "max_weekly_hours" in self.initial_data:
+            raise serializers.ValidationError(
+                {"max_weekly_hours": "unknown field — the hour cap is now per-day; use max_daily_hours"}
+            )
+        return attrs
+
+    def validate_max_daily_hours(self, value):
         if value is None or value < 0:
-            raise serializers.ValidationError("max_weekly_hours must be a number >= 0")
+            raise serializers.ValidationError("max_daily_hours must be a number >= 0")
         if value > MAX_HOURS:
-            raise serializers.ValidationError(f"max_weekly_hours must be <= {MAX_HOURS}")
+            raise serializers.ValidationError(f"max_daily_hours must be <= {MAX_HOURS}")
         # Quantize via the SAME cents rounding the aggregation uses (SSOT).
         return quantize_hours(value)
 

@@ -17,7 +17,7 @@ from plane.app.views.base import BaseAPIView
 from plane.db.models import Issue, Workspace
 
 from .aggregation import ALLOWED_GRANULARITIES
-from .constants import DEFAULT_MAX_WEEKLY_HOURS, DEFAULT_WEEK_START_DAY, DEFAULT_WORKDAYS
+from .constants import DEFAULT_MAX_DAILY_HOURS, DEFAULT_WEEK_START_DAY, DEFAULT_WORKDAYS
 from .models import WorkloadEstimate, WorkloadSettings
 from .rollup import RollupTooLarge, compute_rollups, is_parent, parent_issue_ids
 from .serializers import WorkloadEstimateSerializer, WorkloadSettingsSerializer
@@ -188,7 +188,7 @@ def settings_get(request, slug):
     if obj is None:
         return Response(
             {
-                "max_weekly_hours": DEFAULT_MAX_WEEKLY_HOURS,
+                "max_daily_hours": DEFAULT_MAX_DAILY_HOURS,
                 "workdays": list(DEFAULT_WORKDAYS),
                 "week_start_day": DEFAULT_WEEK_START_DAY,
             },
@@ -327,7 +327,7 @@ class WorkloadEstimateEndpoint(BaseAPIView):
 
 
 class WorkloadSettingsEndpoint(BaseAPIView):
-    """GET/PUT workspace-wide work configuration (max weekly hours, workdays,
+    """GET/PUT workspace-wide work configuration (max daily hours, workdays,
     week start day).
 
     /api/workspaces/<slug>/work-settings/

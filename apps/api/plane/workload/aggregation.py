@@ -188,6 +188,13 @@ def spread_estimate(hours, start, target, win_from, win_to, granularity, workday
 # below both honour the SAME configured `workdays` set, so hours never land
 # on a day with zero capacity again (save for the D9 fallback, which is a
 # deliberate, reconciled exception, not a re-introduction of the mismatch).
+#
+# The stored cap is a per-DAY figure (plans/260822-workload-daily-hours):
+# `capacity_for_period` multiplies it by the NUMBER of workdays in a bucket
+# rather than dividing a weekly total across them — algebraically identical
+# to the old weekly basis when max_daily_hours == max_weekly_hours /
+# len(workdays), so a workspace on the default 8h/Mon-Fri config sees
+# byte-identical capacity numbers before and after the rename.
 
 
 def _is_workday(d: date, workdays) -> bool:
@@ -202,24 +209,26 @@ def _workdays_in_month(year: int, month: int, workdays) -> int:
     return sum(1 for i in range(span_days) if _is_workday(first + timedelta(days=i), workdays))
 
 
-def capacity_for_period(max_weekly_hours, period: str, granularity: str, workdays) -> float:
-    """Prorate a member's weekly capacity into one bucket's capacity, in hours.
+def capacity_for_period(max_daily_hours, period: str, granularity: str, workdays) -> float:
+    """Scale a member's per-workday capacity into one bucket's capacity, in hours.
 
     Pure / stdlib-only (no ORM) — unit-tested in isolation like the rest of
-    this module. Basis is the configured `workdays` set (plan D4), guaranteed
-    non-empty by the Phase 1 serializer:
-      - day   : max_weekly_hours / len(workdays) on a workday; 0 on a non-workday.
-      - week  : max_weekly_hours as-is (one bucket = one full capacity unit).
-      - month : max_weekly_hours * (workdays_in_month / len(workdays)) — accounts
-                for months with 4 vs 5 occurrences of each weekday.
+    this module. The basis is ONE configured workday: `max_daily_hours` is the
+    capacity of a single workday, and `workdays` is used to COUNT the days in
+    a bucket (guaranteed non-empty by the serializer, backstopped by the
+    model's CheckConstraint) — never to divide a weekly total:
+      - day   : max_daily_hours on a workday; 0.0 on a non-workday.
+      - week  : max_daily_hours * len(workdays).
+      - month : max_daily_hours * workdays_in_month — accounts for months with
+                4 vs 5 occurrences of each weekday.
     """
     if granularity == "day":
         d = date.fromisoformat(period)
-        return round(max_weekly_hours / len(workdays), 2) if _is_workday(d, workdays) else 0.0
+        return round(float(max_daily_hours), 2) if _is_workday(d, workdays) else 0.0
     if granularity == "week":
-        return round(float(max_weekly_hours), 2)
+        return round(max_daily_hours * len(workdays), 2)
     if granularity == "month":
         year_s, month_s = period.split("-")
         n_workdays = _workdays_in_month(int(year_s), int(month_s), workdays)
-        return round(max_weekly_hours * (n_workdays / len(workdays)), 2)
+        return round(max_daily_hours * n_workdays, 2)
     raise ValueError(f"invalid granularity: {granularity!r}")

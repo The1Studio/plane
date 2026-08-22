@@ -24,7 +24,7 @@ from datetime import date
 
 __all__ = [
     "MAX_HOURS",
-    "DEFAULT_MAX_WEEKLY_HOURS",
+    "DEFAULT_MAX_DAILY_HOURS",
     "DEFAULT_WORKDAYS",
     "DEFAULT_WEEK_START_DAY",
     "to_plane_weekday",
@@ -60,7 +60,10 @@ MAX_HOURS = 10000
 # Applied when a workspace has no WorkloadSettings row yet — callers never
 # branch on absence; the API always returns these values in that case.
 
-DEFAULT_MAX_WEEKLY_HOURS = 40.0
+# The hour cap is per DAY (plans/260822-workload-daily-hours): 8h per workday
+# is algebraically identical to the 40h/week cap it replaced for the default
+# Mon-Fri workday set.
+DEFAULT_MAX_DAILY_HOURS = 8.0
 
 # Mon-Fri in Plane encoding (SUNDAY=0 .. SATURDAY=6).
 DEFAULT_WORKDAYS = [1, 2, 3, 4, 5]

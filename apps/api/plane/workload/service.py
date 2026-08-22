@@ -31,7 +31,7 @@ from .aggregation import (
     spread_estimate,
     to_cents,
 )
-from .constants import DEFAULT_MAX_WEEKLY_HOURS, DEFAULT_WEEK_START_DAY, DEFAULT_WORKDAYS
+from .constants import DEFAULT_MAX_DAILY_HOURS, DEFAULT_WEEK_START_DAY, DEFAULT_WORKDAYS
 from .models import WorkloadEstimate, WorkloadSettings
 
 ROW_GUARD = 50_000
@@ -268,12 +268,12 @@ def _resolve_work_settings(slug):
     Falls back to the constants.py defaults when the workspace has no row
     yet (mirrors views.settings_get: a GET never writes on read).
 
-    Returns (max_weekly_hours, workdays, week_start_day).
+    Returns (max_daily_hours, workdays, week_start_day).
     """
     obj = WorkloadSettings.objects.filter(workspace__slug=slug).first()
     if obj is None:
-        return DEFAULT_MAX_WEEKLY_HOURS, list(DEFAULT_WORKDAYS), DEFAULT_WEEK_START_DAY
-    return obj.max_weekly_hours, obj.workdays, obj.week_start_day
+        return DEFAULT_MAX_DAILY_HOURS, list(DEFAULT_WORKDAYS), DEFAULT_WEEK_START_DAY
+    return obj.max_daily_hours, obj.workdays, obj.week_start_day
 
 
 def _resolve_today(slug):
@@ -334,7 +334,7 @@ def compute_workload(
     # Read once per request — every row below shares this same effective
     # capacity/workday config (_resolve_capacities / per-row settings reads
     # are gone; D1).
-    max_weekly_hours, workdays, week_start_day = _resolve_work_settings(slug)
+    max_daily_hours, workdays, week_start_day = _resolve_work_settings(slug)
 
     # Read once per request — every task row's `overdue` flag below shares
     # this same workspace-local "today" (never re-derived per row; see
@@ -514,7 +514,7 @@ def compute_workload(
     # buckets) so the matrix can render a capacity reference even for
     # periods with zero hours logged.
     capacity_buckets = {
-        period: capacity_for_period(max_weekly_hours, period, granularity, workdays)
+        period: capacity_for_period(max_daily_hours, period, granularity, workdays)
         for period in periods
     }
     total_capacity = sum(capacity_buckets.values())

@@ -114,10 +114,10 @@ def _estimate(ws, proj, issue, hours):
     )
 
 
-def _settings(ws, max_weekly_hours=40.0, workdays=None, week_start_day=1):
+def _settings(ws, max_daily_hours=8.0, workdays=None, week_start_day=1):
     from plane.workload.models import WorkloadSettings
 
-    kwargs = {"workspace": ws, "max_weekly_hours": max_weekly_hours, "week_start_day": week_start_day}
+    kwargs = {"workspace": ws, "max_daily_hours": max_daily_hours, "week_start_day": week_start_day}
     if workdays is not None:
         kwargs["workdays"] = workdays
     return WorkloadSettings.objects.create(**kwargs)
@@ -368,11 +368,11 @@ class TestCapacityOverload(TransactionTestCase):
         u = _user()
         _pmember(ws, proj, u)
         st = _state(ws, proj, "started")
-        monday = date(2026, 6, 15)  # workday -> day cap = weekly / 5 workdays
+        monday = date(2026, 6, 15)  # workday -> day cap = max_daily_hours
         issue = _issue(ws, proj, st, u, start=monday, target=monday)
         _assign(ws, proj, issue, u, created_at=_t(1))
         _estimate(ws, proj, issue, 8.0)
-        _settings(ws, max_weekly_hours=5.0)  # day cap = 1.0h, well under the 8h logged
+        _settings(ws, max_daily_hours=1.0)  # 1.0h, well under the 8h logged
 
         data = compute_workload(u, ws.slug, "day", WIN_FROM, WIN_TO)
         row = next(r for r in data["rows"] if r["assignee_id"] == str(u.id))
@@ -396,7 +396,7 @@ class TestCapacityOverload(TransactionTestCase):
         issue = _issue(ws, proj, st, u, start=monday, target=monday)
         _assign(ws, proj, issue, u, created_at=_t(1))
         _estimate(ws, proj, issue, 4.0)
-        _settings(ws, max_weekly_hours=40.0)  # day cap = 8.0h, well above the 4h logged
+        _settings(ws, max_daily_hours=8.0)  # 8.0h, well above the 4h logged
 
         data = compute_workload(u, ws.slug, "day", WIN_FROM, WIN_TO)
         row = next(r for r in data["rows"] if r["assignee_id"] == str(u.id))
@@ -406,7 +406,7 @@ class TestCapacityOverload(TransactionTestCase):
         self.assertFalse(row["total_over"])
 
     def test_no_settings_row_falls_back_to_default_and_still_flags(self):
-        """No WorkloadSettings row -> constants.py default (40h / Mon-Fri)
+        """No WorkloadSettings row -> constants.py default (8h/day, Mon-Fri)
         applies, and the row STILL carries capacity/over flags (D1) — unlike
         the pre-Phase-3 per-member behaviour, absence no longer means empty."""
         ws = _ws()
@@ -417,7 +417,7 @@ class TestCapacityOverload(TransactionTestCase):
         monday = date(2026, 6, 15)
         issue = _issue(ws, proj, st, u, start=monday, target=monday)
         _assign(ws, proj, issue, u, created_at=_t(1))
-        _estimate(ws, proj, issue, 8.0)  # exactly the default day cap (40/5)
+        _estimate(ws, proj, issue, 8.0)  # exactly the default day cap (8.0)
 
         data = compute_workload(u, ws.slug, "day", WIN_FROM, WIN_TO)
         row = next(r for r in data["rows"] if r["assignee_id"] == str(u.id))
@@ -439,12 +439,12 @@ class TestCapacityOverload(TransactionTestCase):
         issue = _issue(ws1, proj, st, u, start=monday, target=monday)
         _assign(ws1, proj, issue, u, created_at=_t(1))
         _estimate(ws1, proj, issue, 8.0)
-        _settings(ws2, max_weekly_hours=5.0)  # wrong workspace — must not be picked up
+        _settings(ws2, max_daily_hours=1.0)  # wrong workspace — must not be picked up
 
         data = compute_workload(u, ws1.slug, "day", WIN_FROM, WIN_TO)
         row = next(r for r in data["rows"] if r["assignee_id"] == str(u.id))
         period = monday.isoformat()
-        # If ws2's 5.0 leaked in, day cap would read 1.0 and this would be "over".
+        # If ws2's 1.0 leaked in, day cap would read 1.0 and this would be "over".
         self.assertEqual(row["capacity_buckets"][period], 8.0)
         self.assertFalse(row["over"][period])
         self.assertFalse(row["total_over"])

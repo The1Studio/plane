@@ -309,36 +309,41 @@ def test_spread_sum_reconciliation_property_random():
         )
 
 
-# --- capacity proration (plan D4: configurable workdays) --------------------
+# --- capacity proration (plans/260822-workload-daily-hours: daily basis) ----
+#
+# `capacity_for_period`'s first argument is now the capacity of ONE workday
+# (`max_daily_hours`); `workdays` COUNTS the days in a bucket rather than
+# dividing a weekly total across them.
 
 def test_capacity_day_workday():
     # 2026-06-15 is a Monday.
-    assert agg.capacity_for_period(40.0, "2026-06-15", "day", DEFAULT_WORKDAYS) == 8.0
+    assert agg.capacity_for_period(8.0, "2026-06-15", "day", DEFAULT_WORKDAYS) == 8.0
 
 
 def test_capacity_day_weekend_is_zero():
     # 2026-06-13/14 are Sat/Sun.
-    assert agg.capacity_for_period(40.0, "2026-06-13", "day", DEFAULT_WORKDAYS) == 0.0
-    assert agg.capacity_for_period(40.0, "2026-06-14", "day", DEFAULT_WORKDAYS) == 0.0
+    assert agg.capacity_for_period(8.0, "2026-06-13", "day", DEFAULT_WORKDAYS) == 0.0
+    assert agg.capacity_for_period(8.0, "2026-06-14", "day", DEFAULT_WORKDAYS) == 0.0
 
 
-def test_capacity_day_single_workday_equals_max_weekly_hours():
-    # workdays=[Monday] -> len(workdays) == 1, so the day-branch divisor
-    # disappears and a workday's capacity equals the full weekly figure.
+def test_capacity_day_single_workday_equals_max_daily_hours():
+    # workdays=[Monday] no longer changes the day branch at all — the day
+    # figure is always the configured daily cap on a workday, regardless of
+    # how many workdays are configured.
     assert agg.capacity_for_period(40.0, "2026-06-15", "day", MONDAY_ONLY) == 40.0  # Monday
     assert agg.capacity_for_period(40.0, "2026-06-16", "day", MONDAY_ONLY) == 0.0   # Tuesday
 
 
-def test_capacity_week_is_weekly_hours_as_is():
+def test_capacity_week_multiplies_by_len_workdays():
     # Week granularity doesn't parse `period` at all; pass a D10-shaped
     # date-string week key to reflect the new format (functionally unused).
-    assert agg.capacity_for_period(37.5, "2026-06-15", "week", DEFAULT_WORKDAYS) == 37.5
+    assert agg.capacity_for_period(7.5, "2026-06-15", "week", DEFAULT_WORKDAYS) == 37.5
 
 
 def test_capacity_month_basic():
     # June 2026 starts on a Monday, 30 days -> 22 Mon-Fri workdays (4 full
     # Mon-Fri weeks + the trailing Mon/Tue of the 5th week).
-    assert agg.capacity_for_period(40.0, "2026-06", "month", DEFAULT_WORKDAYS) == 176.0
+    assert agg.capacity_for_period(8.0, "2026-06", "month", DEFAULT_WORKDAYS) == 176.0
 
 
 def test_capacity_month_4_vs_5_occurrence():
@@ -350,20 +355,58 @@ def test_capacity_month_4_vs_5_occurrence():
 
 def test_capacity_month_second_data_point():
     # December 2026: 31 days, 8 weekend days -> 23 Mon-Fri workdays.
-    assert agg.capacity_for_period(40.0, "2026-12", "month", DEFAULT_WORKDAYS) == 184.0
+    assert agg.capacity_for_period(8.0, "2026-12", "month", DEFAULT_WORKDAYS) == 184.0
 
 
-def test_capacity_scales_linearly_with_weekly_hours():
+def test_capacity_scales_linearly_with_daily_hours():
     assert agg.capacity_for_period(0.0, "2026-06-15", "day", DEFAULT_WORKDAYS) == 0.0
-    assert agg.capacity_for_period(10.0, "2026-06-15", "day", DEFAULT_WORKDAYS) == 2.0
+    assert agg.capacity_for_period(2.0, "2026-06-15", "day", DEFAULT_WORKDAYS) == 2.0
 
 
 def test_capacity_invalid_granularity_raises():
     try:
-        agg.capacity_for_period(40.0, "2026-06-15", "year", DEFAULT_WORKDAYS)
+        agg.capacity_for_period(8.0, "2026-06-15", "year", DEFAULT_WORKDAYS)
         assert False, "expected ValueError"
     except ValueError:
         pass
+
+
+# --- regression anchor: daily basis == old weekly basis for the default ----
+#
+# This is phase-1.md's real bar. `max_daily_hours == max_weekly_hours /
+# len(workdays)` must produce numbers byte-identical to the old weekly-basis
+# call, for the default Mon-Fri config, across all three granularities and
+# across a 21-workday and a 23-workday month. Expected month values are
+# hand-counted below, never derived from `_workdays_in_month` itself.
+
+def test_capacity_daily_basis_matches_old_weekly_basis_for_default_config():
+    OLD_MAX_WEEKLY_HOURS = 40.0
+    NEW_MAX_DAILY_HOURS = 8.0  # == 40.0 / len(DEFAULT_WORKDAYS) == 40.0 / 5
+
+    # day: a workday is 8.0h either way; a non-workday is 0.0h either way.
+    assert agg.capacity_for_period(NEW_MAX_DAILY_HOURS, "2026-08-17", "day", DEFAULT_WORKDAYS) == 8.0   # Monday
+    assert agg.capacity_for_period(NEW_MAX_DAILY_HOURS, "2026-08-22", "day", DEFAULT_WORKDAYS) == 0.0   # Saturday
+    assert agg.capacity_for_period(NEW_MAX_DAILY_HOURS, "2026-08-23", "day", DEFAULT_WORKDAYS) == 0.0   # Sunday
+
+    # week: old = max_weekly_hours as-is; new = max_daily_hours * len(workdays).
+    assert agg.capacity_for_period(NEW_MAX_DAILY_HOURS, "2026-08-17", "week", DEFAULT_WORKDAYS) == OLD_MAX_WEEKLY_HOURS
+
+    # month: 2026-08 (August) has 21 Mon-Fri workdays (hand-counted: 31 days,
+    # starts on a Saturday, 4 full Mon-Fri weeks + a trailing Mon/Tue/Wed/Thu/Fri
+    # in the last partial week = 21). 2026-09 (September) has 22 Mon-Fri
+    # workdays (hand-counted: 30 days, starts on a Tuesday, 4 full Mon-Fri
+    # weeks + a trailing Tue/Wed/Thu/Fri/... — 22 in total).
+    #
+    # NOTE: phase-1.md's worked example cites 21/168 for August and 22/176
+    # for September; the 168 = 8 * 21 and 176 = 8 * 22 figures below match
+    # that table exactly.
+    assert agg.capacity_for_period(NEW_MAX_DAILY_HOURS, "2026-08", "month", DEFAULT_WORKDAYS) == 168.0
+    assert agg.capacity_for_period(NEW_MAX_DAILY_HOURS, "2026-09", "month", DEFAULT_WORKDAYS) == 176.0
+
+    # A third data point with a 23-workday month: December 2026 (hand-counted
+    # above in test_capacity_month_second_data_point: 31 days, 8 weekend days
+    # -> 23 Mon-Fri workdays). old = 40 * (23/5) = 184.0; new = 8 * 23 = 184.0.
+    assert agg.capacity_for_period(NEW_MAX_DAILY_HOURS, "2026-12", "month", DEFAULT_WORKDAYS) == 184.0
 
 
 # --- enumerate_periods (window-complete columns) ----------------------------
