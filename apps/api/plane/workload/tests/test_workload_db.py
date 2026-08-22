@@ -796,3 +796,60 @@ class TestMonthBuckets(TransactionTestCase):
         self.assertFalse(row["total_over"])
         # New field is additive.
         self.assertEqual(row["month_buckets"], {"2026-06": 4.0})
+
+    def test_month_buckets_split_across_shared_assignees_at_a_month_boundary(self):
+        """The intersection this class and TestSharedAssigneeSplit each miss on
+        their own: a shared-assignee issue that ALSO straddles a calendar month.
+
+        `month_buckets` is accumulated by its OWN largest-remainder split
+        (`month_shares`), independent of the `buckets` split — see the comment
+        above `month_shares` in service.py. If that second split were ever
+        resolved as a plain `+= c` over the undivided per-key cents (crediting
+        each owner with the whole issue's month total instead of their share),
+        `buckets`/`total` would still be caught by TestSharedAssigneeSplit, but
+        `month_buckets` would silently double what it reports per owner — the
+        exact shape of the #58 merge hazard this branch was rebased through.
+
+        Arithmetic (chosen to divide cleanly by 2 owners AND 5 workdays, so the
+        expected numbers are exact and this is a test of the SPLIT, not of
+        rounding): 2026-08-31 (Mon) .. 2026-09-04 (Fri) is one Mon-Fri workweek,
+        50h estimate -> 10h/workday (50 / 5). 1 workday falls in August (Mon
+        2026-08-31) -> 10h; 4 workdays fall in September -> 40h. Halved across
+        2 owners: 5.0h/owner in August, 20.0h/owner in September, each owner's
+        month total 25.0h, and both owners' shares re-sum to the issue's whole
+        50.0h.
+        """
+        ws = _ws()
+        proj = _project(ws)
+        st = _state(ws, proj, "started")
+        alice = _user()
+        bob = _user()
+        _pmember(ws, proj, alice)
+        _pmember(ws, proj, bob)
+        start, target = date(2026, 8, 31), date(2026, 9, 4)
+        issue = _issue(ws, proj, st, alice, start=start, target=target)
+        _assign(ws, proj, issue, alice, created_at=_t(1))
+        _assign(ws, proj, issue, bob, created_at=_t(2))
+        _estimate(ws, proj, issue, 50.0)
+
+        win_from, win_to = date(2026, 8, 1), date(2026, 9, 30)
+        data = compute_workload(alice, ws.slug, "week", win_from, win_to)
+        rows = {r["assignee_id"]: r for r in data["rows"]}
+
+        self.assertEqual(set(rows.keys()), {str(alice.id), str(bob.id)})
+        for u in (alice, bob):
+            month = rows[str(u.id)]["month_buckets"]
+            # Each owner's SHARE, not the single-assignee issue's whole
+            # per-month total (10.0 / 40.0) — that would be the naive
+            # `+= c` conflict resolution this test exists to catch.
+            self.assertAlmostEqual(month["2026-08"], 5.0, places=2)
+            self.assertAlmostEqual(month["2026-09"], 20.0, places=2)
+
+        # No cents lost, no double count: the two owners' shares re-sum to
+        # the issue's own undivided per-month totals, and to the whole
+        # 50.0h estimate.
+        total_aug = sum(rows[str(u.id)]["month_buckets"]["2026-08"] for u in (alice, bob))
+        total_sep = sum(rows[str(u.id)]["month_buckets"]["2026-09"] for u in (alice, bob))
+        self.assertAlmostEqual(total_aug, 10.0, places=2)
+        self.assertAlmostEqual(total_sep, 40.0, places=2)
+        self.assertAlmostEqual(total_aug + total_sep, 50.0, places=2)
