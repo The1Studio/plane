@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "sessionKey": "2026-08-22",
+  "repoKey": "The1Studio/plane",
+  "workItems": [
+    {
+      "id": "0fe86880-845c-40d5-b519-b246a0b1cb6c",
+      "identifier": "PLANE-84",
+      "name": null,
+      "estimateHours": null,
+      "stage": "in_progress",
+      "updatedAt": "2026-08-22T04:14:21.758Z"
+    },
+    {
+      "id": "3a4b5ce4-da04-45db-825b-7ae0378578be",
+      "identifier": "PLANE-99",
+      "name": "Workload: daily hour cap + workday-exact badge capacity",
+      "estimateHours": 11,
+      "stage": "todo",
+      "updatedAt": "2026-08-22T08:37:13.938Z"
+    }
+  ],
+  "updatedAt": "2026-08-22T08:37:13.939Z"
+}
