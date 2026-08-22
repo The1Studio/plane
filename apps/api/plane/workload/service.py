@@ -523,7 +523,15 @@ def compute_workload(
     periods = sorted(period_set)
 
     rows = []
-    owner_ids = set(buckets.keys()) | set(unscheduled.keys())
+    # `month_buckets` is included here too, not just `buckets`/`unscheduled`:
+    # `spread_estimate` now clips `month_buckets` to the WHOLE calendar months
+    # the window touches, a wider range than [date_from, date_to] itself (see
+    # its docstring), so a member whose only estimate falls in that widened
+    # slice but outside the window proper can have month-only data with no
+    # `buckets` or `unscheduled` entry at all. Dropping them here would silently
+    # omit their row from the response even though `month_sparse` below has
+    # a real total to show.
+    owner_ids = set(buckets.keys()) | set(unscheduled.keys()) | set(month_buckets.keys())
     # Same workspace-wide capacity for every row now (D1) — computed ONCE and
     # referenced by each row below, not rebuilt per-owner. Prorated over
     # every period column in the response (not just a given row's populated

@@ -231,7 +231,14 @@ def test_clip_partial_uses_full_span_workday_rate():
     )
     assert _sum_cents(b) == 300          # 3 workdays * 100c, NOT 800/10 * 3
     assert b == {"2026-06-01": 100, "2026-06-02": 100, "2026-06-03": 100}
-    assert mb == {"2026-06": 300}
+    # month_buckets is clipped to the WHOLE calendar month the window touches
+    # (Jun 1 .. Jun 30, since win_from/win_to are both in June), not to the
+    # 3-day window `buckets` uses -- so it picks up ALL 8 workdays of the span
+    # that fall in June (the span runs through Jun 10, still June), not just
+    # the 3 inside [win_from, win_to]. This is the fix under test: before it,
+    # this asserted `mb == {"2026-06": 300}`, silently under-reporting the
+    # member's June total whenever the window didn't cover the whole month.
+    assert mb == {"2026-06": 800}        # 8 workdays * 100c, the FULL June total
 
 
 def test_span_entirely_outside_window():
@@ -295,7 +302,13 @@ def test_spread_sum_reconciliation_property_random():
     # configuration and every granularity — proving the D4/D9 rewrite never
     # drops or duplicates a cent, only relocates which day/bucket it lands in.
     # month_buckets is checked too: it must reconcile to the SAME total as
-    # buckets (both are clipped identically; only the key differs).
+    # buckets here specifically because `win_from`/`win_to` are constructed
+    # below to strictly CONTAIN the whole span -- so every span day is inside
+    # both the [win_from, win_to] clip `buckets` uses AND the wider whole-
+    # calendar-months clip `month_buckets` uses (a superset of the former).
+    # This is not a general "the two clips are identical" claim -- see
+    # test_month_buckets_widens_to_whole_calendar_months_the_window_touches
+    # for a case where they deliberately disagree.
     rng = random.Random(7)
     workday_sets = [DEFAULT_WORKDAYS, SUN_SAT_ONLY, MONDAY_ONLY, EVERY_DAY]
     granularities = ["day", "week", "month"]
@@ -358,11 +371,16 @@ def test_spread_month_boundary_straddle_buckets_vs_month_buckets():
     assert _sum_cents(mb) == _sum_cents(b) == 5000
 
 
-def test_spread_month_buckets_respects_the_window_clip():
+def test_spread_month_buckets_excludes_a_month_the_window_never_touches():
     # Same boundary-straddling span as above, but the request window
-    # (win_from, win_to) only covers August — September 1-4 must be clipped
-    # out of BOTH buckets and month_buckets identically, same as `buckets`
-    # already does for a window that doesn't cover the whole span.
+    # (win_from, win_to) only covers August. September must still be excluded
+    # from month_buckets -- NOT because month_buckets shares buckets' exact
+    # [win_from, win_to] clip (it no longer does, see
+    # test_month_buckets_widens_to_whole_calendar_months_the_window_touches
+    # below), but because the window's OWN calendar-month range is exactly
+    # [2026-08-01, 2026-08-31] here (win_from and win_to are both in August),
+    # so the wider month_buckets clip happens to coincide with the window in
+    # this example. Sep 1-4 falls outside that widened range too.
     b, mb, uns, dirty = agg.spread_estimate(
         50.0, date(2026, 8, 31), date(2026, 9, 4),
         date(2026, 8, 1), date(2026, 8, 31), "week",  # window ends Aug 31
@@ -374,6 +392,61 @@ def test_spread_month_buckets_respects_the_window_clip():
     assert _sum_cents(b) == 1000
     assert mb == {"2026-08": 1000}
     assert "2026-09" not in mb
+
+
+def test_month_buckets_widens_to_whole_calendar_months_the_window_touches():
+    # THE BUG REPRO. An issue spanning the whole of July (2026-07-01..31,
+    # EVERY_DAY workdays so all 31 days count), queried with a window that
+    # starts mid-month and extends into September: 2026-07-27..2026-09-06 at
+    # granularity="week". Before the fix, `month_buckets["2026-07"]` only
+    # covered Jul 27-31 (5 days) -- the SAME clip `buckets` uses -- so a
+    # client unioning `month_buckets` across paginated fetches (by month key,
+    # plain object spread) could have an earlier fetch's COMPLETE July total
+    # overwritten by this fetch's partial one. This is exactly the observed
+    # symptom: a member's July figure read 193.5h/168h correct, then flipped
+    # to 25h/184h after scrolling.
+    #
+    # 31 days, hours=31.0 -> to_cents=3100, 3100/31=100c/day exactly (clean
+    # division isolates this test from largest-remainder rounding).
+    b, mb, uns, dirty = agg.spread_estimate(
+        31.0, date(2026, 7, 1), date(2026, 7, 31),
+        date(2026, 7, 27), date(2026, 9, 6), "week",
+        EVERY_DAY, DEFAULT_WEEK_START_DAY,
+    )
+    assert not dirty and uns == 0
+    # buckets: still clipped to the request window -- only Jul 27-31 (5 days).
+    assert _sum_cents(b) == 500
+    # month_buckets: the WHOLE July total (31 days), not just the 5-day slice
+    # inside [win_from, win_to]. This is what makes the client's month-keyed
+    # union idempotent regardless of which window happened to fetch it.
+    assert mb == {"2026-07": 3100}
+    assert _sum_cents(mb) == 3100  # == to_cents(31.0) -- the FULL issue total
+
+
+def test_month_buckets_does_not_widen_beyond_the_windows_own_months():
+    # The other half of the fix: widening is bounded by the window's OWN
+    # calendar months, not unbounded. A long span (2026-05-25..2026-07-05,
+    # crossing May/June/July) queried with a window entirely INSIDE June
+    # (2026-06-10..2026-06-15) must report June in month_buckets and nothing
+    # else -- May and July must not leak in just because the span touches
+    # them, since the window's own month range is exactly June.
+    #
+    # 42 days (May25-31=7, Jun=30, Jul1-5=5), hours=420.0 -> to_cents=42000,
+    # 42000/42=1000c/day exactly.
+    b, mb, uns, dirty = agg.spread_estimate(
+        420.0, date(2026, 5, 25), date(2026, 7, 5),
+        date(2026, 6, 10), date(2026, 6, 15), "day",
+        EVERY_DAY, DEFAULT_WEEK_START_DAY,
+    )
+    assert not dirty and uns == 0
+    # buckets: only the 6 days inside the window.
+    assert _sum_cents(b) == 6000
+    # month_buckets: ALL of June (30 days), since the window's widened month
+    # range is exactly [2026-06-01, 2026-06-30] -- but NOT May or July, even
+    # though the span runs through both.
+    assert set(mb.keys()) == {"2026-06"}
+    assert mb == {"2026-06": 30000}
+    assert "2026-05" not in mb and "2026-07" not in mb
 
 
 # --- capacity proration (plans/260822-workload-daily-hours: daily basis) ----
