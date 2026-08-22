@@ -55,6 +55,7 @@ from plane.utils.grouper import (
     issue_queryset_grouper,
 )
 from plane.utils.issue_filters import issue_filters
+from plane.utils.issue_search import search_issues
 from plane.utils.order_queryset import order_issue_queryset
 from plane.utils.paginator import GroupedOffsetPaginator, SubGroupedOffsetPaginator
 
@@ -165,6 +166,18 @@ def apply_issue_annotations(issues):
         .prefetch_related(Prefetch("label_issue", queryset=IssueLabel.objects.all()))
         .prefetch_related(Prefetch("issue_module", queryset=ModuleIssue.objects.all()))
     )
+
+
+def apply_issue_search(queryset, request):
+    """The1Studio fork (views-search) — narrow by work-item name / number / project identifier.
+
+    An empty or absent `search` is NOT a filter: it returns the queryset untouched. Never
+    let a blank box become a hidden exclusion.
+    """
+    query = request.query_params.get("search", "").strip()
+    if not query:
+        return queryset
+    return search_issues(query, queryset)
 
 
 class GroupedWorkspaceViewIssuesEndpoint(BaseAPIView):
@@ -282,6 +295,11 @@ class GroupedWorkspaceViewIssuesEndpoint(BaseAPIView):
 
         # Guest-role visibility — verbatim, see _get_project_permission_filters
         issue_queryset = issue_queryset.filter(self._get_project_permission_filters())
+
+        # The1Studio fork (views-search) — after permission scoping, before pagination.
+        # Applied to the queryset the total count is derived from (deepcopied below so
+        # total_issue_queryset.count() reflects the searched set, not the unsearched one).
+        issue_queryset = apply_issue_search(issue_queryset, request)
 
         # Total count queryset (pre-annotation, cheap — mirrors
         # WorkspaceViewIssuesViewSet.list)

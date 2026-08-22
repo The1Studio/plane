@@ -1564,13 +1564,40 @@ importers:
       '@plane/constants':
         specifier: workspace:*
         version: link:../constants
+      '@plane/hooks':
+        specifier: workspace:*
+        version: link:../hooks
+      '@plane/propel':
+        specifier: workspace:*
+        version: link:../propel
       '@plane/types':
         specifier: workspace:*
         version: link:../types
+      '@plane/utils':
+        specifier: workspace:*
+        version: link:../utils
+      mobx:
+        specifier: 'catalog:'
+        version: 6.12.0
+      mobx-react:
+        specifier: 'catalog:'
+        version: 9.1.1(mobx@6.12.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      react:
+        specifier: 'catalog:'
+        version: 18.3.1
+      react-dom:
+        specifier: 'catalog:'
+        version: 18.3.1(react@18.3.1)
     devDependencies:
       '@plane/typescript-config':
         specifier: workspace:*
         version: link:../typescript-config
+      '@types/react':
+        specifier: 'catalog:'
+        version: 18.3.11
+      '@types/react-dom':
+        specifier: 'catalog:'
+        version: 18.3.1
       tsdown:
         specifier: 'catalog:'
         version: 0.16.0(typescript@5.8.3)(unrun@0.2.34)

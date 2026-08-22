@@ -8,6 +8,10 @@
 import { makeObservable, observable } from "mobx";
 import { WorkloadStore } from "@plane/workload-ext";
 import type { IWorkloadStore } from "@plane/workload-ext";
+/* The1Studio fork (views-search) */
+import { ViewsSearchStore } from "@plane/views-ext";
+/* The1Studio fork (views-search) */
+import type { IViewsSearchStore } from "@plane/views-ext";
 import { CoreRootStore } from "@/store/root.store";
 import type { ITimelineStore } from "./timeline";
 import { TimeLineStore } from "./timeline";
@@ -21,6 +25,8 @@ export class RootStore extends CoreRootStore {
   workloadStore: IWorkloadStore;
   /* The1Studio fork (workspace work settings) */
   workSettingsStore: IWorkSettingsStore;
+  /* The1Studio fork (views-search) */
+  viewsSearchStore: IViewsSearchStore;
 
   constructor() {
     super();
@@ -42,5 +48,7 @@ export class RootStore extends CoreRootStore {
     this.workloadStore = new WorkloadStore();
     /* The1Studio fork (workspace work settings) */
     this.workSettingsStore = new WorkSettingsStore(this);
+    /* The1Studio fork (views-search) */
+    this.viewsSearchStore = new ViewsSearchStore();
   }
 }

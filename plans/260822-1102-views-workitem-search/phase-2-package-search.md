@@ -81,10 +81,17 @@ import type { TIssueParams } from "@plane/types";
 export type TViewsExtIssueParams = TIssueParams | "search";
 
 export function withGlobalViewSearch(
-  params: Partial<Record<TIssueParams, string | boolean | string[]>>,
+  params: Partial<Record<TIssueParams, string | boolean>>,
   searchQuery: string
-): Partial<Record<TViewsExtIssueParams, string | boolean | string[]>>;
+): Partial<Record<TViewsExtIssueParams, string | boolean>>;
 ```
+
+The value union is `string | boolean` and must NOT be widened with `string[]`. It has to match
+`IssueFilterHelperStore.getPaginationParams`, which takes
+`Partial<Record<TIssueParams, string | boolean>>`
+(`apps/web/core/store/issue/helpers/issue-filter-helper.store.ts:300`). Adding `string[]` makes the
+return non-assignable to that parameter and Phase 3's wiring fails to typecheck. Widen the KEY —
+that is this file's entire job — never the value.
 
 Behavior:
 

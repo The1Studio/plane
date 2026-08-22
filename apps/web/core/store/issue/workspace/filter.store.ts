@@ -24,6 +24,8 @@ import type {
 import { EIssuesStoreType, EIssueLayoutTypes, STATIC_VIEW_TYPES } from "@plane/types";
 // The1Studio fork (views-layouts)
 import { getGlobalViewQueryParamsByLayout, sanitizeWorkspaceLevelGroupBy } from "@plane/views-ext";
+// The1Studio fork (views-search)
+import { withGlobalViewSearch } from "@plane/views-ext";
 // services
 import { WorkspaceService } from "@/services/workspace.service";
 // local imports
@@ -125,7 +127,15 @@ export class WorkspaceIssuesFilter extends IssueFilterHelperStore implements IWo
       filteredParams
     );
 
-    return filteredRouteParams;
+    // The1Studio fork (views-search) — B1 (plan.md): `search` is not a member of the sealed
+    // `TIssueParams`, so the fork-owned wrapper widens the key from the views-ext side rather
+    // than editing `@plane/types` in place. This is deliberately the ONLY place the term is
+    // read: `getAppliedFilters` is read-only param assembly, never `updateFilters` (B2) — a
+    // term routed through `updateFilters` would PATCH a shared workspace view and change what
+    // every other member sees. A blank/whitespace term returns `filteredRouteParams` unchanged
+    // (no hidden `search` key), matching the "empty ≡ absent" contract in plan.md.
+    const searchQuery = this.rootIssueStore.rootStore.viewsSearchStore.getSearchQuery(viewId);
+    return withGlobalViewSearch(filteredRouteParams, searchQuery);
   };
 
   get issueFilters() {
@@ -187,13 +197,13 @@ export class WorkspaceIssuesFilter extends IssueFilterHelperStore implements IWo
 
     // Get the view details if the view is not a static view
     if (STATIC_VIEW_TYPES.includes(viewId) === false) {
-      const _filters = await this.issueFilterService.getViewDetails(workspaceSlug, viewId);
-      richFilters = _filters?.rich_filters;
-      displayFilters = this.computedDisplayFilters(_filters?.display_filters, {
+      const _viewFilters = await this.issueFilterService.getViewDetails(workspaceSlug, viewId);
+      richFilters = _viewFilters?.rich_filters;
+      displayFilters = this.computedDisplayFilters(_viewFilters?.display_filters, {
         layout: EIssueLayoutTypes.SPREADSHEET,
         order_by: "-created_at",
       });
-      displayProperties = this.computedDisplayProperties(_filters?.display_properties);
+      displayProperties = this.computedDisplayProperties(_viewFilters?.display_properties);
     }
 
     // override existing order by if ordered by manual sort_order
