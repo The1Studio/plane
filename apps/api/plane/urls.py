@@ -40,6 +40,8 @@ urlpatterns = [
     path("api/", include("plane.github_ext.urls")),
     # The1Studio fork (views_ext) — docs/FORK.md touch-point 2
     path("api/views-ext/", include("plane.views_ext.urls")),
+    # The1Studio fork (cascade_ext) — docs/FORK.md touch-point 2
+    path("api/cascade-ext/", include("plane.cascade_ext.urls")),
     path("", include("plane.web.urls")),
 ]
 

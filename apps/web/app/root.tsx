@@ -26,6 +26,11 @@ import globalStyles from "@/styles/globals.css?url";
 import type { Route } from "./+types/root";
 // components
 import { LogoSpinner } from "@/components/common/logo-spinner";
+// The1Studio fork (cascade-confirm) — see docs/FORK.md § "Cascade-confirm modal for sub-work
+// items". `root.tsx` has no plugin-slot seam of its own for a global modal host; this widens
+// touch-point 7 (documented for white-label branding) rather than adding an unregistered edit.
+import { CascadeConfirmModal, cascadeConfirmStore } from "@plane/cascade-ext";
+// end The1Studio fork (cascade-confirm)
 // local
 import { CustomErrorComponent } from "./error";
 import { AppProvider } from "./provider";
@@ -138,6 +143,9 @@ export default function Root() {
           <Outlet />
         </main>
       </div>
+      {/* The1Studio fork (cascade-confirm) */}
+      <CascadeConfirmModal store={cascadeConfirmStore} />
+      {/* end The1Studio fork (cascade-confirm) */}
     </AppProvider>
   );
 }
