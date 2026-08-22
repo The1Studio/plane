@@ -4,7 +4,8 @@
  * See the LICENSE file for details.
  */
 
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import { debounce } from "lodash-es";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
 
@@ -22,6 +23,11 @@ import { Tooltip } from "@plane/propel/tooltip";
 import type { ICustomSearchSelectOption, IIssueDisplayFilterOptions, IIssueDisplayProperties } from "@plane/types";
 import { EIssuesStoreType, EViewAccess, EIssueLayoutTypes } from "@plane/types";
 import { Breadcrumbs, Header, BreadcrumbNavigationSearchDropdown } from "@plane/ui";
+// The1Studio fork (views-search) — `WorkItemSearchInput` ships from the fork-owned
+// `@plane/views-ext` package; core's `@plane/ui` carries no work-item search input and no
+// upstream seam exists to add one (see plan.md D6 — `packages/` cannot import from
+// `apps/web/core/`).
+import { WorkItemSearchInput } from "@plane/views-ext";
 // components
 import { BreadcrumbLink } from "@/components/common/breadcrumb-link";
 import { SwitcherIcon, SwitcherLabel } from "@/components/common/switcher-label";
@@ -35,6 +41,12 @@ import { useProject } from "@/hooks/store/use-project";
 import { useProjectView } from "@/hooks/store/use-project-view";
 import { useUserPermissions } from "@/hooks/store/user";
 import { useAppRouter } from "@/hooks/use-app-router";
+// The1Studio fork (views-search) — selector for the fork-owned ephemeral per-view search-term
+// store (core/hooks/store/use-views-search.ts). There is no upstream seam: core has no
+// per-view ephemeral search-term store at all, and the store itself cannot live in
+// `@plane/views-ext` (a `packages/` file cannot read `StoreContext` — same dependency
+// direction as D6 in plan.md).
+import { useViewsSearch } from "@/hooks/store/use-views-search";
 // plane web imports
 import { CommonProjectBreadcrumbs } from "@/plane-web/components/breadcrumbs/common";
 
@@ -48,7 +60,12 @@ export const ProjectViewIssuesHeader = observer(function ProjectViewIssuesHeader
   // store hooks
   const {
     issuesFilter: { issueFilters, updateFilters },
+    issues,
   } = useIssues(EIssuesStoreType.PROJECT_VIEW);
+  // The1Studio fork (views-search) — ephemeral, per-view search-term store (plan.md D3).
+  // Read-only param assembly happens in filter.store.ts `getAppliedFilters`; this header only
+  // writes the term and triggers the re-fetch, it never routes through `updateFilters` (B2).
+  const searchStore = useViewsSearch();
   const { toggleCreateIssueModal } = useCommandPalette();
   const { allowPermissions } = useUserPermissions();
 
@@ -100,6 +117,47 @@ export const ProjectViewIssuesHeader = observer(function ProjectViewIssuesHeader
   );
 
   const viewDetails = viewId ? getViewById(viewId.toString()) : null;
+
+  // The1Studio fork (views-search) — the search term for the view currently on screen. The
+  // store's key is opaque; the composite `"<EIssuesStoreType>:<entityId>"` keeps a project
+  // view term from ever colliding with a module/cycle/id that happens to share its id.
+  // Switching views never shows a stale term (plan.md D3).
+  const searchQuery = viewId ? searchStore.getSearchQuery(`${EIssuesStoreType.PROJECT_VIEW}:${viewId}`) : "";
+
+  // The1Studio fork (views-search) — 300ms debounce (deliberately shorter than the 800ms
+  // write-debounce in use-workload-estimate-editor.ts: that one guards a server WRITE, this one
+  // guards a read). `fetchIssuesWithExistingPagination` is the same re-fetch path a filter
+  // change takes (project-views/filter.store.ts `updateFilters`), which keeps cursor handling,
+  // grouped pagination and loader states consistent with a filter change. `issues` is a stable
+  // mobx store instance for the lifetime of this component, so the debounced wrapper is safe to
+  // create once.
+  const debouncedRefetchIssues = useMemo(
+    () =>
+      debounce((workspaceSlugParam: string, projectIdParam: string, viewIdParam: string) => {
+        issues.fetchIssuesWithExistingPagination(workspaceSlugParam, projectIdParam, viewIdParam, "mutation");
+      }, 300),
+    [issues]
+  );
+
+  // The1Studio fork (views-search) — cancel the pending debounce on unmount so a term typed
+  // and navigated away from within 300ms never fires a fetch against a store that just left.
+  useEffect(() => () => debouncedRefetchIssues.cancel(), [debouncedRefetchIssues]);
+
+  // The1Studio fork (views-search) — writes the term immediately (controlled input, no input
+  // lag) and schedules the debounced re-fetch. Refetches on transition-to-empty too, so
+  // clearing the box restores the unfiltered list. Not gated on `!viewDetails.is_locked`:
+  // search never mutates what the view IS (unlike the layout switcher / display dropdown below,
+  // which are hidden when locked), and it stays gated on the view id exactly like
+  // `WorkItemFiltersToggle` below.
+  const updateSearchQuery = useCallback(
+    (query: string) => {
+      if (!viewId) return;
+      searchStore.setSearchQuery(`${EIssuesStoreType.PROJECT_VIEW}:${viewId}`, query);
+      if (!workspaceSlug || !projectId) return;
+      debouncedRefetchIssues(workspaceSlug.toString(), projectId.toString(), viewId);
+    },
+    [viewId, workspaceSlug, projectId, searchStore, debouncedRefetchIssues]
+  );
 
   const canUserCreateIssue = allowPermissions(
     [EUserPermissions.ADMIN, EUserPermissions.MEMBER],
@@ -166,6 +224,11 @@ export const ProjectViewIssuesHeader = observer(function ProjectViewIssuesHeader
       </Header.LeftItem>
       <Header.RightItem className="items-center">
         <>
+          {/* The1Studio fork (views-search) — placed first so reading order is search → layout
+              → filters → display → create. Gated on viewId only, NOT `!viewDetails.is_locked`:
+              a locked view forbids changing what the view IS, and an ephemeral search term
+              changes nothing about the view. Same gating as `WorkItemFiltersToggle` below. */}
+          {viewId && <WorkItemSearchInput searchQuery={searchQuery} updateSearchQuery={updateSearchQuery} />}
           {!viewDetails.is_locked && (
             <LayoutSelection
               layouts={[

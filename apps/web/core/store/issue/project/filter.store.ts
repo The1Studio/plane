@@ -22,6 +22,14 @@ import type {
 } from "@plane/types";
 import { EIssuesStoreType } from "@plane/types";
 import { handleIssueQueryParamsByLayout } from "@plane/utils";
+// The1Studio fork (views-search) — `withEntityNameSearch` emits the `name` query param, NOT
+// `search`. This surface hits CORE's `/api/workspaces/<slug>/projects/<id>/issues/` via
+// `IssueService.getIssues`, which dispatches `name` to `name__icontains` and silently ignores
+// `search` (no error, just an unfiltered result set) — so the workspace Views tab's
+// `withGlobalViewSearch`/`search` pairing must NOT be copied here. `name` is not a member of the
+// sealed `TIssueParams`, so the fork widens the key from the `@plane/views-ext` side exactly as
+// the sibling project-views store does.
+import { withEntityNameSearch } from "@plane/views-ext";
 import type { IBaseIssueFilterStore } from "../helpers/issue-filter-helper.store";
 import { IssueFilterHelperStore } from "../helpers/issue-filter-helper.store";
 // helpers
@@ -117,7 +125,20 @@ export class ProjectIssuesFilter extends IssueFilterHelperStore implements IProj
       filteredParams
     );
 
-    return filteredRouteParams;
+    // The1Studio fork (views-search) — injecting the ephemeral term into `getAppliedFilters`,
+    // deliberately NEVER `updateFilters`: `updateFilters` PATCHes `ProjectUserProperties`, which
+    // is per-user but persisted server-side and re-read on every project visit — a term routed
+    // through it would outlive the session it was typed in. The term is read here, the only
+    // read-only param assembly point on the request path (`getFilterParams` ->
+    // `getAppliedFilters`). The store key matches the header's composite
+    // `"<EIssuesStoreType>:<entityId>"` convention, so the Project Work Items term can never
+    // collide with a module/cycle/project-view that happens to share the project's id. A
+    // blank/whitespace term returns `filteredRouteParams` unchanged — no hidden `name` key
+    // (empty === absent).
+    const searchQuery = this.rootIssueStore.rootStore.viewsSearchStore.getSearchQuery(
+      `${EIssuesStoreType.PROJECT}:${projectId}`
+    );
+    return withEntityNameSearch(filteredRouteParams, searchQuery);
   }
 
   getFilterParams = computedFn(

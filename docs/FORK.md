@@ -378,17 +378,78 @@ modules ship with the workspace Views tab text-search feature, all fork-owned an
 `@plane/views-ext`:
 
 - `src/search-store.ts` — `ViewsSearchStore` / `IViewsSearchStore`, an in-memory mobx observable
-  keyed by view id. No localStorage, no service, no issue-store reference — the term lives only
-  for the session and is never persisted, matching the `filter.store.ts` ephemerality rule above.
-- `src/search-params.ts` — `TViewsExtIssueParams = TIssueParams | "search"` and
-  `withGlobalViewSearch(params, searchQuery)`. Widens the KEY only; the value union stays
-  `string | boolean` so the result remains assignable to `getPaginationParams`.
+  keyed by an OPAQUE string, not necessarily a view id: the workspace Views tab passes a bare
+  `globalViewId`; the four project-scoped work-item lists pass a composite
+  `"<EIssuesStoreType>:<entityId>"` (see the project-scoped search section below). No
+  localStorage, no service, no issue-store reference — the term lives only for the session and is
+  never persisted, matching the `filter.store.ts` ephemerality rule above.
+- `src/search-params.ts` — `TViewsExtIssueParams = TIssueParams | "search" | "name"` (widened
+  again for the project-scoped surfaces below), plus `withGlobalViewSearch(params, searchQuery)`
+  — emits `search`, workspace Views tab — and `withEntityNameSearch(params, searchQuery)` — emits
+  `name`, the four project-scoped work-item lists. TWO functions rather than one parameterised by
+  key, precisely because the two endpoint families accept different params and sending the wrong
+  key fails silently. Widens the KEY only; the value union stays `string | boolean` so the result
+  remains assignable to `getPaginationParams`.
 - `src/search-input.tsx` — `WorkItemSearchInput`, a controlled expand-on-click input. Deliberately
   parallel to core's `PageSearchInput` because a file under `packages/` cannot import from
   `apps/web/core/`.
 
 `packages/views-ext/package.json` gained react / mobx / @plane/propel / @plane/hooks / @plane/utils
 deps to compile the above, mirroring the `packages/workload-ext` dependency set.
+
+### Project-scoped work-item search (Work Items / Modules / Cycles / Views tabs) — fenced `The1Studio fork (views-search)`
+
+Extends the workspace Views tab search above to the four **project-scoped** work-item list
+surfaces: Project Work Items, a Module's Work Items, a Cycle's Work Items, and a saved project
+View. Same `WorkItemSearchInput` component, same `ViewsSearchStore`, same
+`packages/views-ext/src/search-params.ts` module — **zero backend changes**. The fence name is
+unchanged (`The1Studio fork (views-search)`), reused across both the workspace and
+project-scoped surfaces rather than minted fresh.
+
+**Load-bearing design fact.** Unlike the workspace Views tab (which calls the fork's own
+`views_ext` endpoint and can therefore emit `search`), these four surfaces call CORE's
+`GET /api/workspaces/<slug>/projects/<projectId>/issues/` via `IssueService.getIssues`
+(module/cycle scope is a query param on the same endpoint, not a separate one). That endpoint:
+
+- accepts **`name`**, dispatched to `name__icontains` by `plane/utils/issue_filters.py`'s
+  `filter_name`;
+- **silently ignores `search`** — no error, just an unfiltered result set.
+
+So these four surfaces emit `name`, not `search` (`withEntityNameSearch`, not
+`withGlobalViewSearch` — both already documented above). **Accepted consequence:** a full
+identifier like `PLANE-79` matches nothing here, because `name__icontains` only searches the
+title column — the identical string resolves correctly on the workspace Views tab, which calls
+`search_issues()` and therefore also matches `sequence_id` and `project__identifier`. Full
+parity on these four surfaces would require routing them through `search_issues()` on core's
+`IssueViewSet.list` — a core-file edit — which was considered and not taken.
+
+| File                                                      | What                                                                                                                                               | Why no seam                                                                                                                                       |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/ce/components/issues/header.tsx`                | `IssuesHeader` gains the search term + a debounced re-fetch, passed down to `HeaderFilters`                                                        | Project Work Items uniquely splits its toolbar across two files; no plugin slot for an extra header control                                       |
+| `apps/web/core/components/issues/filters.tsx`             | `HeaderFilters` gains optional `searchQuery` / `updateSearchQuery` props and mounts `WorkItemSearchInput` first in the right-hand button group     | Same; the props are optional so the un-wired Epic call path degrades safely                                                                       |
+| `apps/web/core/store/issue/project/filter.store.ts`       | `getAppliedFilters` returns `withEntityNameSearch(...)`, keyed `${EIssuesStoreType.PROJECT}:${projectId}`                                          | `name` is not a member of the sealed `TIssueParams`; the term must also not pass through `updateFilters`, which PATCHes persisted user properties |
+| `.../[projectId]/modules/(detail)/header.tsx`             | Mounts `WorkItemSearchInput` first in `Header.RightItem`; 300 ms debounce                                                                          | No plugin slot; this header hand-rolls its own toolbar                                                                                            |
+| `apps/web/core/store/issue/module/filter.store.ts`        | Same pattern, keyed `${EIssuesStoreType.MODULE}:${moduleId}`; the pre-existing `"module"`-param strip is preserved                                 | Same as project                                                                                                                                   |
+| `.../[projectId]/cycles/(detail)/header.tsx`              | Same pattern as the module header                                                                                                                  | Same as module                                                                                                                                    |
+| `apps/web/core/store/issue/cycle/filter.store.ts`         | Same pattern, keyed `${EIssuesStoreType.CYCLE}:${cycleId}`; the pre-existing `"cycle"`-param strip is preserved                                    | Same as project                                                                                                                                   |
+| `.../[projectId]/views/(detail)/[viewId]/header.tsx`      | Mounts the input; deliberately NOT gated on `is_locked` — a locked view forbids changing the saved view, not searching an ephemeral term within it | No plugin slot                                                                                                                                    |
+| `apps/web/core/store/issue/project-views/filter.store.ts` | Same pattern, keyed `${EIssuesStoreType.PROJECT_VIEW}:${viewId}`                                                                                   | Same as project                                                                                                                                   |
+
+`packages/views-ext/src/search-params.ts`'s `withEntityNameSearch` / widened
+`TViewsExtIssueParams`, and `search-store.ts`'s opaque `"<EIssuesStoreType>:<entityId>"`
+composite key (both § "Views multi-layout switcher" above) were already added in anticipation
+of this feature landing — neither entry changes as a result of these nine files shipping.
+
+**Incidental change.** `modules/(detail)/header.tsx` also simplifies one pre-existing
+`no-unneeded-ternary` lint warning — not a feature change. Staging this file triggers the
+pre-commit gate's `oxlint --deny-warnings` over staged files; same class of incidental fix
+already recorded for PR #51's `_filters` rename.
+
+**Rebase handling:** these nine files ARE expected conflict points (unlike the abort-on-conflict
+rule for everything else). On conflict, re-apply the fork block — each is fenced by the same
+`The1Studio fork (views-search)` comment already used by the workspace Views tab's own search
+addition above — and keep upstream's changes around it. Do NOT abort the rebase for a conflict
+confined to this set.
 
 ### Profile pages multi-layout switcher ("Your work" tabs) — fenced `The1Studio fork (profile-layouts)`
 

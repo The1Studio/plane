@@ -22,6 +22,14 @@ import type {
 } from "@plane/types";
 import { EIssuesStoreType } from "@plane/types";
 import { handleIssueQueryParamsByLayout } from "@plane/utils";
+// The1Studio fork (views-search) — `withEntityNameSearch` emits the `name` query param, NOT
+// `search`. This surface hits CORE's `/api/workspaces/<slug>/projects/<id>/issues/` via
+// `IssueService.getIssues`, which dispatches `name` to `name__icontains` and silently ignores
+// `search` (no error, just an unfiltered result set) — so the `withGlobalViewSearch`/`search`
+// pairing from the workspace Views tab must NOT be copied here. `name` is not a member of the
+// sealed `TIssueParams`, so the fork widens the key from the `@plane/views-ext` side exactly as
+// the workspace store does for `search` (mirrors cycle/filter.store.ts, project-views/filter.store.ts).
+import { withEntityNameSearch } from "@plane/views-ext";
 import { IssueFiltersService } from "@/services/issue_filter.service";
 import type { IBaseIssueFilterStore } from "../helpers/issue-filter-helper.store";
 import { IssueFilterHelperStore } from "../helpers/issue-filter-helper.store";
@@ -122,7 +130,18 @@ export class ModuleIssuesFilter extends IssueFilterHelperStore implements IModul
       filteredParams
     );
 
-    return filteredRouteParams;
+    // The1Studio fork (views-search) — injecting the ephemeral term into `getAppliedFilters`,
+    // deliberately NEVER `updateFilters` (B2): a module's saved filters are SHARED, so a term
+    // written back there would PATCH the module and change what every member sees. The term is
+    // read here — the only read-only param assembly point on the request path
+    // (`getFilterParams` → `getAppliedFilters`). The store key matches the header's composite
+    // `"<EIssuesStoreType>:<entityId>"` (plan.md D3), so a module's term can never collide with a
+    // cycle/project-view that happens to share its id. A blank/whitespace term returns
+    // `filteredRouteParams` unchanged — no hidden `name` key (empty ≡ absent).
+    const searchQuery = this.rootIssueStore.rootStore.viewsSearchStore.getSearchQuery(
+      `${EIssuesStoreType.MODULE}:${moduleId}`
+    );
+    return withEntityNameSearch(filteredRouteParams, searchQuery);
   }
 
   getFilterParams = computedFn(

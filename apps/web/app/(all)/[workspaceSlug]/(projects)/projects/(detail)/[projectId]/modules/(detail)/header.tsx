@@ -4,7 +4,8 @@
  * See the LICENSE file for details.
  */
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { debounce } from "lodash-es";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
 // icons
@@ -24,6 +25,12 @@ import type { ICustomSearchSelectOption, IIssueDisplayFilterOptions, IIssueDispl
 import { EIssuesStoreType, EIssueLayoutTypes } from "@plane/types";
 import { Breadcrumbs, Header, BreadcrumbNavigationSearchDropdown } from "@plane/ui";
 import { cn } from "@plane/utils";
+// The1Studio fork (views-search) — `WorkItemSearchInput` is a controlled, store-free input
+// (packages/views-ext/src/search-input.tsx). It is imported from the fork-owned package rather
+// than reimplemented here because this surface reuses the exact same search interaction the
+// workspace Views tab ships; a package under `packages/` cannot import from `apps/web/core/`
+// (plan.md § D6), so the views-ext copy is the shared home.
+import { WorkItemSearchInput } from "@plane/views-ext";
 // components
 import { WorkItemsModal } from "@/components/analytics/work-items/modal";
 import { BreadcrumbLink } from "@/components/common/breadcrumb-link";
@@ -46,6 +53,10 @@ import { useAppRouter } from "@/hooks/use-app-router";
 import { useIssuesActions } from "@/hooks/use-issues-actions";
 import useLocalStorage from "@/hooks/use-local-storage";
 import { usePlatformOS } from "@/hooks/use-platform-os";
+// The1Studio fork (views-search) — selector hook for the fork's in-memory `viewsSearchStore`. It
+// lives under `core/hooks/store/` (not in `@plane/views-ext`) because a package under `packages/`
+// cannot read `StoreContext` — same dependency-direction constraint as D6 in plan.md.
+import { useViewsSearch } from "@/hooks/store/use-views-search";
 // plane web imports
 import { CommonProjectBreadcrumbs } from "@/plane-web/components/breadcrumbs/common";
 import { IconButton } from "@plane/propel/icon-button";
@@ -64,7 +75,7 @@ export const ModuleIssuesHeader = observer(function ModuleIssuesHeader() {
   // store hooks
   const {
     issuesFilter: { issueFilters },
-    issues: { getGroupIssueCount },
+    issues,
   } = useIssues(EIssuesStoreType.MODULE);
   const { updateFilters } = useIssuesActions(EIssuesStoreType.MODULE);
   const { projectModuleIds, getModuleById } = useModule();
@@ -73,15 +84,90 @@ export const ModuleIssuesHeader = observer(function ModuleIssuesHeader() {
   const { currentProjectDetails, loader } = useProject();
   // local storage
   const { setValue, storedValue } = useLocalStorage("module_sidebar_collapsed", "false");
+  // The1Studio fork (views-search) — ephemeral, per-module search term (plan.md D3). Read-only
+  // param assembly happens in filter.store.ts `getAppliedFilters`; this header only writes the
+  // term and triggers the re-fetch, it never routes through `updateFilters` (B2) — a term routed
+  // through `updateFilters` would PATCH the persisted module filters and change the list for
+  // every member.
+  const searchStore = useViewsSearch();
   // derived values
-  const isSidebarCollapsed = storedValue ? (storedValue === "true" ? true : false) : false;
+  const isSidebarCollapsed = storedValue ? storedValue === "true" : false;
   const activeLayout = issueFilters?.displayFilters?.layout;
   const moduleDetails = moduleId ? getModuleById(moduleId) : undefined;
   const canUserCreateIssue = allowPermissions(
     [EUserPermissions.ADMIN, EUserPermissions.MEMBER],
     EUserPermissionsLevel.PROJECT
   );
-  const workItemsCount = getGroupIssueCount(undefined, undefined, false);
+  const workItemsCount = issues.getGroupIssueCount(undefined, undefined, false);
+
+  // The1Studio fork (views-search) — the MODULE store's search key is an opaque composite
+  // `${EIssuesStoreType.MODULE}:${moduleId}` so that a module and another entity (cycle /
+  // project view) that might share an id can never collide in `viewsSearchStore`.
+  const moduleSearchKey = `${EIssuesStoreType.MODULE}:${moduleId}`;
+
+  // The1Studio fork (views-search) — the term for the module currently on screen. The layout
+  // mounts the header once for the whole `modules/(detail)` route and the page below swaps per
+  // `moduleId` inside the Outlet, so reading the term keyed by `moduleId` (rather than
+  // remembering it in a local state) is what makes switching modules show the right term. A
+  // missing or empty term is `""` (never `undefined`) per the store contract.
+  const searchQuery = moduleId ? searchStore.getSearchQuery(moduleSearchKey) : "";
+
+  // The1Studio fork (views-search) — 300ms debounce (deliberately shorter than the 800ms write
+  // debounce in use-workload-estimate-editor.ts: that one guards a server WRITE, this one guards
+  // a read). Reuses `issues.fetchIssuesWithExistingPagination`, the same re-fetch path a filter
+  // change takes (filter.store.ts:261), which keeps cursor handling, grouped pagination and
+  // loader states consistent with a filter change. `issues` comes from the stable mobx store
+  // instance via `useIssues`, so the debounced wrapper is safe to create once.
+  const debouncedRefetchIssues = useMemo(
+    () =>
+      debounce((workspaceSlugParam: string, projectIdParam: string, targetModuleId: string) => {
+        issues.fetchIssuesWithExistingPagination(workspaceSlugParam, projectIdParam, "mutation", targetModuleId);
+      }, 300),
+    [issues]
+  );
+
+  // The1Studio fork (views-search) — cancel the pending debounce on unmount so a stale term
+  // change can never schedule a re-fetch for a module/page that is already gone.
+  useEffect(() => () => debouncedRefetchIssues.cancel(), [debouncedRefetchIssues]);
+
+  // The1Studio fork (views-search) — 3B.3 (plan.md): clear the term for the module being left,
+  // whether that is a switch to a different module or navigating out of the module page
+  // entirely. `ModuleIssuesHeader` mounts once for the whole `modules/(detail)` layout
+  // (layout.tsx wraps an <Outlet/> whose child page changes per moduleId; the header itself does
+  // not remount on a moduleId change), so this effect's cleanup — not a bare unmount — is what
+  // fires on every module switch. Without it, returning to a module visited earlier in the
+  // session would resurrect its old term. Also fires the transition-to-empty re-fetch (clearing
+  // the box restores the full list) when the term being cleared actually transitioned to empty.
+  useEffect(
+    () => () => {
+      const previousQuery = searchStore.getSearchQuery(moduleSearchKey);
+      if (moduleId) {
+        if (previousQuery !== "" && workspaceSlug && projectId)
+          issues.fetchIssuesWithExistingPagination(
+            workspaceSlug.toString(),
+            projectId.toString(),
+            "mutation",
+            moduleId
+          );
+        searchStore.clearSearchQuery(moduleSearchKey);
+      }
+    },
+    [moduleId, moduleSearchKey, workspaceSlug, projectId, issues, searchStore]
+  );
+
+  // The1Studio fork (views-search) — writes the term immediately (controlled input, no input
+  // lag) and schedules the debounced re-fetch. Not gated on any permission: search never mutates
+  // the module (unlike the layout switcher / display dropdown), so a read-only user still
+  // searches.
+  const updateSearchQuery = useCallback(
+    (query: string) => {
+      if (!moduleId) return;
+      searchStore.setSearchQuery(moduleSearchKey, query);
+      if (!workspaceSlug || !projectId) return;
+      debouncedRefetchIssues(workspaceSlug.toString(), projectId.toString(), moduleId);
+    },
+    [moduleId, moduleSearchKey, workspaceSlug, projectId, searchStore, debouncedRefetchIssues]
+  );
 
   const toggleSidebar = () => {
     setValue(`${!isSidebarCollapsed}`);
@@ -178,6 +264,11 @@ export const ModuleIssuesHeader = observer(function ModuleIssuesHeader() {
           </div>
         </Header.LeftItem>
         <Header.RightItem className="items-center">
+          {/* The1Studio fork (views-search) — placed first so reading order is search → layout
+              → filters → display → create, matching the workspace Views tab (plan.md 3B.1).
+              Gated on moduleId only, never on a permission: search is ephemeral and never
+              mutates the module, so a read-only member still searches. */}
+          {moduleId && <WorkItemSearchInput searchQuery={searchQuery} updateSearchQuery={updateSearchQuery} />}
           <div className="hidden gap-2 md:flex">
             <div className="hidden @4xl:flex">
               <LayoutSelection
