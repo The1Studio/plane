@@ -13,7 +13,12 @@
 // `gantt-chart/blocks/block-row.tsx`):
 //
 //   header — avatar, name, weekly capacity badge, collapse chevron
-//   task   — work-item identifier + name (the click target for the peek panel)
+//   lane   — deliberately BLANK. Each bar already carries its own name and
+//            hours and is the click target for the peek panel, so a sidebar
+//            label only duplicated them — and for a lane packing several
+//            non-overlapping tasks it could manage nothing better than
+//            "N items", which names nothing. The cell survives purely as a
+//            BLOCK_HEIGHT spacer (see the lane branch below for why).
 //   footer — the Unscheduled / Overdue / truncation strip
 //
 // Splitting the footer out of the header is what lets this match the reference
@@ -36,7 +41,12 @@ import type { TWorkloadTimelineBlockData } from "./types";
 
 type Props = {
   blockIds: string[];
-  collapsed: ReadonlySet<string>;
+  /**
+   * A predicate rather than a set of collapsed keys: collapse has a per-zoom
+   * DEFAULT that manual toggles override, so a key nobody has touched still has
+   * an answer. See `WorkloadTimelineRoot` for the default + override model.
+   */
+  isCollapsed: (key: string) => boolean;
   onToggleCollapse: (key: string) => void;
   /**
    * The period the header badge reports on — derived once by the root from the
@@ -109,7 +119,7 @@ function periodFigures(
 }
 
 /** A fixed-height sidebar cell — every block kind occupies exactly one. */
-function SidebarCell({ children, className }: { children: React.ReactNode; className?: string }) {
+function SidebarCell({ children, className }: { children?: React.ReactNode; className?: string }) {
   return (
     <Row variant={ERowVariant.HUGGING} className={className} style={{ height: `${BLOCK_HEIGHT}px` }}>
       {children}
@@ -119,7 +129,7 @@ function SidebarCell({ children, className }: { children: React.ReactNode; class
 
 export const WorkloadTimelineSidebarRow = observer(function WorkloadTimelineSidebarRow({
   blockIds,
-  collapsed,
+  isCollapsed,
   onToggleCollapse,
   focus,
 }: Props) {
@@ -135,15 +145,14 @@ export const WorkloadTimelineSidebarRow = observer(function WorkloadTimelineSide
 
         // ── lane ────────────────────────────────────────────────────────────
         if (data.kind === "lane") {
-          // A lane holds several non-overlapping tasks, so no single name can
-          // label it. The bars carry their own identifier + name + hours and are
-          // the click targets; this cell just says how many share the row.
-          const count = data.tasks.length;
-          return (
-            <SidebarCell key={blockId} className="flex items-center gap-2 pr-2 pl-7 text-11 text-tertiary">
-              <span className="truncate">{count === 1 ? data.tasks[0].identifier : `${count} items`}</span>
-            </SidebarCell>
-          );
+          // Intentionally empty — the bars are the label. Do NOT return `null`
+          // or drop the branch: the chart body stacks one BlockRow per blockId
+          // at a fixed BLOCK_HEIGHT, so a lane that renders no sidebar cell
+          // shortens this column by 44px and slides every row BELOW it out of
+          // alignment with its own bars, an error that accumulates down the
+          // page. The cell is a spacer with nothing in it, which is not the
+          // same thing as no cell.
+          return <SidebarCell key={blockId} />;
         }
 
         // ── footer ──────────────────────────────────────────────────────────
@@ -172,7 +181,7 @@ export const WorkloadTimelineSidebarRow = observer(function WorkloadTimelineSide
         // ── header ──────────────────────────────────────────────────────────
         const { row } = data;
         const key = assigneeKey(data.assigneeId);
-        const isCollapsed = collapsed.has(key);
+        const rowCollapsed = isCollapsed(key);
         const memberDetails = data.assigneeId ? getUserDetails(data.assigneeId) : undefined;
         const { used, capacity, over, hasData } = periodFigures(row, focus);
 
@@ -182,9 +191,9 @@ export const WorkloadTimelineSidebarRow = observer(function WorkloadTimelineSide
               type="button"
               onClick={() => onToggleCollapse(key)}
               className="flex-shrink-0 text-tertiary hover:text-primary"
-              aria-label={isCollapsed ? "Expand" : "Collapse"}
+              aria-label={rowCollapsed ? "Expand" : "Collapse"}
             >
-              {isCollapsed ? <ChevronRight className="size-3.5" /> : <ChevronDown className="size-3.5" />}
+              {rowCollapsed ? <ChevronRight className="size-3.5" /> : <ChevronDown className="size-3.5" />}
             </button>
 
             {key === UNASSIGNED_KEY ? (

@@ -98,11 +98,19 @@ export type TWorkloadBlocksResult = {
  * "collapsing hides bars but keeps the axis aligned" success criterion,
  * since every OTHER row's block is untouched and BlockRow stacks purely by
  * list order.
+ *
+ * `isCollapsed` is a PREDICATE, not a set of collapsed keys, and the difference
+ * is load-bearing. Collapse now has a per-zoom DEFAULT (expanded at Week,
+ * collapsed at Month/Quarter) that manual toggles override, and rows arrive
+ * asynchronously as the reader pans — so a key this builder has never seen
+ * before must still resolve to the current default. A set can only answer for
+ * the rows that existed when it was built; a predicate answers for every key,
+ * including one that loads a second from now.
  */
 export function buildWorkloadBlocks(
   data: TWorkloadResponse,
   granularity: TWorkloadGranularity,
-  collapsedAssigneeKeys: ReadonlySet<string>
+  isCollapsed: (assigneeKey: string) => boolean
 ): TWorkloadBlocksResult {
   const blockIds: string[] = [];
   const dataById: Record<string, TWorkloadTimelineBlockData> = {};
@@ -135,7 +143,7 @@ export function buildWorkloadBlocks(
       target_date: headerEnd,
     };
 
-    if (collapsedAssigneeKeys.has(key)) continue;
+    if (isCollapsed(key)) continue;
 
     // Compact: several non-overlapping tasks share one row. A member with 49
     // scheduled tasks was 49 rows tall; packed, it is as many rows as they have

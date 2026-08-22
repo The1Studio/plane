@@ -101,7 +101,9 @@ const noopBlockUpdateHandler = (_block: unknown, _payload: IBlockUpdateData) => 
 };
 
 export const WorkloadTimelineRoot = observer(function WorkloadTimelineRoot({ store, workspaceSlug }: Props) {
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
+  // Only the keys the reader has toggled BY HAND in the current zoom. Every
+  // other key falls through to `defaultCollapsed` below — see `isCollapsed`.
+  const [collapseOverrides, setCollapseOverrides] = useState<Record<string, boolean>>({});
   // `useTimeLineChart` is typed to return the `IBaseTimelineStore` interface
   // (shared by every timeline type), but `getTimelineStore` (ce/hooks/use-timeline-chart.ts)
   // resolves GANTT_TIMELINE_TYPE.WORKLOAD to a genuine `BaseTimeLineStore` instance
@@ -110,20 +112,51 @@ export const WorkloadTimelineRoot = observer(function WorkloadTimelineRoot({ sto
   // internal autorun calls it today).
   const timelineStore = useTimeLineChart(GANTT_TIMELINE_TYPE.WORKLOAD) as BaseTimeLineStore;
 
-  const toggleCollapse = useCallback((key: string) => {
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }, []);
+  // ── Collapse: a per-zoom default, overridden per row ───────────────────────
+  //
+  // Week zoom opens expanded; Month and Quarter open with every swimlane
+  // collapsed to its header, so the board reads as one line of capacity per
+  // member. `currentView` is a MobX observable and this component is an
+  // `observer`, so reading it here re-renders on zoom change with no reaction
+  // of its own — the `reaction` further down does a different job (it pushes
+  // the zoom into the store's BUCKETING) and is not a substitute for this.
+  const defaultCollapsed = timelineStore.currentView !== "week";
+
+  // Why a per-key default instead of materialising a collapsed Set when the
+  // zoom changes: rows load ASYNCHRONOUSLY, from the viewport-driven
+  // `ensureRange` calls below. A set snapshotted at zoom-change time knows only
+  // the rows loaded by then, so any member the reader later panned into view
+  // would render EXPANDED in Month zoom — the default silently applying to some
+  // rows and not others, with nothing in the UI to explain the difference.
+  const isCollapsed = useCallback(
+    (key: string) => collapseOverrides[key] ?? defaultCollapsed,
+    [collapseOverrides, defaultCollapsed]
+  );
+
+  // A zoom change drops manual toggles so the new zoom's default wins on
+  // arrival. Keyed on `defaultCollapsed`, NOT on `currentView`: Month and
+  // Quarter share a default, so switching between those two changes nothing
+  // about what the reader asked for and their toggles are left alone. Only
+  // Week↔Month and Week↔Quarter flip the boolean, and only those reset.
+  useEffect(() => {
+    // Returning `prev` unchanged when there is nothing to clear lets React bail
+    // out of the re-render; a fresh `{}` would not compare equal and would cost
+    // an extra render pass on every mount.
+    setCollapseOverrides((prev) => (Object.keys(prev).length === 0 ? prev : {}));
+  }, [defaultCollapsed]);
+
+  const toggleCollapse = useCallback(
+    (key: string) => {
+      setCollapseOverrides((prev) => ({ ...prev, [key]: !(prev[key] ?? defaultCollapsed) }));
+    },
+    [defaultCollapsed]
+  );
 
   const { blockIds, dataById } = useMemo(() => {
     if (!store.workloadData)
       return { blockIds: [] as string[], dataById: {} as Record<string, TWorkloadTimelineBlockData> };
-    return buildWorkloadBlocks(store.workloadData, store.granularity, collapsed);
-  }, [store.workloadData, store.granularity, collapsed]);
+    return buildWorkloadBlocks(store.workloadData, store.granularity, isCollapsed);
+  }, [store.workloadData, store.granularity, isCollapsed]);
 
   // `dataById` is a plain object, not a MobX observable — the autorun below
   // can't track it directly, so it's read through a ref updated every render.
@@ -289,7 +322,7 @@ export const WorkloadTimelineRoot = observer(function WorkloadTimelineRoot({ sto
           sidebarToRender={() => (
             <WorkloadTimelineSidebarRow
               blockIds={blockIds}
-              collapsed={collapsed}
+              isCollapsed={isCollapsed}
               onToggleCollapse={toggleCollapse}
               focus={focus}
             />
