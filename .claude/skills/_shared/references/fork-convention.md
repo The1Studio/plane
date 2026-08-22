@@ -34,6 +34,29 @@ table in your fork app (OneToOne/FK to the core model) instead of a column. Neve
   apps company-main CI runs tests for (via `.claude/scripts/plane-fork-test-paths.py`), so an app
   missing from it is both misclassified AND untested.
 - **Frontend** = NEW package under `packages/<name>-ext/`, mounted via touch-point 6.
+- **Infrastructure** = a path listed in `forkPaths` below, classified `custom-infra`. These are
+  files and directories the fork CREATED outright — deploy scripts, its own CI workflows, its plan
+  archive, and `docs/FORK.md` itself. They are neither a Django app nor a frontend package, so
+  without this list the classifier called them `core — fork edits forbidden, relocate`, which is
+  both wrong and self-contradictory: it said that about the very document defining the convention.
+
+  A prefix ending in `/` matches that directory and everything under it; a prefix without one must
+  match the path exactly, so a single file can be listed without capturing its siblings.
+
+  **`.claude/` is whitelisted with a carve-out.** Upstream created the directory (`f1d567accc`,
+  "Claude Code skills for PR descriptions", #8920) but contributed exactly two files to it —
+  `skills/pr-description.md` and `skills/release-notes.md`. Every subdirectory beneath it
+  (`scripts/`, `rules/`, `plans/`, `skills/_shared/`, every `skills/plane-*/`) is fork-authored,
+  mostly by `5105532b68`. So the directory is listed in `forkPaths` and those two files are named
+  in **`forkPathExceptions`**, which is checked first and returns them to `core`. Prefer that shape
+  over enumerating fork subdirectories: a new `plane-*` skill is then covered automatically,
+  whereas an enumerated list silently misses it.
+
+  Only `deployments/selfhost/` is listed and not `deployments/`
+  — the siblings (`cli`, `aio`, `kubernetes`, `swarm`, `r2-proxy`) came from upstream
+  `6d01622663` — and why the two fork workflows are named individually rather than whitelisting
+  `.github/workflows/`. Verify provenance with `git log --diff-filter=A -- <path>` before adding
+  anything here; a too-broad prefix silently grants fork-edit approval to upstream files.
 
 ---
 
@@ -67,6 +90,15 @@ Keep paths in sync with the table above (the doctor's drift check enforces it).
   "forkPackageRoot": "packages/",
   "forkPackageSuffix": "-ext",
   "coreModels": ["Issue", "Page", "Module", "State", "Intake", "Asset"],
-  "neverEdit": ["apps/api/plane/db/migrations/", "apps/web/app/routes/core.ts"]
+  "neverEdit": ["apps/api/plane/db/migrations/", "apps/web/app/routes/core.ts"],
+  "forkPaths": [
+    ".claude/",
+    "deployments/selfhost/",
+    "plans/",
+    "docs/FORK.md",
+    ".github/workflows/company-main-ci.yml",
+    ".github/workflows/deploy-company-main.yml"
+  ],
+  "forkPathExceptions": [".claude/skills/pr-description.md", ".claude/skills/release-notes.md"]
 }
 ```

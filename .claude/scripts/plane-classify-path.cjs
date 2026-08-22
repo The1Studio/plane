@@ -38,7 +38,7 @@ function loadConvention() {
   } catch (e) {
     throw new Error(`fork-convention.md json block is invalid: ${e.message}`, { cause: e });
   }
-  for (const key of ["touchPoints", "forkApps", "forkAppRoot", "forkPackageRoot", "forkPackageSuffix"]) {
+  for (const key of ["touchPoints", "forkApps", "forkAppRoot", "forkPackageRoot", "forkPackageSuffix", "forkPaths"]) {
     if (!(key in data)) throw new Error(`fork-convention.md json block missing "${key}"`);
   }
   return data;
@@ -92,6 +92,38 @@ function classify(rawPath, conv) {
         touchPointId: null,
         reason: `under ${conv.forkAppRoot}${appName}/ — fork-owned Django app`,
       };
+    }
+  }
+
+  // 3.5 custom-infra — a path the fork CREATED outright that is neither a Django app nor a
+  // frontend package: deploy scripts, the fork's own CI workflows, the plan archive, and
+  // docs/FORK.md itself. Without this the default-deny below called them "core — fork edits
+  // forbidden", which was wrong and self-contradictory (it said that about the document defining
+  // the convention), and made plane-isolation-audit report legitimate edits as violations.
+  //
+  // A prefix ending in "/" matches the directory and everything under it; one without a trailing
+  // slash must match EXACTLY, so a single file can be listed without also capturing siblings that
+  // merely share its name as a prefix ("docs/FORK.md" must not match "docs/FORK.md.bak"). Runs
+  // after custom-app so touch-points and app/package rules keep priority, and before core so it
+  // can override the default-deny.
+  // forkPathExceptions are UPSTREAM files that live inside an otherwise fork-owned directory and
+  // must keep classifying as core. `.claude/` is the case this exists for: upstream created it
+  // (f1d567accc) with exactly two flat .md files, and every subdirectory beneath it since is
+  // fork-authored — so the directory is whitelisted and those two files are carved back out.
+  // Optional, mirroring how `neverEdit` is read below.
+  const isUpstreamException = (conv.forkPathExceptions || []).map(normalize).includes(p);
+  if (!isUpstreamException) {
+    for (const raw of conv.forkPaths) {
+      const prefix = normalize(raw);
+      const isDir = prefix.endsWith("/");
+      if (isDir ? p.startsWith(prefix) : p === prefix) {
+        return {
+          path: rawPath,
+          category: "custom-infra",
+          touchPointId: null,
+          reason: `${isDir ? "under" : "is"} ${prefix} — fork-owned infrastructure`,
+        };
+      }
     }
   }
 
