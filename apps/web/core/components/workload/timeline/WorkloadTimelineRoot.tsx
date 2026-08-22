@@ -325,6 +325,8 @@ export const WorkloadTimelineRoot = observer(function WorkloadTimelineRoot({ sto
               isCollapsed={isCollapsed}
               onToggleCollapse={toggleCollapse}
               focus={focus}
+              granularity={granularity}
+              workSettings={workSettings}
             />
           )}
           enableBlockLeftResize={false}

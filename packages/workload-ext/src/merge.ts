@@ -101,6 +101,7 @@ function mergeRow(base: TWorkloadRow, add: TWorkloadRow): TWorkloadRow {
   // Plain unions — see this module's header for why no key can collide with a
   // DIFFERENT value, and therefore why nothing here adds.
   const buckets = { ...base.buckets, ...add.buckets };
+  const month_buckets = { ...base.month_buckets, ...add.month_buckets };
   const capacity_buckets = { ...base.capacity_buckets, ...add.capacity_buckets };
   const over = { ...base.over, ...add.over };
 
@@ -116,6 +117,7 @@ function mergeRow(base: TWorkloadRow, add: TWorkloadRow): TWorkloadRow {
   return {
     ...base,
     buckets,
+    month_buckets,
     capacity_buckets,
     over,
     tasks: [...byId.values()],

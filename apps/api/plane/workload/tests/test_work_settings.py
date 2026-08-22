@@ -23,7 +23,7 @@ try:  # pragma: no cover
 except Exception:  # pragma: no cover
     pass
 
-from plane.workload.constants import DEFAULT_MAX_WEEKLY_HOURS, DEFAULT_WEEK_START_DAY, DEFAULT_WORKDAYS
+from plane.workload.constants import DEFAULT_MAX_DAILY_HOURS, DEFAULT_WEEK_START_DAY, DEFAULT_WORKDAYS
 from plane.workload.models import WorkloadSettings
 from plane.workload.serializers import WorkloadSettingsSerializer
 
@@ -78,7 +78,7 @@ class TestWorkloadSettingsModelDefaults(TransactionTestCase):
     def test_defaults_match_constants(self):
         ws = _ws()
         obj = WorkloadSettings.objects.create(workspace=ws)
-        self.assertEqual(obj.max_weekly_hours, DEFAULT_MAX_WEEKLY_HOURS)
+        self.assertEqual(obj.max_daily_hours, DEFAULT_MAX_DAILY_HOURS)
         self.assertEqual(obj.workdays, DEFAULT_WORKDAYS)
         self.assertEqual(obj.week_start_day, DEFAULT_WEEK_START_DAY)
 
@@ -110,7 +110,7 @@ class TestWorkloadSettingsModelConstraints(TransactionTestCase):
 
 class TestWorkloadSettingsSerializer(SimpleTestCase):
     def _valid_payload(self, **overrides):
-        payload = {"max_weekly_hours": 40.0, "workdays": [1, 2, 3, 4, 5], "week_start_day": 1}
+        payload = {"max_daily_hours": 8.0, "workdays": [1, 2, 3, 4, 5], "week_start_day": 1}
         payload.update(overrides)
         return payload
 
@@ -119,11 +119,11 @@ class TestWorkloadSettingsSerializer(SimpleTestCase):
         self.assertTrue(s.is_valid(), s.errors)
 
     def test_response_shape_is_exactly_the_pinned_contract(self):
-        """phase-0.md pins the wire shape to exactly these 3 keys — no
+        """plan.md pins the wire shape to exactly these 3 keys — no
         id/workspace/timestamps leak into the payload."""
         s = WorkloadSettingsSerializer(data=self._valid_payload())
         s.is_valid(raise_exception=True)
-        self.assertEqual(set(s.validated_data.keys()), {"max_weekly_hours", "workdays", "week_start_day"})
+        self.assertEqual(set(s.validated_data.keys()), {"max_daily_hours", "workdays", "week_start_day"})
 
     def test_empty_workdays_rejected(self):
         s = WorkloadSettingsSerializer(data=self._valid_payload(workdays=[]))
@@ -150,20 +150,29 @@ class TestWorkloadSettingsSerializer(SimpleTestCase):
         self.assertFalse(s.is_valid())
         self.assertIn("week_start_day", s.errors)
 
-    def test_negative_max_weekly_hours_rejected(self):
-        s = WorkloadSettingsSerializer(data=self._valid_payload(max_weekly_hours=-1))
+    def test_negative_max_daily_hours_rejected(self):
+        s = WorkloadSettingsSerializer(data=self._valid_payload(max_daily_hours=-1))
         self.assertFalse(s.is_valid())
-        self.assertIn("max_weekly_hours", s.errors)
+        self.assertIn("max_daily_hours", s.errors)
 
-    def test_max_weekly_hours_over_cap_rejected(self):
-        s = WorkloadSettingsSerializer(data=self._valid_payload(max_weekly_hours=10001))
+    def test_max_daily_hours_over_cap_rejected(self):
+        s = WorkloadSettingsSerializer(data=self._valid_payload(max_daily_hours=10001))
         self.assertFalse(s.is_valid())
-        self.assertIn("max_weekly_hours", s.errors)
+        self.assertIn("max_daily_hours", s.errors)
 
-    def test_max_weekly_hours_quantized(self):
-        s = WorkloadSettingsSerializer(data=self._valid_payload(max_weekly_hours=40.126))
+    def test_max_daily_hours_quantized(self):
+        s = WorkloadSettingsSerializer(data=self._valid_payload(max_daily_hours=8.126))
         s.is_valid(raise_exception=True)
-        self.assertEqual(s.validated_data["max_weekly_hours"], 40.13)
+        self.assertEqual(s.validated_data["max_daily_hours"], 8.13)
+
+    def test_old_max_weekly_hours_key_rejected_no_alias(self):
+        """D2 (plan.md) — no backward-compat alias: a payload carrying the
+        retired weekly key (even alongside a valid daily one) is rejected,
+        not silently ignored."""
+        payload = {"max_weekly_hours": 8.0, "workdays": [1, 2, 3, 4, 5], "week_start_day": 1}
+        s = WorkloadSettingsSerializer(data=payload)
+        self.assertFalse(s.is_valid())
+        self.assertIn("max_weekly_hours", s.errors)
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +221,7 @@ class TestWorkSettingsHTTP(TransactionTestCase):
         self.assertEqual(
             resp.data,
             {
-                "max_weekly_hours": DEFAULT_MAX_WEEKLY_HOURS,
+                "max_daily_hours": DEFAULT_MAX_DAILY_HOURS,
                 "workdays": list(DEFAULT_WORKDAYS),
                 "week_start_day": DEFAULT_WEEK_START_DAY,
             },
@@ -227,10 +236,10 @@ class TestWorkSettingsHTTP(TransactionTestCase):
         _wmember(ws, admin, role=20)
         self.client.force_authenticate(user=admin)
 
-        payload = {"max_weekly_hours": 32.5, "workdays": [3, 1, 2], "week_start_day": 0}
+        payload = {"max_daily_hours": 32.5, "workdays": [3, 1, 2], "week_start_day": 0}
         put_resp = self.client.put(self._url(ws.slug), payload, format="json")
         self.assertEqual(put_resp.status_code, 200)
-        self.assertEqual(put_resp.data["max_weekly_hours"], 32.5)
+        self.assertEqual(put_resp.data["max_daily_hours"], 32.5)
         self.assertEqual(put_resp.data["workdays"], [1, 2, 3])
         self.assertEqual(put_resp.data["week_start_day"], 0)
 
@@ -247,19 +256,37 @@ class TestWorkSettingsHTTP(TransactionTestCase):
 
         self.client.put(
             self._url(ws.slug),
-            {"max_weekly_hours": 40.0, "workdays": [1, 2, 3, 4, 5], "week_start_day": 1},
+            {"max_daily_hours": 8.0, "workdays": [1, 2, 3, 4, 5], "week_start_day": 1},
             format="json",
         )
         self.client.put(
             self._url(ws.slug),
-            {"max_weekly_hours": 20.0, "workdays": [0, 6], "week_start_day": 0},
+            {"max_daily_hours": 20.0, "workdays": [0, 6], "week_start_day": 0},
             format="json",
         )
 
         self.assertEqual(WorkloadSettings.objects.filter(workspace=ws).count(), 1)
         obj = WorkloadSettings.objects.get(workspace=ws)
-        self.assertEqual(obj.max_weekly_hours, 20.0)
+        self.assertEqual(obj.max_daily_hours, 20.0)
         self.assertEqual(obj.workdays, [0, 6])
+
+    def test_put_with_old_max_weekly_hours_key_rejected(self):
+        """D2 (plan.md) — no backward-compat alias: a PUT body carrying the
+        retired weekly key and no `max_daily_hours` at all is rejected (400),
+        not silently accepted with the model default silently applied."""
+        ws = _ws()
+        admin = _user()
+        _wmember(ws, admin, role=20)
+        self.client.force_authenticate(user=admin)
+
+        resp = self.client.put(
+            self._url(ws.slug),
+            {"max_weekly_hours": 8.0, "workdays": [1, 2, 3, 4, 5], "week_start_day": 1},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("max_weekly_hours", resp.data)
+        self.assertFalse(WorkloadSettings.objects.filter(workspace=ws).exists())
 
     def test_put_as_member_is_403(self):
         """PUT is ADMIN-only (plan D-B3 pattern) — a plain MEMBER is rejected
@@ -271,7 +298,7 @@ class TestWorkSettingsHTTP(TransactionTestCase):
 
         resp = self.client.put(
             self._url(ws.slug),
-            {"max_weekly_hours": 40.0, "workdays": [1, 2, 3, 4, 5], "week_start_day": 1},
+            {"max_daily_hours": 8.0, "workdays": [1, 2, 3, 4, 5], "week_start_day": 1},
             format="json",
         )
         self.assertEqual(resp.status_code, 403)
@@ -303,7 +330,7 @@ class TestWorkSettingsHTTP(TransactionTestCase):
 
         resp = self.client.put(
             self._url(ws.slug),
-            {"max_weekly_hours": 40.0, "workdays": [], "week_start_day": 1},
+            {"max_daily_hours": 8.0, "workdays": [], "week_start_day": 1},
             format="json",
         )
         self.assertEqual(resp.status_code, 400)
@@ -318,14 +345,14 @@ class TestWorkSettingsHTTP(TransactionTestCase):
 
         resp = self.client.put(
             self._url(ws.slug),
-            {"max_weekly_hours": 40.0, "workdays": [1, 2, 3, 4, 5], "week_start_day": 7},
+            {"max_daily_hours": 8.0, "workdays": [1, 2, 3, 4, 5], "week_start_day": 7},
             format="json",
         )
         self.assertEqual(resp.status_code, 400)
         self.assertIn("week_start_day", resp.data)
         self.assertFalse(WorkloadSettings.objects.filter(workspace=ws).exists())
 
-    def test_put_negative_max_weekly_hours_is_400(self):
+    def test_put_negative_max_daily_hours_is_400(self):
         ws = _ws()
         admin = _user()
         _wmember(ws, admin, role=20)
@@ -333,11 +360,11 @@ class TestWorkSettingsHTTP(TransactionTestCase):
 
         resp = self.client.put(
             self._url(ws.slug),
-            {"max_weekly_hours": -1, "workdays": [1, 2, 3, 4, 5], "week_start_day": 1},
+            {"max_daily_hours": -1, "workdays": [1, 2, 3, 4, 5], "week_start_day": 1},
             format="json",
         )
         self.assertEqual(resp.status_code, 400)
-        self.assertIn("max_weekly_hours", resp.data)
+        self.assertIn("max_daily_hours", resp.data)
         self.assertFalse(WorkloadSettings.objects.filter(workspace=ws).exists())
 
 
@@ -364,7 +391,7 @@ class TestWorkSettingsPublicAPIHTTP(TransactionTestCase):
         self.assertEqual(
             resp.data,
             {
-                "max_weekly_hours": DEFAULT_MAX_WEEKLY_HOURS,
+                "max_daily_hours": DEFAULT_MAX_DAILY_HOURS,
                 "workdays": list(DEFAULT_WORKDAYS),
                 "week_start_day": DEFAULT_WEEK_START_DAY,
             },
@@ -376,7 +403,7 @@ class TestWorkSettingsPublicAPIHTTP(TransactionTestCase):
         _wmember(ws, admin, role=20)
         self.client.force_authenticate(user=admin)
 
-        payload = {"max_weekly_hours": 25.0, "workdays": [1, 2, 3], "week_start_day": 1}
+        payload = {"max_daily_hours": 25.0, "workdays": [1, 2, 3], "week_start_day": 1}
         put_resp = self.client.put(self._url(ws.slug), payload, format="json")
         self.assertEqual(put_resp.status_code, 200)
 
@@ -391,7 +418,7 @@ class TestWorkSettingsPublicAPIHTTP(TransactionTestCase):
 
         resp = self.client.put(
             self._url(ws.slug),
-            {"max_weekly_hours": 40.0, "workdays": [1, 2, 3, 4, 5], "week_start_day": 1},
+            {"max_daily_hours": 8.0, "workdays": [1, 2, 3, 4, 5], "week_start_day": 1},
             format="json",
         )
         self.assertEqual(resp.status_code, 403)

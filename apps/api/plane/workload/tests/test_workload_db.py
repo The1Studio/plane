@@ -114,10 +114,10 @@ def _estimate(ws, proj, issue, hours):
     )
 
 
-def _settings(ws, max_weekly_hours=40.0, workdays=None, week_start_day=1):
+def _settings(ws, max_daily_hours=8.0, workdays=None, week_start_day=1):
     from plane.workload.models import WorkloadSettings
 
-    kwargs = {"workspace": ws, "max_weekly_hours": max_weekly_hours, "week_start_day": week_start_day}
+    kwargs = {"workspace": ws, "max_daily_hours": max_daily_hours, "week_start_day": week_start_day}
     if workdays is not None:
         kwargs["workdays"] = workdays
     return WorkloadSettings.objects.create(**kwargs)
@@ -368,11 +368,11 @@ class TestCapacityOverload(TransactionTestCase):
         u = _user()
         _pmember(ws, proj, u)
         st = _state(ws, proj, "started")
-        monday = date(2026, 6, 15)  # workday -> day cap = weekly / 5 workdays
+        monday = date(2026, 6, 15)  # workday -> day cap = max_daily_hours
         issue = _issue(ws, proj, st, u, start=monday, target=monday)
         _assign(ws, proj, issue, u, created_at=_t(1))
         _estimate(ws, proj, issue, 8.0)
-        _settings(ws, max_weekly_hours=5.0)  # day cap = 1.0h, well under the 8h logged
+        _settings(ws, max_daily_hours=1.0)  # 1.0h, well under the 8h logged
 
         data = compute_workload(u, ws.slug, "day", WIN_FROM, WIN_TO)
         row = next(r for r in data["rows"] if r["assignee_id"] == str(u.id))
@@ -396,7 +396,7 @@ class TestCapacityOverload(TransactionTestCase):
         issue = _issue(ws, proj, st, u, start=monday, target=monday)
         _assign(ws, proj, issue, u, created_at=_t(1))
         _estimate(ws, proj, issue, 4.0)
-        _settings(ws, max_weekly_hours=40.0)  # day cap = 8.0h, well above the 4h logged
+        _settings(ws, max_daily_hours=8.0)  # 8.0h, well above the 4h logged
 
         data = compute_workload(u, ws.slug, "day", WIN_FROM, WIN_TO)
         row = next(r for r in data["rows"] if r["assignee_id"] == str(u.id))
@@ -406,7 +406,7 @@ class TestCapacityOverload(TransactionTestCase):
         self.assertFalse(row["total_over"])
 
     def test_no_settings_row_falls_back_to_default_and_still_flags(self):
-        """No WorkloadSettings row -> constants.py default (40h / Mon-Fri)
+        """No WorkloadSettings row -> constants.py default (8h/day, Mon-Fri)
         applies, and the row STILL carries capacity/over flags (D1) — unlike
         the pre-Phase-3 per-member behaviour, absence no longer means empty."""
         ws = _ws()
@@ -417,7 +417,7 @@ class TestCapacityOverload(TransactionTestCase):
         monday = date(2026, 6, 15)
         issue = _issue(ws, proj, st, u, start=monday, target=monday)
         _assign(ws, proj, issue, u, created_at=_t(1))
-        _estimate(ws, proj, issue, 8.0)  # exactly the default day cap (40/5)
+        _estimate(ws, proj, issue, 8.0)  # exactly the default day cap (8.0)
 
         data = compute_workload(u, ws.slug, "day", WIN_FROM, WIN_TO)
         row = next(r for r in data["rows"] if r["assignee_id"] == str(u.id))
@@ -439,12 +439,12 @@ class TestCapacityOverload(TransactionTestCase):
         issue = _issue(ws1, proj, st, u, start=monday, target=monday)
         _assign(ws1, proj, issue, u, created_at=_t(1))
         _estimate(ws1, proj, issue, 8.0)
-        _settings(ws2, max_weekly_hours=5.0)  # wrong workspace — must not be picked up
+        _settings(ws2, max_daily_hours=1.0)  # wrong workspace — must not be picked up
 
         data = compute_workload(u, ws1.slug, "day", WIN_FROM, WIN_TO)
         row = next(r for r in data["rows"] if r["assignee_id"] == str(u.id))
         period = monday.isoformat()
-        # If ws2's 5.0 leaked in, day cap would read 1.0 and this would be "over".
+        # If ws2's 1.0 leaked in, day cap would read 1.0 and this would be "over".
         self.assertEqual(row["capacity_buckets"][period], 8.0)
         self.assertFalse(row["over"][period])
         self.assertFalse(row["total_over"])
@@ -736,3 +736,120 @@ class TestSharedSplitReachesTheHttpResponse(TransactionTestCase):
 
         # The work is counted ONCE across the whole matrix, not once per person.
         self.assertEqual(sum(r["total"] for r in body["rows"]), 8.0)
+class TestMonthBuckets(TransactionTestCase):
+    """Plan D6 — the server-emitted `month_buckets` field. At `week`
+    granularity, an issue spanning a month boundary must still report exact
+    per-calendar-month hours on `month_buckets`, even though `buckets` (keyed
+    at week granularity) attributes the whole straddling week to the month
+    its Monday falls in."""
+
+    def test_month_buckets_present_and_split_for_boundary_spanning_issue(self):
+        ws = _ws()
+        proj = _project(ws)
+        u = _user()
+        _pmember(ws, proj, u)
+        st = _state(ws, proj, "started")
+        # 2026-08-31 (Mon) .. 2026-09-04 (Fri): one Mon-Fri workweek, entirely
+        # inside a single week bucket keyed 2026-08-31 (Monday-start weeks),
+        # but split 1 day in August / 4 days in September calendar-wise.
+        start, target = date(2026, 8, 31), date(2026, 9, 4)
+        issue = _issue(ws, proj, st, u, start=start, target=target)
+        _assign(ws, proj, issue, u, created_at=_t(1))
+        _estimate(ws, proj, issue, 50.0)
+
+        win_from, win_to = date(2026, 8, 1), date(2026, 9, 30)
+        data = compute_workload(u, ws.slug, "week", win_from, win_to)
+        row = next(r for r in data["rows"] if r["assignee_id"] == str(u.id))
+
+        # buckets: the whole 50h sits in ONE week bucket.
+        self.assertEqual(set(row["buckets"].keys()), {"2026-08-31"})
+        self.assertAlmostEqual(row["buckets"]["2026-08-31"], 50.0, places=2)
+
+        # month_buckets: split into August (1 workday) and September (4).
+        self.assertIn("month_buckets", row)
+        self.assertAlmostEqual(row["month_buckets"]["2026-08"], 10.0, places=2)
+        self.assertAlmostEqual(row["month_buckets"]["2026-09"], 40.0, places=2)
+        self.assertAlmostEqual(
+            sum(row["month_buckets"].values()), sum(row["buckets"].values()), places=2
+        )
+
+    def test_month_buckets_does_not_change_buckets_capacity_or_periods(self):
+        """Adding month_buckets must not perturb any existing field for the
+        same request (phase-1.md 1.8 success criteria)."""
+        ws = _ws()
+        proj = _project(ws)
+        u = _user()
+        _pmember(ws, proj, u)
+        st = _state(ws, proj, "started")
+        monday = date(2026, 6, 15)
+        issue = _issue(ws, proj, st, u, start=monday, target=monday)
+        _assign(ws, proj, issue, u, created_at=_t(1))
+        _estimate(ws, proj, issue, 4.0)
+
+        data = compute_workload(u, ws.slug, "week", WIN_FROM, WIN_TO)
+        row = next(r for r in data["rows"] if r["assignee_id"] == str(u.id))
+
+        # Unchanged fields still behave exactly as the pre-1.8 tests pin.
+        self.assertEqual(row["buckets"], {"2026-06-15": 4.0})
+        self.assertIn("2026-06-15", row["capacity_buckets"])
+        self.assertFalse(row["over"]["2026-06-15"])
+        self.assertFalse(row["total_over"])
+        # New field is additive.
+        self.assertEqual(row["month_buckets"], {"2026-06": 4.0})
+
+    def test_month_buckets_split_across_shared_assignees_at_a_month_boundary(self):
+        """The intersection this class and TestSharedAssigneeSplit each miss on
+        their own: a shared-assignee issue that ALSO straddles a calendar month.
+
+        `month_buckets` is accumulated by its OWN largest-remainder split
+        (`month_shares`), independent of the `buckets` split — see the comment
+        above `month_shares` in service.py. If that second split were ever
+        resolved as a plain `+= c` over the undivided per-key cents (crediting
+        each owner with the whole issue's month total instead of their share),
+        `buckets`/`total` would still be caught by TestSharedAssigneeSplit, but
+        `month_buckets` would silently double what it reports per owner — the
+        exact shape of the #58 merge hazard this branch was rebased through.
+
+        Arithmetic (chosen to divide cleanly by 2 owners AND 5 workdays, so the
+        expected numbers are exact and this is a test of the SPLIT, not of
+        rounding): 2026-08-31 (Mon) .. 2026-09-04 (Fri) is one Mon-Fri workweek,
+        50h estimate -> 10h/workday (50 / 5). 1 workday falls in August (Mon
+        2026-08-31) -> 10h; 4 workdays fall in September -> 40h. Halved across
+        2 owners: 5.0h/owner in August, 20.0h/owner in September, each owner's
+        month total 25.0h, and both owners' shares re-sum to the issue's whole
+        50.0h.
+        """
+        ws = _ws()
+        proj = _project(ws)
+        st = _state(ws, proj, "started")
+        alice = _user()
+        bob = _user()
+        _pmember(ws, proj, alice)
+        _pmember(ws, proj, bob)
+        start, target = date(2026, 8, 31), date(2026, 9, 4)
+        issue = _issue(ws, proj, st, alice, start=start, target=target)
+        _assign(ws, proj, issue, alice, created_at=_t(1))
+        _assign(ws, proj, issue, bob, created_at=_t(2))
+        _estimate(ws, proj, issue, 50.0)
+
+        win_from, win_to = date(2026, 8, 1), date(2026, 9, 30)
+        data = compute_workload(alice, ws.slug, "week", win_from, win_to)
+        rows = {r["assignee_id"]: r for r in data["rows"]}
+
+        self.assertEqual(set(rows.keys()), {str(alice.id), str(bob.id)})
+        for u in (alice, bob):
+            month = rows[str(u.id)]["month_buckets"]
+            # Each owner's SHARE, not the single-assignee issue's whole
+            # per-month total (10.0 / 40.0) — that would be the naive
+            # `+= c` conflict resolution this test exists to catch.
+            self.assertAlmostEqual(month["2026-08"], 5.0, places=2)
+            self.assertAlmostEqual(month["2026-09"], 20.0, places=2)
+
+        # No cents lost, no double count: the two owners' shares re-sum to
+        # the issue's own undivided per-month totals, and to the whole
+        # 50.0h estimate.
+        total_aug = sum(rows[str(u.id)]["month_buckets"]["2026-08"] for u in (alice, bob))
+        total_sep = sum(rows[str(u.id)]["month_buckets"]["2026-09"] for u in (alice, bob))
+        self.assertAlmostEqual(total_aug, 10.0, places=2)
+        self.assertAlmostEqual(total_sep, 40.0, places=2)
+        self.assertAlmostEqual(total_aug + total_sep, 50.0, places=2)

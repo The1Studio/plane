@@ -78,3 +78,29 @@ export function periodDateRange(period: string, granularity: TWorkloadGranularit
   const end = `${yearStr}-${monthStr}-${String(lastDay).padStart(2, "0")}`;
   return { start: `${period}-01`, end };
 }
+
+/**
+ * How many days in the inclusive range [from, to] fall on a configured workday.
+ *
+ * `workdays` uses Plane's EStartOfTheWeek encoding (SUN=0..SAT=6) — the SAME
+ * encoding the API stores and returns, so no remapping happens here. JS's
+ * `Date.getUTCDay()` already produces that encoding natively, which is why this
+ * needs no counterpart to the backend's `to_plane_weekday()`.
+ *
+ * Dates are parsed as UTC and stepped by whole UTC days, so a viewer in any
+ * timezone counts the same days for the same range. Unlike `shiftDate` above,
+ * a bare `T00:00:00Z` (not local) parse is deliberate here: the count must not
+ * depend on the caller's offset, only on the calendar dates themselves.
+ */
+export function countWorkdays(from: string, to: string, workdays: number[]): number {
+  if (from > to) return 0;
+  const workdaySet = new Set(workdays);
+  const DAY_MS = 86_400_000;
+  const start = new Date(`${from}T00:00:00Z`).getTime();
+  const end = new Date(`${to}T00:00:00Z`).getTime();
+  let count = 0;
+  for (let t = start; t <= end; t += DAY_MS) {
+    if (workdaySet.has(new Date(t).getUTCDay())) count++;
+  }
+  return count;
+}

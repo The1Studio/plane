@@ -51,7 +51,7 @@ export const WORKLOAD_STRINGS = {
   "filters.state_groups": "Status",
   "filters.clear": "Clear filters",
   // Workspace work-settings readout (The1Studio fork — workspace work settings, phase-4.md).
-  "toolbar.settings_readout": "Max {hours}h/week · {workdays} · week starts {weekStart}",
+  "toolbar.settings_readout": "Max {hours}h/day · {workdays} · week starts {weekStart}",
   "toolbar.manage_settings": "Manage",
   // Timeline (The1Studio fork — Phase 8, replaces the matrix).
   "timeline.unassigned": "Unassigned",

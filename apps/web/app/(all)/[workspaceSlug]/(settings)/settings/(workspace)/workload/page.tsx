@@ -5,7 +5,7 @@
  *
  * The1Studio fork (workspace work settings) — new file.
  * Admin-only workspace settings page for the three workload work-settings
- * values (max weekly hours, workdays, first day of week). See
+ * values (max daily hours, workdays, first day of week). See
  * plans/260818-workload-workspace-settings/phase-4.md.
  */
 
@@ -30,7 +30,7 @@ import { useUserPermissions } from "@/hooks/store/user";
 // local imports
 import { WorkloadWorkSettingsHeader } from "./header";
 
-const MAX_WEEKLY_HOURS_CEILING = 10000;
+const MAX_DAILY_HOURS_CEILING = 10000;
 
 /** EStartOfTheWeek numbering (packages/types/src/users.ts) — SUNDAY = 0 .. SATURDAY = 6. */
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -66,10 +66,10 @@ function WorkloadWorkSettingsPage() {
 
   // validation — mirrors WorkloadSettingsSerializer (apps/api/plane/workload/serializers.py) verbatim.
   const isValidMaxHours =
-    typeof draft.max_weekly_hours === "number" &&
-    !Number.isNaN(draft.max_weekly_hours) &&
-    draft.max_weekly_hours >= 0 &&
-    draft.max_weekly_hours <= MAX_WEEKLY_HOURS_CEILING;
+    typeof draft.max_daily_hours === "number" &&
+    !Number.isNaN(draft.max_daily_hours) &&
+    draft.max_daily_hours >= 0 &&
+    draft.max_daily_hours <= MAX_DAILY_HOURS_CEILING;
   const isValidWorkdays = draft.workdays.length > 0;
   const isValid = isValidMaxHours && isValidWorkdays;
 
@@ -111,26 +111,26 @@ function WorkloadWorkSettingsPage() {
       <div className={cn("flex w-full flex-col gap-y-6", { "opacity-60": isLoading })}>
         <SettingsHeading
           title="Work settings"
-          description="Configure the weekly hour cap, workdays, and first day of the week used by workload capacity and the calendar across this workspace."
+          description="Configure the daily hour cap, workdays, and first day of the week used by workload capacity and the calendar across this workspace."
         />
 
         {error && <div className="rounded-md bg-danger-subtle px-3 py-2 text-13 text-danger-primary">{error}</div>}
 
         <div className="flex flex-col gap-2">
-          <h4 className="text-body-sm-medium text-tertiary">Max weekly hours</h4>
+          <h4 className="text-body-sm-medium text-tertiary">Max daily hours</h4>
           <Input
             type="number"
             min={0}
             step={0.5}
-            value={draft.max_weekly_hours}
-            onChange={(e) => setDraft((prev) => ({ ...prev, max_weekly_hours: Number(e.target.value) }))}
+            value={draft.max_daily_hours}
+            onChange={(e) => setDraft((prev) => ({ ...prev, max_daily_hours: Number(e.target.value) }))}
             className="w-32"
             disabled={isUpdating}
             hasError={!isValidMaxHours}
           />
           {!isValidMaxHours && (
             <span className="text-13 text-danger-primary">
-              Must be a number between 0 and {MAX_WEEKLY_HOURS_CEILING}.
+              Must be a number between 0 and {MAX_DAILY_HOURS_CEILING}.
             </span>
           )}
         </div>

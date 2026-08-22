@@ -5,7 +5,7 @@
  *
  * The1Studio fork (workspace work settings) — new file.
  *
- * Single read path for the workspace-wide work settings (max weekly hours,
+ * Single read path for the workspace-wide work settings (max daily hours,
  * workdays, first day of week) — see plans/260818-workload-workspace-settings/phase-4.md.
  * Consumed by the workspace settings page (this phase) AND, per plan.md, by
  * eight core web components in Phase 5 that currently read the per-user
@@ -25,7 +25,7 @@ const API_BASE = "/api";
  * `undefined`, only these defaults while the first fetch is in flight.
  */
 export const DEFAULT_WORK_SETTINGS: TWorkSettings = {
-  max_weekly_hours: 40.0,
+  max_daily_hours: 8.0,
   workdays: [1, 2, 3, 4, 5],
   week_start_day: 1,
 };

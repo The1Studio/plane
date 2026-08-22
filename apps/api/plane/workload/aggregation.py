@@ -119,19 +119,29 @@ def spread_estimate(hours, start, target, win_from, win_to, granularity, workday
     """Spread one issue's hours across its [start, target] span, clipped to the
     request window [win_from, win_to].
 
-    Returns (buckets, unscheduled_cents, dirty):
+    Returns (buckets, month_buckets, unscheduled_cents, dirty):
       buckets            : dict period_key -> cents (sparse; only non-empty days
-                           inside the window). Per-day rate is computed on the
-                           FULL span, never on the clipped window.
+                           inside the window), keyed at the REQUESTED granularity.
+                           Per-day rate is computed on the FULL span, never on the
+                           clipped window.
+      month_buckets      : dict "YYYY-MM" -> cents (sparse; same [win_from, win_to]
+                           clip as `buckets`), keyed at CALENDAR-MONTH granularity
+                           regardless of the requested `granularity` (plan D6). This
+                           exists because a `week` bucket is attributed to the month
+                           its week STARTS in, so a week straddling a month boundary
+                           would otherwise credit those days to the wrong month's
+                           total — `buckets` and `month_buckets` can therefore
+                           legitimately disagree on which month a given day's cents
+                           are filed under; both are exact for what they measure.
       unscheduled_cents  : cents that land in the Unscheduled bucket (no target).
       dirty              : True when start > target (defensive; import/partial-update).
 
     Semantics (plan §3.2-§3.4):
-      - hours <= 0           -> excluded ({}, 0, False)
+      - hours <= 0           -> excluded ({}, {}, 0, False)
       - target is None       -> all cents unscheduled
       - start is None        -> single day on target
       - start > target       -> single day on target, dirty=True
-      - span outside window  -> {} buckets, 0 unscheduled (it has a target)
+      - span outside window  -> {} buckets, {} month_buckets, 0 unscheduled (it has a target)
 
     Workday-only spreading (plan D4): hours land only on days where
     `_is_workday(d, workdays)` holds, computed over the FULL [span_start,
@@ -144,9 +154,9 @@ def spread_estimate(hours, start, target, win_from, win_to, granularity, workday
     """
     cents = to_cents(hours)
     if cents <= 0:
-        return {}, 0, False
+        return {}, {}, 0, False
     if target is None:
-        return {}, cents, False
+        return {}, {}, cents, False
 
     dirty = False
     if start is None:
@@ -170,11 +180,18 @@ def spread_estimate(hours, start, target, win_from, win_to, granularity, workday
     per_day = distribute_cents(cents, len(target_days))  # rate over the FULL span's workdays
 
     buckets = {}
+    month_buckets = {}
     for idx, d in enumerate(target_days):
         if win_from <= d <= win_to:
             key = period_key(d, granularity, week_start_day)
             buckets[key] = buckets.get(key, 0) + per_day[idx]
-    return buckets, 0, dirty
+            # Calendar-month accumulation (plan D6) — independent of `granularity`
+            # and of `week_start_day` (period_key ignores week_start_day for
+            # "month"). Same clip as `buckets` so the two maps always agree on
+            # which days exist.
+            month_key = period_key(d, "month", week_start_day)
+            month_buckets[month_key] = month_buckets.get(month_key, 0) + per_day[idx]
+    return buckets, month_buckets, 0, dirty
 
 
 # --- capacity proration (plan D4: workday-basis, configurable workdays) ----
@@ -188,6 +205,13 @@ def spread_estimate(hours, start, target, win_from, win_to, granularity, workday
 # below both honour the SAME configured `workdays` set, so hours never land
 # on a day with zero capacity again (save for the D9 fallback, which is a
 # deliberate, reconciled exception, not a re-introduction of the mismatch).
+#
+# The stored cap is a per-DAY figure (plans/260822-workload-daily-hours):
+# `capacity_for_period` multiplies it by the NUMBER of workdays in a bucket
+# rather than dividing a weekly total across them — algebraically identical
+# to the old weekly basis when max_daily_hours == max_weekly_hours /
+# len(workdays), so a workspace on the default 8h/Mon-Fri config sees
+# byte-identical capacity numbers before and after the rename.
 
 
 def _is_workday(d: date, workdays) -> bool:
@@ -202,24 +226,26 @@ def _workdays_in_month(year: int, month: int, workdays) -> int:
     return sum(1 for i in range(span_days) if _is_workday(first + timedelta(days=i), workdays))
 
 
-def capacity_for_period(max_weekly_hours, period: str, granularity: str, workdays) -> float:
-    """Prorate a member's weekly capacity into one bucket's capacity, in hours.
+def capacity_for_period(max_daily_hours, period: str, granularity: str, workdays) -> float:
+    """Scale a member's per-workday capacity into one bucket's capacity, in hours.
 
     Pure / stdlib-only (no ORM) — unit-tested in isolation like the rest of
-    this module. Basis is the configured `workdays` set (plan D4), guaranteed
-    non-empty by the Phase 1 serializer:
-      - day   : max_weekly_hours / len(workdays) on a workday; 0 on a non-workday.
-      - week  : max_weekly_hours as-is (one bucket = one full capacity unit).
-      - month : max_weekly_hours * (workdays_in_month / len(workdays)) — accounts
-                for months with 4 vs 5 occurrences of each weekday.
+    this module. The basis is ONE configured workday: `max_daily_hours` is the
+    capacity of a single workday, and `workdays` is used to COUNT the days in
+    a bucket (guaranteed non-empty by the serializer, backstopped by the
+    model's CheckConstraint) — never to divide a weekly total:
+      - day   : max_daily_hours on a workday; 0.0 on a non-workday.
+      - week  : max_daily_hours * len(workdays).
+      - month : max_daily_hours * workdays_in_month — accounts for months with
+                4 vs 5 occurrences of each weekday.
     """
     if granularity == "day":
         d = date.fromisoformat(period)
-        return round(max_weekly_hours / len(workdays), 2) if _is_workday(d, workdays) else 0.0
+        return round(float(max_daily_hours), 2) if _is_workday(d, workdays) else 0.0
     if granularity == "week":
-        return round(float(max_weekly_hours), 2)
+        return round(max_daily_hours * len(workdays), 2)
     if granularity == "month":
         year_s, month_s = period.split("-")
         n_workdays = _workdays_in_month(int(year_s), int(month_s), workdays)
-        return round(max_weekly_hours * (n_workdays / len(workdays)), 2)
+        return round(max_daily_hours * n_workdays, 2)
     raise ValueError(f"invalid granularity: {granularity!r}")

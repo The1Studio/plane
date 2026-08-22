@@ -12,7 +12,7 @@
 // Three block kinds, all at core's shared BLOCK_HEIGHT (44px, hardcoded in
 // `gantt-chart/blocks/block-row.tsx`):
 //
-//   header — avatar, name, weekly capacity badge, collapse chevron
+//   header — avatar, name, focus-period capacity badge, collapse chevron
 //   lane   — deliberately BLANK. Each bar already carries its own name and
 //            hours and is the click target for the peek panel, so a sidebar
 //            label only duplicated them — and for a lane packing several
@@ -28,8 +28,9 @@
 
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { observer } from "mobx-react";
-import { wlt } from "@plane/workload-ext";
-import type { TWorkloadRow, TWorkloadTask } from "@plane/workload-ext";
+import { countWorkdays, wlt } from "@plane/workload-ext";
+import type { TWorkloadGranularity, TWorkloadRow, TWorkloadTask } from "@plane/workload-ext";
+import type { TWorkSettings } from "@plane/types";
 import type { TFocusPeriod } from "./blocks";
 import { Avatar, Row, ERowVariant } from "@plane/ui";
 import { cn } from "@plane/utils";
@@ -55,6 +56,17 @@ type Props = {
    * inventing a period.
    */
   focus: TFocusPeriod | null;
+  /**
+   * The CURRENT bucketing (the chart's zoom, one step finer than `focus` —
+   * see `focusPeriodFor`'s docstring). `periodFigures` needs it to know which
+   * field `row` bucket format to read: at `"day"` granularity `row.buckets`
+   * is itself calendar-exact for the focused week, so summing it is correct;
+   * at `"week"`/`"month"` granularity a `row.buckets` entry can straddle the
+   * focus boundary (D6), so `row.month_buckets` is read instead.
+   */
+  granularity: TWorkloadGranularity;
+  /** Workspace-wide work settings — the badge's capacity denominator (D3). */
+  workSettings: TWorkSettings;
 };
 
 /** Two-decimal rounding, so summed float buckets do not print 7.000000000000001h. */
@@ -82,39 +94,57 @@ function isInFocus(periodKey: string, focus: TFocusPeriod): boolean {
 }
 
 /**
- * The badge figures: hours booked and capacity available inside the focused
- * period, summed over the buckets that fall in it.
+ * The badge figures: hours booked inside the focused period, and the capacity
+ * that period actually has.
  *
- * Summing the VISIBLE buckets — rather than reading a dedicated per-week field
- * — is what lets one code path serve all three zooms, and it guarantees the
- * badge and the heat cells beside it can never disagree: they are literally the
- * same numbers. A period key is attributed to the period containing its start,
- * the same convention `period_key` uses server-side, so a week straddling two
- * months counts once, in the month it began.
+ * `capacity` is the focus period's OWN workday count times the daily cap
+ * (`countWorkdays(focus.from, focus.to, ...) * max_daily_hours`) — exact at
+ * every zoom, because it is computed from the calendar range itself rather
+ * than summed from `row.capacity_buckets`. This is deliberately NOT the same
+ * number as the sum of the visible heat cells: at month zoom, August 2026's
+ * cells sum to `5 x 40h = 200h` (5 week buckets, each a full week's capacity
+ * even when a week straddles the month boundary), while the badge reads
+ * `168h` — August's own 21 workdays. The badge answers "how much capacity
+ * does this month have"; the cells answer "how much does this week have".
+ * That divergence is the point of the change (plan D3), not a bug — the
+ * two used to be guaranteed equal by construction, and that guarantee is
+ * gone on purpose.
+ *
+ * `used` is measured over the SAME calendar range as `capacity` (D6):
+ *
+ * - `"day"` granularity (week focus) — `row.buckets` is itself day-keyed, so
+ *   no bucket can straddle the focus boundary; summing the ones inside it is
+ *   already exact.
+ * - `"week"` / `"month"` granularity (month / quarter focus) — a week bucket
+ *   is keyed by the date its week STARTS, so a week straddling the 31st/1st
+ *   would otherwise credit four days of the next month to this one (and
+ *   silently drop them from that next month's own total). `row.month_buckets`
+ *   exists precisely so the client never has to make that mistake: it is
+ *   keyed by calendar month, so `isInFocus` (already widening a 7-char month
+ *   key to that month's 1st) sums exactly the months whose 1st falls inside
+ *   the focus range — one month at month focus, three at quarter focus.
  */
 function periodFigures(
   row: TWorkloadRow,
-  focus: TFocusPeriod | null
+  focus: TFocusPeriod | null,
+  granularity: TWorkloadGranularity,
+  workSettings: TWorkSettings
 ): { used: number; capacity: number; over: boolean; hasData: boolean } {
+  if (!focus) return { used: 0, capacity: 0, over: false, hasData: false };
+
   let used = 0;
-  let capacity = 0;
-  let hasData = false;
-  if (!focus) return { used, capacity, over: false, hasData };
-  for (const [period, hours] of Object.entries(row.buckets ?? {})) {
-    if (!isInFocus(period, focus)) continue;
-    used += hours;
-    hasData = true;
+  const usedSource = granularity === "day" ? row.buckets : row.month_buckets;
+  for (const [period, hours] of Object.entries(usedSource ?? {})) {
+    if (isInFocus(period, focus)) used += hours;
   }
-  for (const [period, hours] of Object.entries(row.capacity_buckets ?? {})) {
-    if (!isInFocus(period, focus)) continue;
-    capacity += hours;
-    hasData = true;
-  }
+
+  const capacity = countWorkdays(focus.from, focus.to, workSettings.workdays) * workSettings.max_daily_hours;
+
   return {
     used: round2(used),
     capacity: round2(capacity),
     over: capacity > 0 && used > capacity,
-    hasData,
+    hasData: true,
   };
 }
 
@@ -132,6 +162,8 @@ export const WorkloadTimelineSidebarRow = observer(function WorkloadTimelineSide
   isCollapsed,
   onToggleCollapse,
   focus,
+  granularity,
+  workSettings,
 }: Props) {
   const { getBlockById } = useTimeLineChartStore();
   const { getUserDetails } = useMember();
@@ -183,7 +215,7 @@ export const WorkloadTimelineSidebarRow = observer(function WorkloadTimelineSide
         const key = assigneeKey(data.assigneeId);
         const rowCollapsed = isCollapsed(key);
         const memberDetails = data.assigneeId ? getUserDetails(data.assigneeId) : undefined;
-        const { used, capacity, over, hasData } = periodFigures(row, focus);
+        const { used, capacity, over, hasData } = periodFigures(row, focus, granularity, workSettings);
 
         return (
           <SidebarCell key={blockId} className={cn("flex items-center gap-2 pr-2", { "bg-danger-subtle/40": over })}>

@@ -31,7 +31,7 @@ from .aggregation import (
     spread_estimate,
     to_cents,
 )
-from .constants import DEFAULT_MAX_WEEKLY_HOURS, DEFAULT_WEEK_START_DAY, DEFAULT_WORKDAYS
+from .constants import DEFAULT_MAX_DAILY_HOURS, DEFAULT_WEEK_START_DAY, DEFAULT_WORKDAYS
 from .models import WorkloadEstimate, WorkloadSettings
 
 ROW_GUARD = 50_000
@@ -268,12 +268,12 @@ def _resolve_work_settings(slug):
     Falls back to the constants.py defaults when the workspace has no row
     yet (mirrors views.settings_get: a GET never writes on read).
 
-    Returns (max_weekly_hours, workdays, week_start_day).
+    Returns (max_daily_hours, workdays, week_start_day).
     """
     obj = WorkloadSettings.objects.filter(workspace__slug=slug).first()
     if obj is None:
-        return DEFAULT_MAX_WEEKLY_HOURS, list(DEFAULT_WORKDAYS), DEFAULT_WEEK_START_DAY
-    return obj.max_weekly_hours, obj.workdays, obj.week_start_day
+        return DEFAULT_MAX_DAILY_HOURS, list(DEFAULT_WORKDAYS), DEFAULT_WEEK_START_DAY
+    return obj.max_daily_hours, obj.workdays, obj.week_start_day
 
 
 def _resolve_today(slug):
@@ -334,7 +334,7 @@ def compute_workload(
     # Read once per request — every row below shares this same effective
     # capacity/workday config (_resolve_capacities / per-row settings reads
     # are gone; D1).
-    max_weekly_hours, workdays, week_start_day = _resolve_work_settings(slug)
+    max_daily_hours, workdays, week_start_day = _resolve_work_settings(slug)
 
     # Read once per request — every task row's `overdue` flag below shares
     # this same workspace-local "today" (never re-derived per row; see
@@ -383,6 +383,11 @@ def compute_workload(
     assignee_filter = set(assignee_ids) if assignee_ids else None
 
     buckets = defaultdict(lambda: defaultdict(int))  # owner_id -> period -> cents
+    # owner_id -> "YYYY-MM" -> cents (plan D6) — calendar-month accumulation,
+    # independent of `granularity`, so the month/quarter badge is exact even
+    # when a `week` bucket straddles a month boundary. See spread_estimate's
+    # docstring for why this can legitimately disagree with `buckets`.
+    month_buckets = defaultdict(lambda: defaultdict(int))
     unscheduled = defaultdict(int)  # owner_id -> cents
     tasks_by_owner = defaultdict(list)  # owner_id -> [task row, ...]
     names = {}
@@ -424,7 +429,7 @@ def compute_workload(
         if not visible:
             continue
 
-        b, uns_cents, dirty = spread_estimate(
+        b, mb, uns_cents, dirty = spread_estimate(
             hours, start, target, date_from, date_to, granularity, workdays, week_start_day
         )
         meta["issues_counted"] += 1
@@ -439,6 +444,15 @@ def compute_workload(
         # earliest assignee rather than rounded away. Splitting each bucket
         # (not each owner's total) keeps the per-period columns exact too.
         bucket_shares = {k: distribute_cents(c, n_owners) for k, c in b.items()}
+        # `month_buckets` is a SECOND partition of the same cents (by calendar
+        # month rather than by the requested granularity), so it gets the same
+        # per-key split. Note the two partitions are split INDEPENDENTLY, so for
+        # a shared issue one owner's month total can differ from their bucket
+        # total by the odd cent that largest-remainder hands to the earliest
+        # assignee in each partition — bounded by one cent per key and therefore
+        # far below the 0.1h the badge actually renders. Splitting per key (not
+        # per owner total) is what keeps each month column itself exact.
+        month_shares = {k: distribute_cents(c, n_owners) for k, c in mb.items()}
         uns_shares = distribute_cents(uns_cents, n_owners) if uns_cents else None
         est_shares = distribute_cents(to_cents(hours), n_owners)
 
@@ -446,6 +460,8 @@ def compute_workload(
             names[owner_id] = owner_name
             for k, parts in bucket_shares.items():
                 buckets[owner_id][k] += parts[idx]
+            for k, parts in month_shares.items():
+                month_buckets[owner_id][k] += parts[idx]
             if uns_shares:
                 unscheduled[owner_id] += uns_shares[idx]
 
@@ -514,7 +530,7 @@ def compute_workload(
     # buckets) so the matrix can render a capacity reference even for
     # periods with zero hours logged.
     capacity_buckets = {
-        period: capacity_for_period(max_weekly_hours, period, granularity, workdays)
+        period: capacity_for_period(max_daily_hours, period, granularity, workdays)
         for period in periods
     }
     total_capacity = sum(capacity_buckets.values())
@@ -522,6 +538,12 @@ def compute_workload(
         pm = buckets.get(owner_id, {})
         sparse = {k: from_cents(c) for k, c in pm.items() if c}
         total = from_cents(sum(pm.values()))
+
+        # Sparse, calendar-month keyed, independent of `granularity` (plan D6).
+        # No padding against `periods` — `periods` is granularity-scoped and
+        # `month_buckets` deliberately is not.
+        month_pm = month_buckets.get(owner_id, {})
+        month_sparse = {k: from_cents(c) for k, c in month_pm.items() if c}
 
         # There is always an effective capacity now (settings row or
         # constants.py default) — every row carries over/total_over flags,
@@ -551,6 +573,7 @@ def compute_workload(
                 "assignee_id": str(owner_id) if owner_id else None,
                 "assignee_name": names.get(owner_id, "Unassigned"),
                 "buckets": sparse,
+                "month_buckets": month_sparse,
                 "total": total,
                 "capacity_buckets": capacity_buckets,
                 "over": over,

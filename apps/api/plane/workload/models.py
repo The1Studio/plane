@@ -17,7 +17,7 @@ from django.db.models import Q
 # MAX_HOURS is imported from constants.py directly (the leaf module) rather
 # than re-exported through aggregation.py — models.py has no reason to reach
 # into the aggregation module for a value that lives one hop closer.
-from .constants import DEFAULT_MAX_WEEKLY_HOURS, DEFAULT_WEEK_START_DAY, DEFAULT_WORKDAYS, MAX_HOURS
+from .constants import DEFAULT_MAX_DAILY_HOURS, DEFAULT_WEEK_START_DAY, DEFAULT_WORKDAYS, MAX_HOURS
 
 
 def default_workdays():
@@ -80,7 +80,7 @@ class WorkloadEstimate(models.Model):
 
 
 class WorkloadSettings(models.Model):
-    """Workspace-wide work configuration: max weekly hours, workdays, week start.
+    """Workspace-wide work configuration: max daily hours, workdays, week start.
 
     Replaces the per-member WorkloadCapacity grain (deleted in Phase 3). One
     row per workspace; a workspace with NO row reads the constants.py
@@ -93,8 +93,8 @@ class WorkloadSettings(models.Model):
         on_delete=models.CASCADE,
         related_name="workload_settings",
     )
-    max_weekly_hours = models.FloatField(
-        default=DEFAULT_MAX_WEEKLY_HOURS,
+    max_daily_hours = models.FloatField(
+        default=DEFAULT_MAX_DAILY_HOURS,
         validators=[MinValueValidator(0), MaxValueValidator(MAX_HOURS)],
     )
     # Plane's EStartOfTheWeek encoding: SUNDAY=0 .. SATURDAY=6 (constants.py).
@@ -133,4 +133,4 @@ class WorkloadSettings(models.Model):
         ]
 
     def __str__(self):
-        return f"WorkloadSettings(workspace={self.workspace_id}, max_weekly_hours={self.max_weekly_hours})"
+        return f"WorkloadSettings(workspace={self.workspace_id}, max_daily_hours={self.max_daily_hours})"

@@ -4,6 +4,13 @@ export type TWorkloadRow = {
   assignee_id: string | null;
   assignee_name: string;
   buckets: Record<string, number>; // sparse: period key → hours
+  /**
+   * Hours per CALENDAR month ("2026-08"), independent of the requested
+   * granularity. Sparse. Exists because a week bucket is keyed by the date its
+   * week begins, so summing week buckets for a month credits a straddling week
+   * entirely to the month it started in — see plan D6.
+   */
+  month_buckets?: Record<string, number>;
   total: number;
   /**
    * Per-person weekly capacity, prorated per period, keyed by the SAME period

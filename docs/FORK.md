@@ -202,7 +202,7 @@ New backend code lives in **new Django apps**:
 - `apps/api/plane/ai_ext/` — SP2 AI feature suite (embeddings, Claude tooling, AI digest tasks)
 - `apps/api/plane/clickup_migrate/` — SP1 ClickUp → Plane ETL
 - `apps/api/plane/workload/` — per-issue time estimates (`WorkloadEstimate`) plus
-  **workspace-wide work settings** (`WorkloadSettings`: max weekly hours, workdays, week
+  **workspace-wide work settings** (`WorkloadSettings`: max daily hours, workdays, week
   start day); powers the spreadsheet/peek/sidebar hours columns, the workspace admin-only
   Work Settings page (`/:workspaceSlug/settings/workload`), and the per-member Workload
   timeline (`/:workspaceSlug/workload`, see § "Workload timeline & workspace-wide work
@@ -494,7 +494,7 @@ note above); no new allowlist entry is needed.
 ### Workload timeline & workspace-wide work settings — fenced `The1Studio fork (workspace work settings)` / `The1Studio fork (workload timeline, phase-8.md)`
 
 Replaces per-member `WorkloadCapacity` with a single workspace-wide `WorkloadSettings` row
-(max weekly hours, workdays, week start day — admin-only, `/:workspaceSlug/settings/workload`)
+(max daily hours, workdays, week start day — admin-only, `/:workspaceSlug/settings/workload`)
 and replaces the aggregate Workload **table** with a per-member **timeline** of task bars built
 on core's gantt primitives (`plans/260818-workload-workspace-settings/plan.md`, D1–D14). Backend:
 existing `workload` app (§ Backend customizations above), no new app. Frontend: new
@@ -641,10 +641,37 @@ avoided; both are worth knowing about before anyone reaches for them again:
   row stays at the shared height and core is untouched. Anyone wanting variable row heights here
   should know the uniform-height constraint was designed around, not overlooked.
 
-The same change makes the `/api/workload/workspaces/<slug>/` response carry `weekly_buckets`,
-`weekly_capacity` and `tasks[].project_id`, and makes `periods` span the requested window rather
+The same change makes the `/api/workload/workspaces/<slug>/` response carry `buckets`,
+`capacity_buckets` and `tasks[].project_id`, and makes `periods` span the requested window rather
 than only the populated buckets. `total_over` keeps its definition but changes its **value** as a
 result — the one silent behavioural change for downstream consumers.
+
+**Daily hour cap + calendar-exact badge capacity (`plans/260822-workload-daily-hours/`) — no new
+core edits, no new touch-point.** `WorkloadSettings.max_weekly_hours` is renamed to
+`max_daily_hours` (default `8.0`) on the DB column, both the app and public `/api/v1/` APIs,
+`TWorkSettings`, and the workspace settings UI, with no backward-compatible alias — a PUT carrying
+the old key now 400s. `capacity_for_period()` is redefined on the new daily basis (`week` =
+`max_daily_hours * len(workdays)`, `month` = `max_daily_hours * workdays_in_month`), chosen to be
+algebraically identical to the old weekly-basis formula for the default 8h/Mon-Fri config, so
+every capacity number, heat cell and `over` flag a default workspace already saw is byte-identical
+before and after. Existing `WorkloadSettings` rows are **reset** to `8.0` by migration `0006`, not
+converted — a workspace that had customised its weekly cap re-enters it once, in the new unit.
+
+The response also gains `month_buckets` (calendar month → hours, sparse, always emitted, sibling
+to `buckets`), because a week bucket is keyed by the date its week begins and summing week buckets
+for a month therefore credits a straddling week entirely to the month it started in — the
+`2026-08-31` bucket covers Aug 31 through Sep 4 and would otherwise put four September workdays
+into August's total while simultaneously removing them from September's. `spread_estimate`
+already walks the estimate day by day, so accumulating a second, calendar-month-keyed total costs
+almost nothing. For a shared work item, `month_buckets` is split per assignee by the same
+largest-remainder rule `buckets` uses.
+
+The timeline's capacity badge stops summing `capacity_buckets` and instead computes
+`countWorkdays(focus.from, focus.to) * max_daily_hours` client-side, with `used` read from
+`month_buckets` at month and quarter focus. Both sides of the badge are therefore measured over
+the same real calendar range, so at month zoom the badge deliberately no longer equals the sum of
+the visible week heat cells — August 2026 reads `168h` beside five `40h` cells, because a week
+cell still carries a whole week's capacity even when it straddles the month boundary.
 
 ### Cascade-confirm modal for sub-work items — fenced `The1Studio fork (cascade-confirm)`
 
