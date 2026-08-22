@@ -93,3 +93,13 @@ export class CascadeConfirmStore implements ICascadeConfirmStore {
     this.checkedIds = new Set();
   }
 }
+
+/**
+ * Shared singleton. Lives here rather than in apps/web so that `root.tsx` (the
+ * modal mount) and `base-issues.store.ts` (the guard) can both reach it without
+ * importing each other — instantiating it inside the store module made root.tsx
+ * pull the whole store graph into the SSR entry, producing a circular import and
+ * a "Cannot access 'BaseIssuesStore' before initialization" TDZ crash at
+ * prerender. Mirrors the existing `cascadeService` singleton in cascade-service.ts.
+ */
+export const cascadeConfirmStore = new CascadeConfirmStore();

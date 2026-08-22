@@ -10,11 +10,11 @@ import { computedFn } from "mobx-utils";
 // plane constants
 import { ALL_ISSUES, ISSUE_PRIORITIES } from "@plane/constants";
 // The1Studio fork (cascade-confirm) — see docs/FORK.md § "Cascade-confirm modal for sub-work
-// items". `cascadeConfirmStore` is instantiated here (not in `@plane/cascade-ext`, which ships
-// only the class) because this is the one file every list/spreadsheet/kanban/detail state write
-// funnels through (`issueUpdate` below); `root.tsx` imports it back to mount the modal.
-import { cascadeService, CascadeConfirmStore, shouldPromptCascade } from "@plane/cascade-ext";
-export const cascadeConfirmStore = new CascadeConfirmStore();
+// items". The `cascadeConfirmStore` singleton lives in `@plane/cascade-ext`, NOT here: creating
+// it in this module made `root.tsx` import the whole store graph to reach it, which closed an
+// import cycle and crashed the SSR prerender with "Cannot access 'BaseIssuesStore' before
+// initialization".
+import { cascadeService, cascadeConfirmStore, shouldPromptCascade } from "@plane/cascade-ext";
 // end The1Studio fork (cascade-confirm)
 // types
 import type {

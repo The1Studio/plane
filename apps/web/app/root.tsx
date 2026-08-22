@@ -29,8 +29,7 @@ import { LogoSpinner } from "@/components/common/logo-spinner";
 // The1Studio fork (cascade-confirm) — see docs/FORK.md § "Cascade-confirm modal for sub-work
 // items". `root.tsx` has no plugin-slot seam of its own for a global modal host; this widens
 // touch-point 7 (documented for white-label branding) rather than adding an unregistered edit.
-import { CascadeConfirmModal } from "@plane/cascade-ext";
-import { cascadeConfirmStore } from "@/store/issue/helpers/base-issues.store";
+import { CascadeConfirmModal, cascadeConfirmStore } from "@plane/cascade-ext";
 // end The1Studio fork (cascade-confirm)
 // local
 import { CustomErrorComponent } from "./error";
