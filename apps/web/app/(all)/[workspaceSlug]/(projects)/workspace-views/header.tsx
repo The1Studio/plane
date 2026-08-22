@@ -4,7 +4,8 @@
  * See the LICENSE file for details.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { debounce } from "lodash-es";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
 // plane imports
@@ -20,6 +21,8 @@ import { ViewsIcon } from "@plane/propel/icons";
 import type { IIssueDisplayFilterOptions, IIssueDisplayProperties, ICustomSearchSelectOption } from "@plane/types";
 import { EIssuesStoreType, EIssueLayoutTypes } from "@plane/types";
 import { Breadcrumbs, Header, BreadcrumbNavigationSearchDropdown } from "@plane/ui";
+// The1Studio fork (views-search)
+import { WorkItemSearchInput } from "@plane/views-ext";
 // components
 import { BreadcrumbLink } from "@/components/common/breadcrumb-link";
 import { SwitcherLabel } from "@/components/common/switcher-label";
@@ -31,6 +34,8 @@ import { WorkspaceViewQuickActions } from "@/components/workspace/views/quick-ac
 // hooks
 import { useGlobalView } from "@/hooks/store/use-global-view";
 import { useIssues } from "@/hooks/store/use-issues";
+// The1Studio fork (views-search)
+import { useViewsSearch } from "@/hooks/store/use-views-search";
 import { useAppRouter } from "@/hooks/use-app-router";
 import { GlobalViewLayoutSelection } from "@/plane-web/components/views/helper";
 
@@ -44,9 +49,14 @@ export const GlobalIssuesHeader = observer(function GlobalIssuesHeader() {
   // store hooks
   const {
     issuesFilter: { filters, updateFilters },
+    issues,
   } = useIssues(EIssuesStoreType.GLOBAL);
   const { getViewDetailsById, currentWorkspaceViews } = useGlobalView();
   const { t } = useTranslation();
+  // The1Studio fork (views-search) — ephemeral, per-view search term (plan.md D3). Read-only
+  // param assembly happens in filter.store.ts `getAppliedFilters`; this header only writes the
+  // term and triggers the re-fetch, it never routes through `updateFilters` (B2).
+  const searchStore = useViewsSearch();
 
   const issueFilters = globalViewId ? filters[globalViewId.toString()] : undefined;
 
@@ -119,6 +129,54 @@ export const GlobalIssuesHeader = observer(function GlobalIssuesHeader() {
     return ISSUE_DISPLAY_FILTERS_BY_PAGE.my_issues.layoutOptions[layout];
   }, [activeLayout]);
 
+  // The1Studio fork (views-search) — the search term for the view currently on screen. The
+  // store is keyed by viewId (plan.md D3), so switching views never shows a stale term.
+  const searchQuery = globalViewId ? searchStore.getSearchQuery(globalViewId) : "";
+
+  // The1Studio fork (views-search) — 300ms debounce (deliberately shorter than the 800ms
+  // write-debounce in use-workload-estimate-editor.ts: that one guards a server WRITE, this one
+  // guards a read). Reuses `fetchIssuesWithExistingPagination`, the same re-fetch path a filter
+  // change takes (filter.store.ts:233/287), which keeps cursor handling, grouped pagination and
+  // loader states consistent with a filter change. `issues` is a stable mobx store instance for
+  // the lifetime of this component, so the debounced wrapper is safe to create once.
+  const debouncedRefetchIssues = useMemo(
+    () =>
+      debounce((workspaceSlugParam: string, viewId: string) => {
+        issues.fetchIssuesWithExistingPagination(workspaceSlugParam, viewId, "mutation");
+      }, 300),
+    [issues]
+  );
+
+  useEffect(() => () => debouncedRefetchIssues.cancel(), [debouncedRefetchIssues]);
+
+  // The1Studio fork (views-search) — 3B.3 (plan.md): clear the term for the view being left,
+  // whether that's a switch to a different view or navigating out of the Views tab entirely.
+  // `GlobalIssuesHeader` mounts once for the whole `workspace-views/*` layout (layout.tsx wraps
+  // an <Outlet/> whose child page changes per viewId; the header itself does not remount on a
+  // viewId change), so this effect's cleanup — not a bare unmount — is what fires on every view
+  // switch. Without it, returning to a view visited earlier in the session would resurrect its
+  // old term.
+  useEffect(
+    () => () => {
+      if (globalViewId) searchStore.clearSearchQuery(globalViewId);
+    },
+    [globalViewId, searchStore]
+  );
+
+  // The1Studio fork (views-search) — writes the term immediately (controlled input, no input
+  // lag) and schedules the debounced re-fetch. Not gated on `!isLocked`: search never mutates
+  // the view (unlike the layout switcher / display dropdown below, which are hidden when
+  // locked), so a locked view still searches.
+  const updateSearchQuery = useCallback(
+    (query: string) => {
+      if (!globalViewId) return;
+      searchStore.setSearchQuery(globalViewId, query);
+      if (!workspaceSlug) return;
+      debouncedRefetchIssues(workspaceSlug.toString(), globalViewId);
+    },
+    [globalViewId, workspaceSlug, searchStore, debouncedRefetchIssues]
+  );
+
   return (
     <>
       <CreateUpdateWorkspaceViewModal isOpen={createViewModal} onClose={() => setCreateViewModal(false)} />
@@ -151,6 +209,10 @@ export const GlobalIssuesHeader = observer(function GlobalIssuesHeader() {
         </Header.LeftItem>
 
         <Header.RightItem className="items-center">
+          {/* The1Studio fork (views-search) — placed first so reading order is search → layout
+              → filters → display → create (plan.md 3B.1). Gated on globalViewId only, not
+              !isLocked: search is ephemeral and never mutates the view. */}
+          {globalViewId && <WorkItemSearchInput searchQuery={searchQuery} updateSearchQuery={updateSearchQuery} />}
           {!isLocked && (
             <GlobalViewLayoutSelection
               onChange={handleLayoutChange}

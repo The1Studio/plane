@@ -52,13 +52,13 @@ def _wmember(ws, user, role=15, is_active=True):
     return WorkspaceMember.objects.create(workspace=ws, member=user, role=role, is_active=is_active)
 
 
-def _project(ws, guest_view_all_features=False):
+def _project(ws, guest_view_all_features=False, identifier=None):
     from plane.db.models import Project
 
     return Project.objects.create(
         workspace=ws,
         name=f"p-{uuid.uuid4().hex[:6]}",
-        identifier=uuid.uuid4().hex[:5].upper(),
+        identifier=identifier or uuid.uuid4().hex[:5].upper(),
         guest_view_all_features=guest_view_all_features,
     )
 
@@ -81,17 +81,24 @@ def _state(ws, proj, group):
     )
 
 
-def _issue(ws, proj, state, created_by, priority="none", target=None, sequence_id=1):
+def _issue(ws, proj, state, created_by, priority="none", target=None, sequence_id=1, name=None):
     from plane.db.models import Issue
 
     # BaseModel.save() auto-sets created_by from crum's thread-local current user
     # (set by request middleware) and silently overwrites any created_by passed to
     # .objects.create() when no request context is active, i.e. every plain-ORM
     # test fixture. Force it explicitly via the save() kwarg it documents instead.
+    #
+    # `sequence_id` above is likewise overwritten on create: Issue.save() always sets
+    # `self.sequence_id = last_sequence + 1 if last_sequence else 1` when
+    # `self._state.adding` (apps/api/plane/db/models/issue.py ~line 220), ignoring
+    # whatever is passed here. It only "works" in the tests above because each of
+    # their projects is fresh and issues are created in ascending order — see
+    # `_seed_sequence()` below for the real way to control it.
     issue = Issue(
         workspace=ws,
         project=proj,
-        name=f"i-{uuid.uuid4().hex[:6]}",
+        name=name or f"i-{uuid.uuid4().hex[:6]}",
         state=state,
         priority=priority,
         target_date=target,
@@ -99,6 +106,18 @@ def _issue(ws, proj, state, created_by, priority="none", target=None, sequence_i
     )
     issue.save(created_by_id=created_by.id)
     return issue
+
+
+def _seed_sequence(proj, sequence):
+    """Seed IssueSequence's high-water mark so the NEXT `_issue()` created in `proj`
+    is auto-assigned `sequence + 1` by `Issue.save()` — the only way to land a
+    predictable `sequence_id` (see the note in `_issue()` above). `issue=None` is
+    valid: `IssueSequence.issue` is nullable specifically so a sequence number can
+    survive (or, as here, be reserved) without a backing Issue row.
+    """
+    from plane.db.models import IssueSequence
+
+    IssueSequence.objects.create(project=proj, sequence=sequence)
 
 
 class _EndpointTestCase(TransactionTestCase):
@@ -311,3 +330,148 @@ class FrontendEmittedGroupByTests(_EndpointTestCase):
                 )
                 self.assertEqual(response.data["grouped_by"], field)
                 self.assertIsInstance(response.data["results"], dict)
+
+
+class SearchTests(_EndpointTestCase):
+    """
+    `search` (`apply_issue_search`, views.py ~line 171) — D2 of
+    plans/260822-1102-views-workitem-search/plan.md: name / sequence-id / project-
+    identifier matching via the shared `plane.utils.issue_search.search_issues()`,
+    applied after permission scoping and before pagination.
+    """
+
+    def test_absent_search_unfiltered(self):
+        _issue(self.ws, self.project, self.state, self.owner, name="Alpha item")
+        _issue(self.ws, self.project, self.state, self.owner, name="Beta item")
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["results"]), 2)
+
+    def test_empty_search_unfiltered(self):
+        _issue(self.ws, self.project, self.state, self.owner, name="Alpha item")
+        _issue(self.ws, self.project, self.state, self.owner, name="Beta item")
+
+        baseline = self.client.get(self.url)
+        empty_param = self.client.get(self.url, {"search": ""})
+        blank_param = self.client.get(self.url, {"search": " "})  # -> ?search=%20
+
+        self.assertEqual(baseline.status_code, status.HTTP_200_OK)
+        self.assertEqual(empty_param.status_code, status.HTTP_200_OK)
+        self.assertEqual(blank_param.status_code, status.HTTP_200_OK)
+
+        baseline_ids = {str(row["id"]) for row in baseline.data["results"]}
+        self.assertEqual(len(baseline_ids), 2)
+        self.assertEqual({str(row["id"]) for row in empty_param.data["results"]}, baseline_ids)
+        self.assertEqual({str(row["id"]) for row in blank_param.data["results"]}, baseline_ids)
+
+    def test_matches_name_substring(self):
+        target = _issue(self.ws, self.project, self.state, self.owner, name="Fix the login bug")
+        _issue(self.ws, self.project, self.state, self.owner, name="Update the docs")
+
+        response = self.client.get(self.url, {"search": "LOGIN"})  # case-insensitive, partial
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        result_ids = {str(row["id"]) for row in response.data["results"]}
+        self.assertEqual(result_ids, {str(target.id)})
+
+    def test_matches_sequence_id(self):
+        _seed_sequence(self.project, 78)
+        target = _issue(self.ws, self.project, self.state, self.owner, name="The 79th item")
+        self.assertEqual(target.sequence_id, 79)
+        _issue(self.ws, self.project, self.state, self.owner, name="The 80th item")
+
+        response = self.client.get(self.url, {"search": "79"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        result_ids = {str(row["id"]) for row in response.data["results"]}
+        self.assertEqual(result_ids, {str(target.id)})
+
+    def test_matches_project_identifier(self):
+        plane_project = _project(self.ws, identifier="PLANE")
+        _pmember(self.ws, plane_project, self.owner, role=20)
+        plane_state = _state(self.ws, plane_project, "started")
+        target = _issue(self.ws, plane_project, plane_state, self.owner, name="Something")
+        _issue(self.ws, self.project, self.state, self.owner, name="Unrelated")  # different project
+
+        response = self.client.get(self.url, {"search": "PLANE"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        result_ids = {str(row["id"]) for row in response.data["results"]}
+        self.assertEqual(result_ids, {str(target.id)})
+
+    def test_matches_full_identifier(self):
+        plane_project = _project(self.ws, identifier="PLANE")
+        _pmember(self.ws, plane_project, self.owner, role=20)
+        plane_state = _state(self.ws, plane_project, "started")
+        _seed_sequence(plane_project, 78)
+        target = _issue(self.ws, plane_project, plane_state, self.owner, name="Headline item")
+        self.assertEqual(target.sequence_id, 79)
+        _issue(self.ws, self.project, self.state, self.owner, name="Unrelated")  # different project
+
+        response = self.client.get(self.url, {"search": "PLANE-79"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        result_ids = {str(row["id"]) for row in response.data["results"]}
+        self.assertEqual(result_ids, {str(target.id)})
+
+    def test_no_match_returns_empty(self):
+        _issue(self.ws, self.project, self.state, self.owner, name="Alpha item")
+
+        response = self.client.get(self.url, {"search": "zzz-nonexistent-term-zzz"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["results"], [])
+
+    def test_respects_permission_scope(self):
+        """
+        A term that matches an item the requester is NOT permitted to see (a project
+        they lack `guest_view_all_features` on and didn't create the issue in) must
+        return zero rows for that item — search runs on the already permission-scoped
+        queryset (views.py: search is applied after `_get_project_permission_filters`),
+        and this test is what keeps it that way if the call site ever moves.
+        """
+        guest = _user()
+        _wmember(self.ws, guest, role=5)
+        _pmember(self.ws, self.project, guest, role=5)  # ROLE.GUEST, guest_view_all_features=False
+        _issue(self.ws, self.project, self.state, self.owner, name="Hidden Confidential Item")  # not created by guest
+
+        guest_client = APIClient()
+        guest_client.force_authenticate(user=guest)
+
+        response = guest_client.get(self.url, {"search": "Confidential"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["results"], [])
+
+    def test_total_count_reflects_search(self):
+        _issue(self.ws, self.project, self.state, self.owner, name="Alpha item")
+        _issue(self.ws, self.project, self.state, self.owner, name="Beta item")
+        _issue(self.ws, self.project, self.state, self.owner, name="Gamma item")
+
+        response = self.client.get(self.url, {"search": "Alpha"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["results"]), 1)
+        # Guards 1.2: total_count must be the SEARCHED total (1), not the unsearched
+        # total (3) — the paginator's count query has to run against the same
+        # searched queryset the results come from.
+        self.assertEqual(response.data["total_count"], 1)
+
+    def test_search_composes_with_group_by(self):
+        _issue(self.ws, self.project, self.state, self.owner, name="Alpha item", priority="urgent")
+        _issue(self.ws, self.project, self.state, self.owner, name="Beta item", priority="high")
+        _issue(self.ws, self.project, self.state, self.owner, name="Alpha widget", priority="high")
+
+        response = self.client.get(self.url, {"search": "Alpha", "group_by": "priority"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["grouped_by"], "priority")
+        self.assertIsInstance(response.data["results"], dict)
+        # Each group is itself filtered to Alpha-matching items only — "Beta item"
+        # must not surface in the "high" group despite sharing its priority.
+        self.assertEqual(len(response.data["results"]["urgent"]["results"]), 1)
+        self.assertEqual(response.data["results"]["urgent"]["results"][0]["name"], "Alpha item")
+        self.assertEqual(len(response.data["results"]["high"]["results"]), 1)
+        self.assertEqual(response.data["results"]["high"]["results"][0]["name"], "Alpha widget")

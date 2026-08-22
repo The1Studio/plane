@@ -20,11 +20,24 @@
   },
   "dependencies": {
     "@plane/constants": "workspace:*",
-    "@plane/types": "workspace:*"
+    "@plane/hooks": "workspace:*",
+    "@plane/propel": "workspace:*",
+    "@plane/types": "workspace:*",
+    "@plane/utils": "workspace:*",
+    "mobx": "catalog:",
+    "mobx-react": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:"
   },
   "devDependencies": {
     "@plane/typescript-config": "workspace:*",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18"
   }
 }
