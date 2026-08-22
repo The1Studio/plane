@@ -1,0 +1,383 @@
+{
+  "discoveryUrl": "https://ccs.the1studio.org/providers",
+  "auth": "gh-token",
+  "providers": {
+    "opencode-go": {
+      "enabled": true,
+      "type": "remote-hosted",
+      "endpoint": "https://ccs.the1studio.org",
+      "auth": "gh-token",
+      "_comment": "Re-verified 2026-08-10: deepseek-v4-flash region lock CLEARED (workspace opted into the China-hosted latest) — now returns HTTP 200 via CCS (3/3 stable) and tool_use works; promoted to the primary delegation model (see t1k-config-mr.json modelMapping). gpt-5.6-luna is currently unreachable (HTTP 000 via CCS) and was demoted from primary — re-promote once its key tier is fixed (older keys 429). qwen3.7-max returns 200 and is eligible to re-enable. The .model field in responses is unreliable — the router log is the source of truth.",
+      "budget": {
+        "_comment": "Opt-in per-provider daily limits. When 95% of either limit is reached the selector skips this provider for the rest of the UTC day. Set dailyRequests/dailyBudgetUsd to null to disable.",
+        "dailyRequests": null,
+        "dailyBudgetUsd": null,
+        "resetUtcHour": 0
+      },
+      "models": {
+        "gpt-5.6-luna": {
+          "enabled": false,
+          "tier": "premium",
+          "context_window": 200000,
+          "_comment": "DISABLED 2026-08-14 (#229): emits a tool_use content block with stop_reason \"end_turn\" in 7 of 10 probes — an Anthropic tool-use contract violation. A client reads end_turn as \"turn finished\", so it never executes the tool and never sends a tool_result: the call is silently dropped and a tool-driven agent returns HTTP 200 having done nothing. Intermittent (3/10 correct), which reads as flakiness rather than a broken model. deepseek-v4-flash and kimi-k2.7-code measured 0/5 violations on the identical request, so this is model-specific, not the CCS path. Re-enable only when a probe run shows stop_reason=tool_use consistently.",
+          "capabilities": [
+            "text",
+            "reasoning",
+            "long-context",
+            "tool-use"
+          ]
+        },
+        "glm-5.2": {
+          "enabled": true,
+          "tier": "premium",
+          "context_window": 200000,
+          "capabilities": [
+            "text",
+            "reasoning",
+            "long-context",
+            "tool-use"
+          ]
+        },
+        "glm-5.1": {
+          "enabled": false,
+          "tier": "premium",
+          "context_window": 200000,
+          "_comment": "vision tag removed 2026-06-01: scored 0/3 on an empirical vision benchmark. Disabled 2026-06-19 because glm-5.2 is the newer GLM family member (one-per-family whitelist).",
+          "capabilities": [
+            "text",
+            "reasoning",
+            "long-context",
+            "tool-use"
+          ]
+        },
+        "glm-5": {
+          "enabled": false,
+          "tier": "standard",
+          "context_window": 200000,
+          "capabilities": [
+            "text",
+            "long-context",
+            "tool-use"
+          ]
+        },
+        "mimo-v2.5-pro": {
+          "enabled": false,
+          "tier": "standard",
+          "context_window": 128000,
+          "capabilities": [
+            "text",
+            "tool-use"
+          ]
+        },
+        "mimo-v2.5": {
+          "enabled": false,
+          "tier": "budget",
+          "context_window": 256000,
+          "capabilities": [
+            "text",
+            "tool-use"
+          ]
+        },
+        "mimo-v2-pro": {
+          "enabled": false,
+          "tier": "standard",
+          "context_window": 128000,
+          "capabilities": [
+            "text",
+            "tool-use"
+          ]
+        },
+        "mimo-v2-omni": {
+          "enabled": false,
+          "tier": "budget",
+          "context_window": 256000,
+          "capabilities": [
+            "text",
+            "tool-use"
+          ]
+        },
+        "qwen3.7-plus": {
+          "enabled": true,
+          "tier": "standard",
+          "context_window": 128000,
+          "capabilities": [
+            "text",
+            "tool-use"
+          ]
+        },
+        "qwen3.7-max": {
+          "enabled": false,
+          "tier": "standard",
+          "context_window": 128000,
+          "capabilities": [
+            "text",
+            "tool-use"
+          ],
+          "_comment": "Disabled 2026-06-19: the model name does not exist on the CCS flat /v1/messages endpoint (HTTP 401). It was added from the legacy oc-go-cc catalog 2026-05-28. Re-enable only after CCS actually serves it."
+        },
+        "qwen3.6-plus": {
+          "enabled": false,
+          "tier": "budget",
+          "context_window": 128000,
+          "capabilities": [
+            "text",
+            "tool-use"
+          ]
+        },
+        "qwen3.5-plus": {
+          "enabled": false,
+          "tier": "budget",
+          "context_window": 128000,
+          "capabilities": [
+            "text"
+          ]
+        },
+        "minimax-m3": {
+          "enabled": true,
+          "tier": "standard",
+          "context_window": 1000000,
+          "_comment": "tool-use added 2026-08-15 (#249) from measurement, not assumption. The omission was a catalog error: 5/5 probes returned a BUILD_ID value obtainable ONLY by calling Read on a file created after the model's training cut-off, so the tool call demonstrably happened. It matters because this is the widest window in the catalog (1M) and the long-context candidate sort is context_window DESC — while `tool-use` was missing, this model was silently ineligible for every agentic long-context delegation, leaving glm-5.2 (200K) as the sole candidate for ~830K-token payloads. Caveat for reviewers: it interleaves visible <think> reasoning into its reply in roughly half of runs (3/5 here) — cosmetically noisy, correctness unaffected. Distinct from #229's gpt-5.6-luna defect, which was a protocol violation (tool_use block emitted with stop_reason=end_turn, so the call was silently dropped); this model completes the tool round-trip correctly.",
+          "capabilities": [
+            "text",
+            "long-context",
+            "tool-use"
+          ]
+        },
+        "minimax-m2.7": {
+          "enabled": false,
+          "tier": "standard",
+          "context_window": 1000000,
+          "capabilities": [
+            "text",
+            "long-context"
+          ]
+        },
+        "minimax-m2.5": {
+          "enabled": false,
+          "tier": "budget",
+          "context_window": 1000000,
+          "capabilities": [
+            "text",
+            "long-context"
+          ]
+        },
+        "deepseek-v4-pro": {
+          "enabled": true,
+          "tier": "standard",
+          "context_window": 128000,
+          "capabilities": [
+            "text",
+            "reasoning",
+            "tool-use"
+          ]
+        },
+        "deepseek-v4-flash": {
+          "_comment": "Re-enabled 2026-08-10: region lock cleared. Verified 200 via CCS (3/3) + tool_use works. Primary delegation model (t1k-config-mr.json modelMapping claude-sonnet-4-6) — cheap budget tier, text+reasoning+tool-use, 128k ctx.",
+          "enabled": true,
+          "tier": "budget",
+          "context_window": 128000,
+          "capabilities": [
+            "text",
+            "reasoning",
+            "tool-use"
+          ]
+        }
+      }
+    },
+    "kimi": {
+      "enabled": true,
+      "type": "remote-proxy",
+      "endpoint": "https://ccs.the1studio.org",
+      "auth": "gh-token",
+      "_comment": "Direct Moonshot route via CCS, served through the flat /v1/messages endpoint routed by model name (the legacy /api/provider/kimi prefix was removed upstream — now 404). Adds Kimi variants the former oc-go-cc route did NOT honor. ALSO serves OpenAI vision models (gpt-5.4-mini/gpt-5.4/gpt-5.5) via the CCS unified catalog — CLIProxy routes by model name, not path — verified working + 3/3 on the vision benchmark 2026-06-01, even though the dedicated codex endpoint is down (#44). Only text+vision verified on this route (reasoning/tool-use untested → not tagged). Per the one-per-family whitelist, only gpt-5.4-mini ships enabled (benchmarked vision primary: cheap + 3/3); gpt-5.4/gpt-5.5 are disabled fallbacks consumers can enable.",
+      "budget": {
+        "_comment": "Opt-in per-provider daily limits. When 95% of either limit is reached the selector skips this provider for the rest of the UTC day. Set dailyRequests/dailyBudgetUsd to null to disable.",
+        "dailyRequests": null,
+        "dailyBudgetUsd": null,
+        "resetUtcHour": 0
+      },
+      "models": {
+        "kimi-k2.7-code": {
+          "enabled": false,
+          "_comment": "DISABLED 2026-08-18 (#272): RETIRED UPSTREAM. CCS returns HTTP 400 {\"type\":\"invalid_request_error\",\"message\":\"unknown provider for model kimi-k2.7-code\"} — the whole k2.7 family is gone (kimi-k2.7 and kimi-latest 400 identically; k2.6/k2-thinking/k2.5/k2 all answer 200). This is a model retirement, not a quality call, so unlike kimi-k2.5 there is no evidence bar for re-enabling: re-enable only if CCS lists it again. It was the shipped kimi primary AND hop 2 of failover.pipe AND a loadBalance target, so every kimi hop was a guaranteed 400 that still had to fail before the pipe advanced.",
+          "tier": "premium",
+          "context_window": 256000,
+          "capabilities": [
+            "text",
+            "reasoning",
+            "tool-use"
+          ]
+        },
+        "kimi-for-coding": {
+          "enabled": true,
+          "_comment": "ENABLED 2026-08-19: the routed kimi coding primary, replacing the #272 kimi-k2.6 stopgap. This is the id the Kimi Code docs sanction across model generations, so the NEXT upstream retirement is a CCS oauth-model-alias repoint (currently kimi-k3-256k), not a kit release. kimi-k2.6 stays enabled for its vision-pipe role.",
+          "tier": "premium",
+          "context_window": 256000,
+          "capabilities": [
+            "text",
+            "reasoning",
+            "tool-use"
+          ]
+        },
+        "kimi-k2.6": {
+          "enabled": true,
+          "_comment": "ENABLED 2026-08-18 (#272) as the kimi premium primary, replacing the retired kimi-k2.7-code. Newest model in the family that CCS still serves — verified HTTP 200 on /v1/messages the same run that returned 400 for k2.7. Already the shipped vision-pipe member, so this only widens it to plain text routing. NOT kimi-k2.5, which stays disabled on its own measured 6%-success evidence (#222).",
+          "tier": "premium",
+          "context_window": 256000,
+          "capabilities": [
+            "text",
+            "reasoning",
+            "vision",
+            "tool-use"
+          ]
+        },
+        "gpt-5.4-mini": {
+          "enabled": true,
+          "tier": "standard",
+          "context_window": 128000,
+          "_comment": "OpenAI model via CCS unified catalog. Vision benchmark 2026-06-01: 3/3 correct, clean output, ~4.8s — vision-pipe primary. tier=standard so it does NOT win plain-text routing over budget models.",
+          "capabilities": [
+            "text",
+            "vision"
+          ]
+        },
+        "gpt-5.4": {
+          "enabled": false,
+          "tier": "standard",
+          "context_window": 128000,
+          "_comment": "OpenAI via CCS. Vision benchmark 2026-06-01: 3/3, fastest (~2.6s). Disabled per one-per-family whitelist; enable for a faster vision primary.",
+          "capabilities": [
+            "text",
+            "vision"
+          ]
+        },
+        "gpt-5.5": {
+          "enabled": false,
+          "tier": "premium",
+          "context_window": 128000,
+          "_comment": "OpenAI flagship via CCS. Vision benchmark 2026-06-01: 3/3 (~3.6s). Disabled per whitelist; enable for highest-quality vision fallback.",
+          "capabilities": [
+            "text",
+            "vision"
+          ]
+        },
+        "kimi-k2-thinking": {
+          "enabled": false,
+          "tier": "standard",
+          "context_window": 256000,
+          "capabilities": [
+            "text",
+            "reasoning",
+            "tool-use"
+          ]
+        },
+        "kimi-k2.5": {
+          "enabled": false,
+          "_comment": "DISABLED 2026-08-13 (#222) on measured evidence: 100 recorded hops, 6 successes (6%), 73 timeouts — 89% of every timeout the router has ever logged — at a 240s median, i.e. the typical hop never completes and burns the whole ceiling before failing over. Its 6 successes took 120/164/173/174/231/240s, so it is not merely slow-but-working. Left enabled it stays reachable via capability-based selection even though modelMapping no longer names it. Re-enable only with evidence it can complete a request.",
+          "tier": "budget",
+          "context_window": 256000,
+          "capabilities": [
+            "text",
+            "tool-use"
+          ]
+        },
+        "kimi-k2": {
+          "enabled": false,
+          "tier": "budget",
+          "context_window": 128000,
+          "capabilities": [
+            "text",
+            "tool-use"
+          ]
+        },
+        "gpt-image-1.5": {
+          "enabled": true,
+          "tier": "standard",
+          "context_window": 0,
+          "_comment": "Image generation via CCS POST /v1/images/generations. Verified 2026-08-06: HTTP 200, data[0].b64_json (~1.1MB PNG) for a 1024x1024 prompt. NOT usable on the chat-completions path — capabilities intentionally omit \"text\" so capability-based selection can never pick it for a normal delegation.",
+          "capabilities": [
+            "image-generation"
+          ]
+        },
+        "gpt-image-2": {
+          "enabled": true,
+          "tier": "standard",
+          "context_window": 0,
+          "_comment": "Image generation via CCS POST /v1/images/generations. Advertised by the endpoint 2026-08-06; not individually benchmarked.",
+          "capabilities": [
+            "image-generation"
+          ]
+        },
+        "grok-imagine-image": {
+          "enabled": false,
+          "tier": "budget",
+          "context_window": 0,
+          "_comment": "Disabled 2026-08-20: CCS no longer advertises this id on /v1/models (the endpoint still serves the gpt-image-* generators, so this is the model being withdrawn, not the image path). Added 2026-08-06 from the endpoint's own advertisement and never re-checked. Caught by mr-validate-model-catalog.cjs. Re-enable only when /v1/models lists it again.",
+          "capabilities": [
+            "image-generation"
+          ]
+        },
+        "grok-imagine-image-quality": {
+          "enabled": false,
+          "tier": "standard",
+          "context_window": 0,
+          "_comment": "Disabled 2026-08-20: CCS no longer advertises this higher-quality grok variant's id on /v1/models (the endpoint still serves the gpt-image-* generators, so this is the model being withdrawn, not the image path). Added 2026-08-06 from the endpoint's own advertisement and never re-checked. Caught by mr-validate-model-catalog.cjs. Re-enable only when /v1/models lists it again.",
+          "capabilities": [
+            "image-generation"
+          ]
+        }
+      }
+    },
+    "codex": {
+      "enabled": false,
+      "_disabled_reason": "Upstream auth dead — see #44. All OpenAI-owned models (gpt-5.x, codex-auto-review) return 502. Stays in the config for explicit --provider codex callers (aliveness probe surfaces the failure cleanly); the rule-based selector skips it.",
+      "type": "remote-proxy",
+      "endpoint": "https://ccs.the1studio.org",
+      "auth": "gh-token",
+      "budget": {
+        "_comment": "Opt-in per-provider daily limits. When 95% of either limit is reached the selector skips this provider for the rest of the UTC day. Set dailyRequests/dailyBudgetUsd to null to disable.",
+        "dailyRequests": null,
+        "dailyBudgetUsd": null,
+        "resetUtcHour": 0
+      },
+      "models": {
+        "gpt-5.1": {
+          "enabled": false,
+          "tier": "premium",
+          "context_window": 128000,
+          "capabilities": [
+            "text",
+            "reasoning",
+            "tool-use"
+          ]
+        },
+        "o3": {
+          "enabled": false,
+          "tier": "premium",
+          "context_window": 200000,
+          "capabilities": [
+            "text",
+            "reasoning",
+            "tool-use"
+          ]
+        }
+      }
+    }
+  },
+  "capabilityPipes": {
+    "_comment": "Ordered preference for capability-gated selection, consumed by mr-task-interceptor.cjs pickFromCandidates(): when a task requires a capability listed here, ENABLED candidates are sorted by their index in that pipe (models not listed fall back to the tier/quality rules; disabled models are simply never candidates). vision pipe = value-first order from the empirical benchmark 2026-06-01 (all 4 scored 3/3 correct; cheap+diverse-upstream first). Shipped-enabled vision models are gpt-5.4-mini + kimi-k2.6; gpt-5.4/gpt-5.5 are listed for when consumers enable them. glm-5.1 deliberately excluded (0/3, confabulates).",
+    "vision": [
+      "gpt-5.4-mini",
+      "kimi-k2.6",
+      "gpt-5.4",
+      "gpt-5.5"
+    ]
+  },
+  "_comment": "Real-catalog config. Originally 12 oc-go + 4 kimi models verified 2026-05-25; expanded 2026-06-19 from CCS /v1/models. POLICY (kit-owner whitelist): only the newest model per family is shipped enabled — glm-5.2 (premium), kimi-for-coding (premium, the routed coding primary since 2026-08-19 — the docs-sanctioned id that survives upstream retirements; kimi-k2.6 stays enabled for the vision pipe; both superseded kimi-k2.7-code, retired by CCS 2026-08-18, #272), qwen3.7-plus (standard), mimo-v2.5-pro (standard), minimax-m3 (long-context), deepseek-v4-pro (standard). Everything else is disabled by default. Consumers can re-enable any disabled model locally but the shipped default is the whitelist.",
+  "_origin": {
+    "kit": "theonekit-model-router",
+    "repository": "The1Studio/theonekit-model-router",
+    "module": null,
+    "protected": false
+  }
+}

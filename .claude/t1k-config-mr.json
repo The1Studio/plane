@@ -1,0 +1,98 @@
+{
+  "registryVersion": 1,
+  "kitName": "theonekit-model-router",
+  "modelRouter": {
+    "enabled": true,
+    "mode": "transparent",
+    "defaultBuiltInModel": "sonnet",
+    "modelMapping": {
+      "claude-sonnet-4-6": {
+        "provider": "opencode-go",
+        "model": "deepseek-v4-flash"
+      },
+      "claude-haiku-4-5-20251001": {
+        "provider": "opencode-go",
+        "model": "deepseek-v4-flash"
+      }
+    },
+    "loadBalance": {
+      "_comment": "Round-robin quota split across independent provider pools — COST optimisation for the plain/mechanical/general-coding bucket only. QUALITY-DRIVEN tasks (reasoning: audit/security/architecture/root-cause; long-context; vision; image; mcp) bypass this and go to capability selection so quality is guaranteed. Rotated per spawn via a persisted counter in ~/.model-router/lb-counter.json; per-target integer `weight` (default 1) gives a weighted split. Disable with enabled:false.",
+      "enabled": true,
+      "_weightNote": "Weights are set from measured answer QUALITY, not availability. Over 100 delegations on a tool-requiring task (2026-08-14): deepseek-v4-flash 50/50 correct; kimi-k2.7-code 42/50 correct, 7 fabricated answers returned in a single turn without ever calling a tool, 1 timeout. A confidently wrong answer is worse than a failed hop because nothing downstream can detect it, so kimi keeps a share of traffic for capacity but no longer serves half of it. Re-measure before changing these. 2026-08-18 (#272): those kimi numbers were measured on kimi-k2.7-code, which CCS has since RETIRED (HTTP 400, unknown provider); the slot briefly ran kimi-k2.6 as a stopgap. 2026-08-19: slot moved to kimi-for-coding — the id the Kimi Code docs sanction across generations (maintainer decision; CCS serves it via its oauth-model-alias, currently mapped to kimi-k3-256k). Weight of 1 is still inherited, NOT measured — re-measure before trusting the split.",
+      "targets": [
+        {
+          "provider": "opencode-go",
+          "model": "deepseek-v4-flash",
+          "weight": 3
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-for-coding",
+          "weight": 1
+        }
+      ]
+    },
+    "excludeAgents": [],
+    "writeAgentFloor": "premium-only",
+    "spawnCapableFloor": "off",
+    "perSpawnModelOverride": true,
+    "security": {
+      "allowedProviders": [
+        "kimi",
+        "opencode-go",
+        "codex"
+      ],
+      "allowedMcpServers": [],
+      "_allowedMcpServersComment": "Fail-CLOSED, unlike allowedProviders above: empty means no per-agent MCP server forwarding happens for ANYONE, full stop. This is a single, standalone config file (no per-kit fragment merge exists for it — verified against theonekit-core's registry loader while implementing this feature) so a consumer who wants to opt in edits THIS array directly, e.g. [\"UnityMCP\"] for theonekit-unity's 12 agents that already declare mcp__UnityMCP__* tools in their own tools: frontmatter (zero agent-file edits needed). Only enable a server whose data-exposure and action-capability risk you have actually reviewed — see plans/260822-0711-mcp-server-forwarding-design.md §6 item 5 for the reasoning behind NOT shipping UnityMCP/playwright/context7 enabled by default. KNOWN ISSUE (as of 2026-08-22, temporary): this file is module-claimed (module.json files['.']), so `t1k modules update` extracts it via a blind per-module-ZIP overwrite (theonekit-cli atomicMergeTree) that resets THIS array to [] on every update, discarding your edit — re-apply it after each update. This is deliberate for now: unclaiming the file (as #317 did) routes it through theonekit-cli's shared-ZIP key-merge instead, which preserves the array, but exposed a WORSE defect in theonekit-cli's per-module orphan-sweep (src/commands/modules/modules-update.ts, updateModules(), lines ~1858-1904) that DELETED the whole file on the claimed-to-unclaimed transition update (#317 was reverted in #318 for exactly this). That CLI fix has now LANDED and SHIPPED: theonekit-cli #459, released in v6.15.1 — refreshSharedAssetsForKits now returns its written-paths set and the orphan sweep skips any path it just wrote. That fix does NOT stop the reset by itself, and an earlier version of this note wrongly said it did: while this file is CLAIMED in module.json it ships in the per-module ZIP and is applied by a blind overwrite (atomicMergeTree) that no CLI version changes. The reset stops only once this file is UNCLAIMED again so it ships via the shared ZIP and takes the local-wins key merge instead. Re-unclaiming this file (and deleting this comment) is safe only after the fleet is on that CLI, because an older CLI would still delete it on the transition.",
+      "dataClassification": {
+        "enabled": true,
+        "blockClasses": [
+          "private-key",
+          "aws-key",
+          "github-token",
+          "api-key",
+          "credential",
+          "pii"
+        ]
+      }
+    },
+    "failover": {
+      "enabled": true,
+      "perHopTimeoutSec": 300,
+      "contextGrowthPerHopTimeoutSec": 900,
+      "perAgentTimeoutSec": {},
+      "pipe": [
+        {
+          "provider": "opencode-go",
+          "model": "deepseek-v4-flash"
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-for-coding"
+        }
+      ],
+      "chain": {
+        "opencode-go": "kimi",
+        "kimi": "opencode-go",
+        "codex": "kimi"
+      },
+      "fallbackToAnthropic": true,
+      "circuitBreaker": {
+        "enabled": true,
+        "failureThreshold": 3,
+        "cooldownSec": 300
+      },
+      "inHopRetry": {
+        "enabled": true,
+        "maxRetries": 1,
+        "baseDelayMs": 1500
+      }
+    }
+  },
+  "_origin": {
+    "kit": "theonekit-model-router",
+    "repository": "The1Studio/theonekit-model-router",
+    "module": null,
+    "protected": false
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "_comment": "SSOT for KitType <-> repo mapping. Mirrors AVAILABLE_KITS in theonekit-cli/src/types/kit.ts. When a new kit is added, update BOTH this file AND the CLI constant. Consumed by check-kits-membership.cjs and any other doctor .cjs scripts that need the mapping. The CLI source is the primary source; this JSON is a release-time mirror.",
+  "kits": {
+    "core": {
+      "repo": "theonekit-core"
+    },
+    "designer": {
+      "repo": "theonekit-designer"
+    },
+    "unity": {
+      "repo": "theonekit-unity"
+    },
+    "cocos": {
+      "repo": "theonekit-cocos"
+    },
+    "react-native": {
+      "repo": "theonekit-rn"
+    },
+    "nakama": {
+      "repo": "theonekit-nakama"
+    },
+    "web": {
+      "repo": "theonekit-web"
+    }
+  },
+  "_origin": {
+    "kit": "theonekit-core",
+    "repository": "The1Studio/theonekit-core",
+    "module": "t1k-base",
+    "protected": true
+  }
+}

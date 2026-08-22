@@ -1,0 +1,39 @@
+{
+  "_comment": "SSOT for doctor check #56 (dead permission rules). Claude Code's file-permission matcher only consults Edit(path) and Read(path) rules; a path-form rule naming any other file tool is accepted by the settings schema, produces a startup warning, and grants/denies nothing. Each entry below is a tool name that Claude Code itself rewrites in that warning. Adding a newly-discovered dead form must be an edit to THIS FILE ONLY — check-dead-permission-rules.cjs hardcodes no tool names.",
+  "_verifiedAgainst": {
+    "product": "Claude Code",
+    "version": "2.1.228",
+    "date": "2026-08-12",
+    "method": "Read the shipped rule validator out of the installed binary (~/.local/share/claude/versions/2.1.228). The validator maps toolName -> replacement verbatim: Write|NotebookEdit|MultiEdit -> Edit, Glob -> Read, and emits the warning only when the rule has parenthesised content that does not contain ':*'. Nothing here is inferred from the warning text alone.",
+    "howToRecheck": "strings <claude-binary> | grep 'not matched by file permission checks' and read the surrounding validator branch; update pathRuleRewrites if the map changed."
+  },
+  "pathRuleRewrites": [
+    {
+      "toolName": "Write",
+      "useInstead": "Edit",
+      "covers": "file-editing"
+    },
+    {
+      "toolName": "MultiEdit",
+      "useInstead": "Edit",
+      "covers": "file-editing"
+    },
+    {
+      "toolName": "NotebookEdit",
+      "useInstead": "Edit",
+      "covers": "file-editing"
+    },
+    {
+      "toolName": "Glob",
+      "useInstead": "Read",
+      "covers": "file-reading"
+    }
+  ],
+  "exemptWhenRuleContentContains": ":*",
+  "_origin": {
+    "kit": "theonekit-core",
+    "repository": "The1Studio/theonekit-core",
+    "module": "t1k-base",
+    "protected": true
+  }
+}

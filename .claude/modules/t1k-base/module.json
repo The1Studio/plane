@@ -1,0 +1,82 @@
+{
+  "name": "t1k-base",
+  "version": "2.86.0",
+  "description": "Core workflow — cook, plan, fix, debug, test, review, git, docs",
+  "required": true,
+  "minCliVersion": "6.10.2",
+  "dependencies": {},
+  "files": {
+    "hooks": [
+      "doctor-check-52-hook-registration-drift.cjs",
+      "lib/colors.cjs",
+      "lib/git-info-cache.cjs",
+      "lib/hook-command-form.cjs",
+      "lib/model-scoped-quota.cjs",
+      "lib/statusline-agent-model.cjs",
+      "lib/statusline-agent-tokens.cjs",
+      "lib/statusline-agent-tree.cjs",
+      "lib/statusline-ledger-read.cjs",
+      "lib/statusline-private-cache.cjs",
+      "lib/transcript-parser.cjs",
+      "statusline.cjs",
+      "task-description-model-badge.cjs"
+    ],
+    "scripts": [
+      "generate-required-hook-registrations.cjs",
+      "idle-by-design.json",
+      "plan-metadata-extractor.cjs",
+      "plan-parser.cjs",
+      "plan-scanner.cjs",
+      "plan-table-parser.cjs",
+      "required-hook-registrations.json",
+      "t1k-issue-claim.cjs",
+      "validate-agent-checkpoint.cjs",
+      "validate-hook-registration-coverage.cjs",
+      "validate-module-hook-deps.cjs"
+    ]
+  },
+  "skills": [
+    "t1k-cook",
+    "t1k-plan",
+    "t1k-fix",
+    "t1k-debug",
+    "t1k-test",
+    "t1k-review",
+    "t1k-git",
+    "t1k-docs",
+    "t1k-wiki",
+    "t1k-scout",
+    "t1k-ask",
+    "t1k-help",
+    "t1k-doctor",
+    "t1k-modules",
+    "t1k-find-skill",
+    "t1k-context",
+    "t1k-watzup",
+    "t1k-resolve-context",
+    "t1k-coding-level",
+    "t1k-statusline-full",
+    "t1k-verify-wiring"
+  ],
+  "agents": [
+    "t1k-planner",
+    "t1k-fullstack-developer",
+    "t1k-git-manager",
+    "t1k-project-manager",
+    "t1k-debugger",
+    "t1k-tester",
+    "t1k-code-reviewer",
+    "t1k-code-simplifier",
+    "t1k-docs-manager",
+    "t1k-handoff-manager",
+    "t1k-kongming",
+    "t1k-cocos-doc-updater",
+    "t1k-doctor-manager"
+  ],
+  "_origin": {
+    "kit": "theonekit-core",
+    "repository": "The1Studio/theonekit-core",
+    "module": "t1k-base",
+    "protected": true
+  }
+}

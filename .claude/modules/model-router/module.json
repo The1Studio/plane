@@ -1,0 +1,141 @@
+{
+  "name": "model-router",
+  "version": "3.39.4",
+  "kit": "theonekit-model-router",
+  "description": "AI-driven delegation — runtime-discovers agents from the consumer's t1k-* roster and routes tasks to cheap models via OpenCode Go / Kimi / Codex.",
+  "required": true,
+  "dependencies": {},
+  "crossKitDependencies": {},
+  "files": {
+    "scripts": [
+      "ccs-auth-proxy.mjs",
+      "mr-circuit-breaker.cjs",
+      "mr-data-classifier.cjs",
+      "mr-defaults.cjs",
+      "mr-jsonl-append.cjs",
+      "mr-model-override.cjs",
+      "mr-spawn-attribution.cjs",
+      "mr-dashboard.sh",
+      "mr-delegate.sh",
+      "mr-doctor.sh",
+      "mr-probe-providers.sh",
+      "mr-settings-registry.cjs",
+      "mr-sync-model-catalog.cjs",
+      "mr-provider-usage.cjs",
+      "mr-tail-debug.sh",
+      "mr-validate-hook-timeout.cjs",
+      "mr-validate-timeout-ssot.cjs",
+      "mr-validate-doc-model-citations.cjs",
+      "mr-validate-model-catalog.cjs",
+      "mr-telemetry-helpers.cjs",
+      "post-install.sh",
+      "post-install.cjs",
+      "provider-usage-lib.cjs"
+    ],
+    "hooks": [
+      "mr-spawn-guard.cjs",
+      "mr-task-interceptor.cjs",
+      "mr-metrics.cjs",
+      "mr-doctor-check.cjs",
+      "mr-telemetry.cjs",
+      "mr-parent-telemetry.cjs",
+      "mr-transparent-routing-reminder.cjs"
+    ],
+    "agents": [],
+    "rules": [
+      "mr-transparent-routing.md"
+    ],
+    ".": [
+      "providers-config.json",
+      "model-capabilities.md",
+      "t1k-config-mr.json",
+      "settings.json"
+    ]
+  },
+  "postInstall": "scripts/post-install.sh",
+  "doctor": "scripts/mr-doctor.sh",
+  "skills": [
+    "t1k-model-router-delegate",
+    "t1k-model-router-my-savings"
+  ],
+  "agents": [],
+  "activation": {
+    "sessionBaseline": [],
+    "mappings": [
+      {
+        "keywords": [
+          "delegate to cheap model",
+          "use cheap model",
+          "delegate to opencode",
+          "use opencode go"
+        ],
+        "skills": [
+          "t1k-model-router-delegate"
+        ]
+      },
+      {
+        "keywords": [
+          "explore cheap",
+          "find files cheap",
+          "explore with opencode"
+        ],
+        "skills": [
+          "t1k-model-router-delegate"
+        ]
+      },
+      {
+        "keywords": [
+          "review cheap",
+          "security review cheap",
+          "deep review cheap"
+        ],
+        "skills": [
+          "t1k-model-router-delegate"
+        ]
+      },
+      {
+        "keywords": [
+          "code cheap",
+          "implement cheap",
+          "boilerplate"
+        ],
+        "skills": [
+          "t1k-model-router-delegate"
+        ]
+      },
+      {
+        "keywords": [
+          "audit docs",
+          "scan documentation"
+        ],
+        "skills": [
+          "t1k-model-router-delegate"
+        ]
+      },
+      {
+        "keywords": [
+          "write docs cheap",
+          "update docs cheap"
+        ],
+        "skills": [
+          "t1k-model-router-delegate"
+        ]
+      },
+      {
+        "keywords": [
+          "run tests cheap",
+          "test with cheap model"
+        ],
+        "skills": [
+          "t1k-model-router-delegate"
+        ]
+      }
+    ]
+  },
+  "_origin": {
+    "kit": "theonekit-model-router",
+    "repository": "The1Studio/theonekit-model-router",
+    "module": "model-router",
+    "protected": false
+  }
+}

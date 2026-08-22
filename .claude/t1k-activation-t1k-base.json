@@ -1,0 +1,223 @@
+{
+  "registryVersion": 1,
+  "kitName": "theonekit-core",
+  "priority": 10,
+  "description": "Activation fragment for module t1k-base",
+  "sessionBaseline": [],
+  "mappings": [
+    {
+      "keywords": [
+        "module",
+        "modules",
+        "add module",
+        "remove module",
+        "split module",
+        "merge module",
+        "module audit",
+        "module validate",
+        "preset"
+      ],
+      "skills": [
+        "t1k-modules"
+      ]
+    },
+    {
+      "keywords": [
+        "find skill",
+        "search skill",
+        "what skill",
+        "available skills",
+        "discover",
+        "how do I",
+        "which skill",
+        "skill for",
+        "list skills",
+        "skill search"
+      ],
+      "skills": [
+        "t1k-find-skill"
+      ]
+    },
+    {
+      "keywords": [
+        "context engineering",
+        "token optimization",
+        "context degradation",
+        "context window",
+        "token usage",
+        "attention management",
+        "context isolation",
+        "skill injection",
+        "agent context"
+      ],
+      "skills": [
+        "t1k-context"
+      ]
+    },
+    {
+      "keywords": [
+        "implement",
+        "build",
+        "feature",
+        "cook",
+        "code"
+      ],
+      "skills": [
+        "t1k-cook"
+      ]
+    },
+    {
+      "keywords": [
+        "plan this",
+        "plan the",
+        "implementation plan",
+        "phased plan",
+        "design",
+        "roadmap"
+      ],
+      "skills": [
+        "t1k-plan"
+      ]
+    },
+    {
+      "keywords": [
+        "fix",
+        "bug",
+        "error",
+        "compile",
+        "broken"
+      ],
+      "skills": [
+        "t1k-fix"
+      ]
+    },
+    {
+      "keywords": [
+        "debug",
+        "investigate",
+        "trace",
+        "root cause"
+      ],
+      "skills": [
+        "t1k-debug"
+      ]
+    },
+    {
+      "keywords": [
+        "test",
+        "unit test",
+        "coverage",
+        "test suite"
+      ],
+      "skills": [
+        "t1k-test"
+      ]
+    },
+    {
+      "keywords": [
+        "review",
+        "code review",
+        "audit"
+      ],
+      "skills": [
+        "t1k-review"
+      ]
+    },
+    {
+      "keywords": [
+        "ask",
+        "question",
+        "how to",
+        "explain"
+      ],
+      "skills": [
+        "t1k-ask"
+      ]
+    },
+    {
+      "keywords": [
+        "scout",
+        "explore",
+        "find",
+        "search codebase"
+      ],
+      "skills": [
+        "t1k-scout"
+      ]
+    },
+    {
+      "keywords": [
+        "documentation",
+        "update docs",
+        "init docs",
+        "generate docs"
+      ],
+      "skills": [
+        "t1k-docs"
+      ]
+    },
+    {
+      "keywords": [
+        "git",
+        "commit",
+        "push",
+        "pull request"
+      ],
+      "skills": [
+        "t1k-git"
+      ]
+    },
+    {
+      "keywords": [
+        "doctor",
+        "validate",
+        "health check",
+        "registry"
+      ],
+      "skills": [
+        "t1k-doctor"
+      ]
+    },
+    {
+      "keywords": [
+        "watzup",
+        "session review",
+        "progress",
+        "wrap up"
+      ],
+      "skills": [
+        "t1k-watzup"
+      ]
+    },
+    {
+      "keywords": [
+        "help",
+        "usage",
+        "guide",
+        "commands"
+      ],
+      "skills": [
+        "t1k-help"
+      ]
+    },
+    {
+      "keywords": [
+        "statusline",
+        "status line",
+        "full statusline",
+        "install statusline",
+        "global statusline",
+        "statusline-full"
+      ],
+      "skills": [
+        "t1k-statusline-full"
+      ]
+    }
+  ],
+  "_origin": {
+    "kit": "theonekit-core",
+    "repository": "The1Studio/theonekit-core",
+    "module": null,
+    "protected": true
+  }
+}

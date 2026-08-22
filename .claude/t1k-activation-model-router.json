@@ -1,0 +1,82 @@
+{
+  "_generatedFrom": "module.json activation field — edit .claude/modules/model-router/module.json instead",
+  "registryVersion": 1,
+  "kitName": "theonekit-model-router",
+  "priority": 91,
+  "mappings": [
+    {
+      "keywords": [
+        "delegate to cheap model",
+        "use cheap model",
+        "delegate to opencode",
+        "use opencode go"
+      ],
+      "skills": [
+        "t1k-model-router-delegate"
+      ]
+    },
+    {
+      "keywords": [
+        "explore cheap",
+        "find files cheap",
+        "explore with opencode"
+      ],
+      "skills": [
+        "t1k-model-router-delegate"
+      ]
+    },
+    {
+      "keywords": [
+        "review cheap",
+        "security review cheap",
+        "deep review cheap"
+      ],
+      "skills": [
+        "t1k-model-router-delegate"
+      ]
+    },
+    {
+      "keywords": [
+        "code cheap",
+        "implement cheap",
+        "boilerplate"
+      ],
+      "skills": [
+        "t1k-model-router-delegate"
+      ]
+    },
+    {
+      "keywords": [
+        "audit docs",
+        "scan documentation"
+      ],
+      "skills": [
+        "t1k-model-router-delegate"
+      ]
+    },
+    {
+      "keywords": [
+        "write docs cheap",
+        "update docs cheap"
+      ],
+      "skills": [
+        "t1k-model-router-delegate"
+      ]
+    },
+    {
+      "keywords": [
+        "run tests cheap",
+        "test with cheap model"
+      ],
+      "skills": [
+        "t1k-model-router-delegate"
+      ]
+    }
+  ],
+  "_origin": {
+    "kit": "theonekit-model-router",
+    "repository": "The1Studio/theonekit-model-router",
+    "module": null,
+    "protected": false
+  }
+}

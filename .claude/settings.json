@@ -1,0 +1,96 @@
+{
+  "_comment": "Hook commands use a 'node -e' wrapper that (1) overrides HOME from os.userInfo().homedir (getpwuid(geteuid()) — unaffected by Claude Code 2.1.150+ passing HOME=$CLAUDE_PROJECT_DIR, see #49) and (2) loads only the trusted global copy under $HOME/.claude/hooks/. post-install syncs the kit hooks there before registration. Never resolving executable hook code from $CLAUDE_PROJECT_DIR prevents an arbitrary repository from shadowing globally registered hooks. If the global file is absent the wrapper no-ops instead of throwing MODULE_NOT_FOUND at loader:1423 (see #94).",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"const path=require('path'),fs=require('fs'),home=require('os').userInfo().homedir;process.env.HOME=home;process.env.USERPROFILE=home;const c=path.join(home,'.claude','hooks','mr-spawn-guard.cjs');if(fs.existsSync(c))require(c)\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Task|Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"const path=require('path'),fs=require('fs'),home=require('os').userInfo().homedir;process.env.HOME=home;process.env.USERPROFILE=home;const c=path.join(home,'.claude','hooks','mr-task-interceptor.cjs');if(fs.existsSync(c))require(c)\"",
+            "timeout": 5520
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|Bash|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"const path=require('path'),fs=require('fs'),home=require('os').userInfo().homedir;process.env.HOME=home;process.env.USERPROFILE=home;const c=path.join(home,'.claude','hooks','mr-inline-tracker.cjs');if(fs.existsSync(c))require(c)\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"const path=require('path'),fs=require('fs'),home=require('os').userInfo().homedir;process.env.HOME=home;process.env.USERPROFILE=home;const c=path.join(home,'.claude','hooks','mr-metrics.cjs');if(fs.existsSync(c))require(c)\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"const path=require('path'),fs=require('fs'),home=require('os').userInfo().homedir;process.env.HOME=home;process.env.USERPROFILE=home;const c=path.join(home,'.claude','hooks','mr-telemetry.cjs');if(fs.existsSync(c))require(c)\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Task|Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"const path=require('path'),fs=require('fs'),home=require('os').userInfo().homedir;process.env.HOME=home;process.env.USERPROFILE=home;const c=path.join(home,'.claude','hooks','mr-parent-telemetry.cjs');if(fs.existsSync(c))require(c)\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"const path=require('path'),fs=require('fs'),home=require('os').userInfo().homedir;process.env.HOME=home;process.env.USERPROFILE=home;const c=path.join(home,'.claude','hooks','mr-doctor-check.cjs');if(fs.existsSync(c))require(c)\"",
+            "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "node -e \"const path=require('path'),fs=require('fs'),home=require('os').userInfo().homedir;process.env.HOME=home;process.env.USERPROFILE=home;const c=path.join(home,'.claude','hooks','mr-transparent-routing-reminder.cjs');if(fs.existsSync(c))require(c)\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"const path=require('path'),fs=require('fs'),home=require('os').userInfo().homedir;process.env.HOME=home;process.env.USERPROFILE=home;const c=path.join(home,'.claude','hooks','mr-telemetry.cjs');if(fs.existsSync(c))require(c)\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "module": "model-router",
+  "version": "3.39.4",
+  "kit": "theonekit-model-router",
+  "generatedBy": "release-action",
+  "generatedAt": "2026-08-22T11:23:11.404Z",
+  "files": {
+    "skills": [
+      "t1k-model-router-delegate/SKILL.md",
+      "t1k-model-router-my-savings/SKILL.md"
+    ],
+    "agents": [],
+    "hooks": [
+      "mr-doctor-check.cjs",
+      "mr-metrics.cjs",
+      "mr-parent-telemetry.cjs",
+      "mr-spawn-guard.cjs",
+      "mr-task-interceptor.cjs",
+      "mr-telemetry.cjs",
+      "mr-transparent-routing-reminder.cjs"
+    ],
+    "rules": [
+      "mr-transparent-routing.md"
+    ],
+    "fragments": [
+      "t1k-activation-model-router.json",
+      "t1k-config-mr.json"
+    ],
+    "other": [
+      "model-capabilities.md",
+      "modules/model-router/module.json",
+      "providers-config.json",
+      "scripts/ccs-auth-proxy.mjs",
+      "scripts/mr-circuit-breaker.cjs",
+      "scripts/mr-dashboard.sh",
+      "scripts/mr-data-classifier.cjs",
+      "scripts/mr-defaults.cjs",
+      "scripts/mr-delegate.sh",
+      "scripts/mr-doctor.sh",
+      "scripts/mr-jsonl-append.cjs",
+      "scripts/mr-model-override.cjs",
+      "scripts/mr-probe-providers.sh",
+      "scripts/mr-provider-usage.cjs",
+      "scripts/mr-settings-registry.cjs",
+      "scripts/mr-spawn-attribution.cjs",
+      "scripts/mr-sync-model-catalog.cjs",
+      "scripts/mr-tail-debug.sh",
+      "scripts/mr-telemetry-helpers.cjs",
+      "scripts/mr-validate-doc-model-citations.cjs",
+      "scripts/mr-validate-hook-timeout.cjs",
+      "scripts/mr-validate-model-catalog.cjs",
+      "scripts/mr-validate-timeout-ssot.cjs",
+      "scripts/post-install.cjs",
+      "scripts/post-install.sh",
+      "scripts/provider-usage-lib.cjs",
+      "settings.json"
+    ]
+  },
+  "checksum": "sha256:a39f9bc05b4bbab29a6e37a18630d841949bf9d159381cb63c97781d9c72184a"
+}

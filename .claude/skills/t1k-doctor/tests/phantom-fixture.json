@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 3,
+  "name": "polygonart-fixture",
+  "kits": {
+    "unity": {
+      "version": "1.2.3",
+      "installedAt": "2026-04-18T03:43:30Z",
+      "files": []
+    },
+    "web": {
+      "version": "0.4.0",
+      "installedAt": "2026-04-17T11:22:10Z"
+    },
+    "core": {
+      "version": "1.69.1",
+      "installedAt": "2026-04-18T12:25:26Z",
+      "files": [
+        ".claude/rules/security.md",
+        ".claude/skills/t1k-doctor/SKILL.md"
+      ]
+    }
+  },
+  "_origin": {
+    "kit": "theonekit-core",
+    "repository": "The1Studio/theonekit-core",
+    "module": "t1k-base",
+    "protected": true
+  }
+}
