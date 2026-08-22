@@ -146,6 +146,81 @@ eq("periods union", m.periods, ["2026-01-01", "2026-01-02"]);
 // idempotence: merging the same window twice must not change anything
 eq("merge is idempotent", mergeWorkloadResponses(m, b).rows[0].total, 8);
 
+// --- row order after a merge -------------------------------------------------
+// The board is ordered by the SERVER (service.py `compute_workload`): Unassigned
+// first, then case-insensitively by name. The merge must reproduce that order
+// rather than invent its own, or the swimlanes re-shuffle the moment the reader
+// scrolls far enough to trigger a second fetch.
+//
+// This regressed silently for months: the merge sorted by `total` DESCENDING,
+// left over from before #46 moved the server to alphabetical. A first paint has
+// no base to merge against, so it looked right until you scrolled.
+const rowOf = (id, name, total) => ({
+  assignee_id: id,
+  assignee_name: name,
+  buckets: { "2026-01-01": total },
+  capacity_buckets: { "2026-01-01": 8 },
+  month_buckets: { "2026-01": total },
+  over: {},
+  total,
+  total_over: false,
+  tasks: [],
+  tasks_truncated: false,
+});
+const withRows = (rows) => ({
+  granularity: "day",
+  date_from: "2026-01-01",
+  date_to: "2026-01-01",
+  periods: ["2026-01-01"],
+  rows,
+  unscheduled: [],
+  meta: {
+    issues_counted: rows.length,
+    issues_unscheduled: 0,
+    dirty_date_count: 0,
+    zero_estimate_count: 0,
+    unscheduled_ratio: 0,
+    truncated: false,
+  },
+});
+// Deliberately adversarial: the busiest member sorts LAST alphabetically, and
+// the lightest sorts first. A `total`-descending sort produces the exact reverse
+// of the right answer, so this cannot pass by coincidence.
+// Tag with the id as well: two rows can legitimately share the display name
+// "Unassigned", and a name-only projection cannot tell their order apart —
+// which would let a wrong order pass as right.
+const orderNames = (res) => res.rows.map((r) => `${r.assignee_name}#${r.assignee_id ?? "null"}`);
+eq(
+  "merge orders rows alphabetically, not by hours",
+  orderNames(
+    mergeWorkloadResponses(
+      withRows([rowOf("u3", "zoe", 40), rowOf("u1", "alice", 1)]),
+      withRows([rowOf("u2", "Bob", 20)])
+    )
+  ),
+  ["alice#u1", "Bob#u2", "zoe#u3"]
+);
+eq(
+  "merge keeps Unassigned first regardless of hours",
+  orderNames(
+    mergeWorkloadResponses(
+      withRows([rowOf("u1", "alice", 99)]),
+      withRows([rowOf(null, "Unassigned", 1)])
+    )
+  ),
+  ["Unassigned#null", "alice#u1"]
+);
+eq(
+  "a real member named Unassigned still sorts under U",
+  orderNames(
+    mergeWorkloadResponses(
+      withRows([rowOf(null, "Unassigned", 1), rowOf("u9", "Unassigned", 50)]),
+      withRows([rowOf("u1", "alice", 2)])
+    )
+  ),
+  ["Unassigned#null", "alice#u1", "Unassigned#u9"]
+);
+
 // lane packing: fewest rows such that no two bars in a row overlap
 const T = (id, start, target) => ({ id, start_date: start, target_date: target });
 const ids = (lanes) => lanes.map((l) => l.map((t) => t.id));
