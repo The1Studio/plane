@@ -9,12 +9,7 @@ import { debounce } from "lodash-es";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
 // plane imports
-import {
-  EIssueFilterType,
-  ISSUE_DISPLAY_FILTERS_BY_PAGE,
-  GLOBAL_VIEW_TRACKER_ELEMENTS,
-  DEFAULT_GLOBAL_VIEWS_LIST,
-} from "@plane/constants";
+import { EIssueFilterType, GLOBAL_VIEW_TRACKER_ELEMENTS, DEFAULT_GLOBAL_VIEWS_LIST } from "@plane/constants";
 import { useTranslation } from "@plane/i18n";
 import { Button } from "@plane/propel/button";
 import { ViewsIcon } from "@plane/propel/icons";
@@ -22,7 +17,7 @@ import type { IIssueDisplayFilterOptions, IIssueDisplayProperties, ICustomSearch
 import { EIssuesStoreType, EIssueLayoutTypes } from "@plane/types";
 import { Breadcrumbs, Header, BreadcrumbNavigationSearchDropdown } from "@plane/ui";
 // The1Studio fork (views-search)
-import { WorkItemSearchInput } from "@plane/views-ext";
+import { GLOBAL_VIEW_ISSUE_LAYOUT_OPTIONS, WorkItemSearchInput } from "@plane/views-ext";
 // components
 import { BreadcrumbLink } from "@/components/common/breadcrumb-link";
 import { SwitcherLabel } from "@/components/common/switcher-label";
@@ -126,7 +121,14 @@ export const GlobalIssuesHeader = observer(function GlobalIssuesHeader() {
   ) as ICustomSearchSelectOption[];
   const currentLayoutFilters = useMemo(() => {
     const layout = activeLayout ?? EIssueLayoutTypes.SPREADSHEET;
-    return ISSUE_DISPLAY_FILTERS_BY_PAGE.my_issues.layoutOptions[layout];
+    // The1Studio fork (views-layouts) — upstream's `my_issues.layoutOptions` table defines only
+    // `spreadsheet` and `list` (packages/constants/src/issue/filter.ts), so this resolved to
+    // `undefined` on Board, Calendar and Timeline and the Display dropdown below rendered against
+    // nothing. The fork-owned table covers all five layouts the Views switcher can select. This is
+    // the header half of the same fix already applied to the request params in
+    // `workspace/filter.store.ts` — `@plane/constants` is sealed, so the table cannot be widened
+    // upstream in place.
+    return GLOBAL_VIEW_ISSUE_LAYOUT_OPTIONS[layout];
   }, [activeLayout]);
 
   // The1Studio fork (views-search) — the search term for the view currently on screen. The
