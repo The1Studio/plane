@@ -73,20 +73,31 @@ docker compose -f docker-compose.yaml --env-file=plane.env up -d --pull never --
 # ---------------------------------------------------------------------------
 # 4) Health check: wait for migrations + API. Fail the job on timeout.
 # ---------------------------------------------------------------------------
-echo "==> Waiting for API to become healthy..."
+# Poll BOTH endpoints together. Previously only `api` was retried and `web` got a
+# single probe immediately after that loop exited — which passed only by accident:
+# when `api` was also recreated the loop spent ~26s cycling, and that incidental
+# delay was what gave `web` time to start. On a deploy that recreates `web` but not
+# `api` (compose leaves unchanged services running) the loop broke on its first
+# pass and the lone `web` probe fired 16ms after the container started, returning a
+# transient 502 and failing an otherwise healthy deploy. Observed 2026-08-22, run
+# 32561842827.
+echo "==> Waiting for API and web to become healthy..."
 api=""
+web=""
 for _ in $(seq 1 60); do          # up to ~5 min
   api="$(curl -s -o /dev/null -w '%{http_code}' http://localhost/api/instances/ || true)"
-  [ "$api" = "200" ] && break
+  web="$(curl -s -o /dev/null -w '%{http_code}' http://localhost/ || true)"
+  [ "$api" = "200" ] && [ "$web" = "200" ] && break
   sleep 5
 done
 
-web="$(curl -s -o /dev/null -w '%{http_code}' http://localhost/ || true)"
 echo "==> health: web=$web api=$api"
 
 if [ "$web" != "200" ] || [ "$api" != "200" ]; then
   echo "ERROR: health check failed. Recent logs:"
-  docker compose -f docker-compose.yaml --env-file=plane.env logs --tail=60 migrator api || true
+  # `web` is included deliberately: it is the service most likely to be the one
+  # failing here, and omitting it meant a web-side failure dumped only api logs.
+  docker compose -f docker-compose.yaml --env-file=plane.env logs --tail=60 migrator api web || true
   exit 1
 fi
 
