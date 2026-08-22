@@ -119,19 +119,29 @@ def spread_estimate(hours, start, target, win_from, win_to, granularity, workday
     """Spread one issue's hours across its [start, target] span, clipped to the
     request window [win_from, win_to].
 
-    Returns (buckets, unscheduled_cents, dirty):
+    Returns (buckets, month_buckets, unscheduled_cents, dirty):
       buckets            : dict period_key -> cents (sparse; only non-empty days
-                           inside the window). Per-day rate is computed on the
-                           FULL span, never on the clipped window.
+                           inside the window), keyed at the REQUESTED granularity.
+                           Per-day rate is computed on the FULL span, never on the
+                           clipped window.
+      month_buckets      : dict "YYYY-MM" -> cents (sparse; same [win_from, win_to]
+                           clip as `buckets`), keyed at CALENDAR-MONTH granularity
+                           regardless of the requested `granularity` (plan D6). This
+                           exists because a `week` bucket is attributed to the month
+                           its week STARTS in, so a week straddling a month boundary
+                           would otherwise credit those days to the wrong month's
+                           total — `buckets` and `month_buckets` can therefore
+                           legitimately disagree on which month a given day's cents
+                           are filed under; both are exact for what they measure.
       unscheduled_cents  : cents that land in the Unscheduled bucket (no target).
       dirty              : True when start > target (defensive; import/partial-update).
 
     Semantics (plan §3.2-§3.4):
-      - hours <= 0           -> excluded ({}, 0, False)
+      - hours <= 0           -> excluded ({}, {}, 0, False)
       - target is None       -> all cents unscheduled
       - start is None        -> single day on target
       - start > target       -> single day on target, dirty=True
-      - span outside window  -> {} buckets, 0 unscheduled (it has a target)
+      - span outside window  -> {} buckets, {} month_buckets, 0 unscheduled (it has a target)
 
     Workday-only spreading (plan D4): hours land only on days where
     `_is_workday(d, workdays)` holds, computed over the FULL [span_start,
@@ -144,9 +154,9 @@ def spread_estimate(hours, start, target, win_from, win_to, granularity, workday
     """
     cents = to_cents(hours)
     if cents <= 0:
-        return {}, 0, False
+        return {}, {}, 0, False
     if target is None:
-        return {}, cents, False
+        return {}, {}, cents, False
 
     dirty = False
     if start is None:
@@ -170,11 +180,18 @@ def spread_estimate(hours, start, target, win_from, win_to, granularity, workday
     per_day = distribute_cents(cents, len(target_days))  # rate over the FULL span's workdays
 
     buckets = {}
+    month_buckets = {}
     for idx, d in enumerate(target_days):
         if win_from <= d <= win_to:
             key = period_key(d, granularity, week_start_day)
             buckets[key] = buckets.get(key, 0) + per_day[idx]
-    return buckets, 0, dirty
+            # Calendar-month accumulation (plan D6) — independent of `granularity`
+            # and of `week_start_day` (period_key ignores week_start_day for
+            # "month"). Same clip as `buckets` so the two maps always agree on
+            # which days exist.
+            month_key = period_key(d, "month", week_start_day)
+            month_buckets[month_key] = month_buckets.get(month_key, 0) + per_day[idx]
+    return buckets, month_buckets, 0, dirty
 
 
 # --- capacity proration (plan D4: workday-basis, configurable workdays) ----

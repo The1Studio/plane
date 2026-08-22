@@ -136,7 +136,7 @@ def test_spread_workday_only_regression_anchor():
     # Mon-Fri workdays, weekday-only span (2026-06-01..03 = Mon/Tue/Wed) ->
     # every day in the span is a workday, so this is numerically identical
     # to the pre-D4 calendar-day behaviour. Regression anchor.
-    b, uns, dirty = agg.spread_estimate(
+    b, mb, uns, dirty = agg.spread_estimate(
         12.0, date(2026, 6, 1), date(2026, 6, 3),
         date(2026, 6, 1), date(2026, 6, 30), "day",
         DEFAULT_WORKDAYS, DEFAULT_WEEK_START_DAY,
@@ -144,13 +144,14 @@ def test_spread_workday_only_regression_anchor():
     assert not dirty and uns == 0
     assert _sum_cents(b) == 1200
     assert b == {"2026-06-01": 400, "2026-06-02": 400, "2026-06-03": 400}
+    assert mb == {"2026-06": 1200}
 
 
 def test_spread_weekend_gets_zero_workday_cents_sum_to_total():
     # 2026-06-05 (Fri) .. 2026-06-08 (Mon): 4 calendar days, 2 workdays
     # (Fri + Mon). Weekend days (Sat 06, Sun 07) must NOT appear in buckets
     # at all, and the two workday cents must sum to the full total.
-    b, uns, dirty = agg.spread_estimate(
+    b, mb, uns, dirty = agg.spread_estimate(
         8.0, date(2026, 6, 5), date(2026, 6, 8),
         date(2026, 6, 1), date(2026, 6, 30), "day",
         DEFAULT_WORKDAYS, DEFAULT_WEEK_START_DAY,
@@ -159,13 +160,14 @@ def test_spread_weekend_gets_zero_workday_cents_sum_to_total():
     assert "2026-06-06" not in b and "2026-06-07" not in b
     assert b == {"2026-06-05": 400, "2026-06-08": 400}
     assert _sum_cents(b) == 800
+    assert mb == {"2026-06": 800}
 
 
 def test_spread_all_weekend_d9_fallback():
     # 2026-06-06 (Sat) .. 2026-06-07 (Sun): span contains ZERO workdays under
     # Mon-Fri workdays. D9: fall back to spreading across the span's
     # calendar days rather than losing the hours.
-    b, uns, dirty = agg.spread_estimate(
+    b, mb, uns, dirty = agg.spread_estimate(
         5.0, date(2026, 6, 6), date(2026, 6, 7),
         date(2026, 6, 1), date(2026, 6, 30), "day",
         DEFAULT_WORKDAYS, DEFAULT_WEEK_START_DAY,
@@ -173,12 +175,13 @@ def test_spread_all_weekend_d9_fallback():
     assert not dirty and uns == 0
     assert b == {"2026-06-06": 250, "2026-06-07": 250}
     assert _sum_cents(b) == 500
+    assert mb == {"2026-06": 500}
 
 
 def test_spread_workdays_sun_sat_only_inverse():
     # Same span as the weekend-crossing case above, but workdays=[Sun, Sat]
     # (inverse of Mon-Fri): now Fri/Mon get zero and Sat/Sun carry the hours.
-    b, uns, dirty = agg.spread_estimate(
+    b, mb, uns, dirty = agg.spread_estimate(
         8.0, date(2026, 6, 5), date(2026, 6, 8),
         date(2026, 6, 1), date(2026, 6, 30), "day",
         SUN_SAT_ONLY, DEFAULT_WEEK_START_DAY,
@@ -187,24 +190,26 @@ def test_spread_workdays_sun_sat_only_inverse():
     assert "2026-06-05" not in b and "2026-06-08" not in b
     assert b == {"2026-06-06": 400, "2026-06-07": 400}
     assert _sum_cents(b) == 800
+    assert mb == {"2026-06": 800}
 
 
 def test_spread_single_day_no_start():
-    b, uns, dirty = agg.spread_estimate(
+    b, mb, uns, dirty = agg.spread_estimate(
         5.0, None, date(2026, 6, 10),
         date(2026, 6, 1), date(2026, 6, 30), "day",
         DEFAULT_WORKDAYS, DEFAULT_WEEK_START_DAY,
     )
     assert b == {"2026-06-10": 500} and uns == 0 and not dirty
+    assert mb == {"2026-06": 500}
 
 
 def test_unscheduled_no_target():
-    b, uns, dirty = agg.spread_estimate(
+    b, mb, uns, dirty = agg.spread_estimate(
         8.0, date(2026, 6, 1), None,
         date(2026, 6, 1), date(2026, 6, 30), "day",
         DEFAULT_WORKDAYS, DEFAULT_WEEK_START_DAY,
     )
-    assert b == {} and uns == 800 and not dirty
+    assert b == {} and mb == {} and uns == 800 and not dirty
 
 
 def test_zero_excluded():
@@ -212,43 +217,44 @@ def test_zero_excluded():
         0.0, date(2026, 6, 1), date(2026, 6, 3),
         date(2026, 6, 1), date(2026, 6, 30), "day",
         DEFAULT_WORKDAYS, DEFAULT_WEEK_START_DAY,
-    ) == ({}, 0, False)
+    ) == ({}, {}, 0, False)
 
 
 def test_clip_partial_uses_full_span_workday_rate():
     # 8h over 2026-06-01..10 (10 calendar days) with Mon-Fri workdays = 8
     # workdays (weekends 06/07 excluded) -> rate = 100c/workday, computed on
     # the FULL span. Window sees only the first 3 days, all workdays.
-    b, uns, dirty = agg.spread_estimate(
+    b, mb, uns, dirty = agg.spread_estimate(
         8.0, date(2026, 6, 1), date(2026, 6, 10),
         date(2026, 6, 1), date(2026, 6, 3), "day",
         DEFAULT_WORKDAYS, DEFAULT_WEEK_START_DAY,
     )
     assert _sum_cents(b) == 300          # 3 workdays * 100c, NOT 800/10 * 3
     assert b == {"2026-06-01": 100, "2026-06-02": 100, "2026-06-03": 100}
+    assert mb == {"2026-06": 300}
 
 
 def test_span_entirely_outside_window():
-    b, uns, dirty = agg.spread_estimate(
+    b, mb, uns, dirty = agg.spread_estimate(
         10.0, date(2026, 1, 1), date(2026, 1, 10),
         date(2026, 6, 1), date(2026, 6, 30), "day",
         DEFAULT_WORKDAYS, DEFAULT_WEEK_START_DAY,
     )
-    assert b == {} and uns == 0          # has a target -> not unscheduled
+    assert b == {} and mb == {} and uns == 0          # has a target -> not unscheduled
 
 
 def test_leap_year_span():
     # workdays=EVERY_DAY isolates the leap-year date arithmetic from the
     # workday filter (tested separately above), matching the pre-D4 test's
     # original intent: 2024 (leap) Feb 28, 29, Mar 1 = 3 days.
-    b, _, _ = agg.spread_estimate(
+    b, _mb, _, _ = agg.spread_estimate(
         9.0, date(2024, 2, 28), date(2024, 3, 1),
         date(2024, 2, 1), date(2024, 3, 31), "day",
         EVERY_DAY, DEFAULT_WEEK_START_DAY,
     )
     assert len(b) == 3 and _sum_cents(b) == 900
     # 2026 (non-leap): Feb 28, Mar 1 = 2 days.
-    b2, _, _ = agg.spread_estimate(
+    b2, _mb2, _, _ = agg.spread_estimate(
         9.0, date(2026, 2, 28), date(2026, 3, 1),
         date(2026, 2, 1), date(2026, 3, 31), "day",
         EVERY_DAY, DEFAULT_WEEK_START_DAY,
@@ -257,13 +263,14 @@ def test_leap_year_span():
 
 
 def test_dirty_start_after_target():
-    b, uns, dirty = agg.spread_estimate(
+    b, mb, uns, dirty = agg.spread_estimate(
         6.0, date(2026, 6, 10), date(2026, 6, 1),
         date(2026, 6, 1), date(2026, 6, 30), "day",
         DEFAULT_WORKDAYS, DEFAULT_WEEK_START_DAY,
     )
     assert dirty is True
     assert b == {"2026-06-01": 600} and uns == 0
+    assert mb == {"2026-06": 600}
 
 
 def test_reconciliation_window_contains_span():
@@ -272,13 +279,14 @@ def test_reconciliation_window_contains_span():
     # EVERY_DAY so the full 100h is guaranteed to land inside the ONE week
     # bucket regardless of the workday filter, isolating the aggregation
     # (multiple days -> one key) from the workday-filtering behaviour.
-    b, uns, dirty = agg.spread_estimate(
+    b, mb, uns, dirty = agg.spread_estimate(
         100.0, date(2026, 6, 1), date(2026, 6, 7),
         date(2026, 1, 1), date(2026, 12, 31), "week",
         EVERY_DAY, DEFAULT_WEEK_START_DAY,
     )
     assert _sum_cents(b) + uns == 10000  # exact
     assert set(b.keys()) == {"2026-06-01"}  # Monday-start week, all 7 days in one bucket
+    assert mb == {"2026-06": 10000}      # calendar month, independent of the week key above
 
 
 def test_spread_sum_reconciliation_property_random():
@@ -286,6 +294,8 @@ def test_spread_sum_reconciliation_property_random():
     # must equal to_cents(hours) exactly, across every workdays/week_start
     # configuration and every granularity — proving the D4/D9 rewrite never
     # drops or duplicates a cent, only relocates which day/bucket it lands in.
+    # month_buckets is checked too: it must reconcile to the SAME total as
+    # buckets (both are clipped identically; only the key differs).
     rng = random.Random(7)
     workday_sets = [DEFAULT_WORKDAYS, SUN_SAT_ONLY, MONDAY_ONLY, EVERY_DAY]
     granularities = ["day", "week", "month"]
@@ -299,7 +309,7 @@ def test_spread_sum_reconciliation_property_random():
         granularity = rng.choice(granularities)
         win_from = start - timedelta(days=10)
         win_to = target + timedelta(days=10)  # window strictly contains the span
-        b, uns, dirty = agg.spread_estimate(
+        b, mb, uns, dirty = agg.spread_estimate(
             hours, start, target, win_from, win_to, granularity,
             workdays, week_start_day,
         )
@@ -307,6 +317,63 @@ def test_spread_sum_reconciliation_property_random():
             f"start={start} target={target} hours={hours} workdays={workdays} "
             f"week_start_day={week_start_day} granularity={granularity}"
         )
+        assert _sum_cents(mb) == _sum_cents(b), (
+            f"month_buckets/buckets disagree on total: start={start} target={target} "
+            f"hours={hours} workdays={workdays} week_start_day={week_start_day} "
+            f"granularity={granularity}"
+        )
+
+
+# --- month_buckets: calendar-month accumulation (plan D6) -------------------
+#
+# `buckets` is keyed at the REQUESTED granularity; `month_buckets` is ALWAYS
+# keyed at calendar-month granularity, independent of `granularity` — this is
+# what makes the month/quarter badge exact even when a `week` bucket straddles
+# a month boundary.
+
+def test_spread_month_boundary_straddle_buckets_vs_month_buckets():
+    # 2026-08-31 (Mon) .. 2026-09-04 (Fri): a single Mon-Fri workweek, so at
+    # granularity="week" every day lands in ONE week bucket keyed 2026-08-31
+    # (Monday-start). But calendar-month-wise, Aug 31 is one day in August
+    # and Sep 1-4 are four days in September — month_buckets MUST split them
+    # while buckets stays a single entry. This is the whole point of D6: the
+    # week-attribution bug this replaces would have put all 5 days' hours
+    # into August via `buckets`, and a naive "copy buckets" month_buckets
+    # would inherit exactly that bug.
+    b, mb, uns, dirty = agg.spread_estimate(
+        50.0, date(2026, 8, 31), date(2026, 9, 4),
+        date(2026, 8, 1), date(2026, 9, 30), "week",
+        DEFAULT_WORKDAYS, DEFAULT_WEEK_START_DAY,
+    )
+    assert not dirty and uns == 0
+    # buckets: one week bucket, all 5 days' hours (10.0h/day * 5 = 50.0h = 5000c).
+    assert set(b.keys()) == {"2026-08-31"}
+    assert _sum_cents(b) == 5000
+    # month_buckets: split 1 day in August, 4 days in September.
+    assert mb == {"2026-08": 1000, "2026-09": 4000}
+    # Neither map loses a cent, and NEITHER is a copy of the other — proving
+    # this test actually distinguishes the two (a `month_buckets = dict(buckets)`
+    # bug would make this assertion fail: b has ONE key, mb has TWO).
+    assert set(b.keys()) != set(mb.keys())
+    assert _sum_cents(mb) == _sum_cents(b) == 5000
+
+
+def test_spread_month_buckets_respects_the_window_clip():
+    # Same boundary-straddling span as above, but the request window
+    # (win_from, win_to) only covers August — September 1-4 must be clipped
+    # out of BOTH buckets and month_buckets identically, same as `buckets`
+    # already does for a window that doesn't cover the whole span.
+    b, mb, uns, dirty = agg.spread_estimate(
+        50.0, date(2026, 8, 31), date(2026, 9, 4),
+        date(2026, 8, 1), date(2026, 8, 31), "week",  # window ends Aug 31
+        DEFAULT_WORKDAYS, DEFAULT_WEEK_START_DAY,
+    )
+    assert not dirty and uns == 0
+    # Only Aug 31 (1 day) is inside the window; Sep 1-4 (4 days) are clipped.
+    assert set(b.keys()) == {"2026-08-31"}
+    assert _sum_cents(b) == 1000
+    assert mb == {"2026-08": 1000}
+    assert "2026-09" not in mb
 
 
 # --- capacity proration (plans/260822-workload-daily-hours: daily basis) ----

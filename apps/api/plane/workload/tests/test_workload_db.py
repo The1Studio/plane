@@ -736,3 +736,63 @@ class TestSharedSplitReachesTheHttpResponse(TransactionTestCase):
 
         # The work is counted ONCE across the whole matrix, not once per person.
         self.assertEqual(sum(r["total"] for r in body["rows"]), 8.0)
+class TestMonthBuckets(TransactionTestCase):
+    """Plan D6 — the server-emitted `month_buckets` field. At `week`
+    granularity, an issue spanning a month boundary must still report exact
+    per-calendar-month hours on `month_buckets`, even though `buckets` (keyed
+    at week granularity) attributes the whole straddling week to the month
+    its Monday falls in."""
+
+    def test_month_buckets_present_and_split_for_boundary_spanning_issue(self):
+        ws = _ws()
+        proj = _project(ws)
+        u = _user()
+        _pmember(ws, proj, u)
+        st = _state(ws, proj, "started")
+        # 2026-08-31 (Mon) .. 2026-09-04 (Fri): one Mon-Fri workweek, entirely
+        # inside a single week bucket keyed 2026-08-31 (Monday-start weeks),
+        # but split 1 day in August / 4 days in September calendar-wise.
+        start, target = date(2026, 8, 31), date(2026, 9, 4)
+        issue = _issue(ws, proj, st, u, start=start, target=target)
+        _assign(ws, proj, issue, u, created_at=_t(1))
+        _estimate(ws, proj, issue, 50.0)
+
+        win_from, win_to = date(2026, 8, 1), date(2026, 9, 30)
+        data = compute_workload(u, ws.slug, "week", win_from, win_to)
+        row = next(r for r in data["rows"] if r["assignee_id"] == str(u.id))
+
+        # buckets: the whole 50h sits in ONE week bucket.
+        self.assertEqual(set(row["buckets"].keys()), {"2026-08-31"})
+        self.assertAlmostEqual(row["buckets"]["2026-08-31"], 50.0, places=2)
+
+        # month_buckets: split into August (1 workday) and September (4).
+        self.assertIn("month_buckets", row)
+        self.assertAlmostEqual(row["month_buckets"]["2026-08"], 10.0, places=2)
+        self.assertAlmostEqual(row["month_buckets"]["2026-09"], 40.0, places=2)
+        self.assertAlmostEqual(
+            sum(row["month_buckets"].values()), sum(row["buckets"].values()), places=2
+        )
+
+    def test_month_buckets_does_not_change_buckets_capacity_or_periods(self):
+        """Adding month_buckets must not perturb any existing field for the
+        same request (phase-1.md 1.8 success criteria)."""
+        ws = _ws()
+        proj = _project(ws)
+        u = _user()
+        _pmember(ws, proj, u)
+        st = _state(ws, proj, "started")
+        monday = date(2026, 6, 15)
+        issue = _issue(ws, proj, st, u, start=monday, target=monday)
+        _assign(ws, proj, issue, u, created_at=_t(1))
+        _estimate(ws, proj, issue, 4.0)
+
+        data = compute_workload(u, ws.slug, "week", WIN_FROM, WIN_TO)
+        row = next(r for r in data["rows"] if r["assignee_id"] == str(u.id))
+
+        # Unchanged fields still behave exactly as the pre-1.8 tests pin.
+        self.assertEqual(row["buckets"], {"2026-06-15": 4.0})
+        self.assertIn("2026-06-15", row["capacity_buckets"])
+        self.assertFalse(row["over"]["2026-06-15"])
+        self.assertFalse(row["total_over"])
+        # New field is additive.
+        self.assertEqual(row["month_buckets"], {"2026-06": 4.0})
