@@ -150,9 +150,27 @@ export function mergeWorkloadResponses(base: TWorkloadResponse | null, add: TWor
   }
 
   const merged = [...rows.values()];
-  // Same order the API applies (service.py `rows.sort`) so a merge never
-  // reshuffles the board under the reader.
-  const sortedRows = merged.toSorted((a, b) => b.total - a.total || a.assignee_name.localeCompare(b.assignee_name));
+  // Reproduce the API's order EXACTLY (service.py `compute_workload`:
+  // `rows.sort(key=lambda r: (r["assignee_id"] is not None, r["assignee_name"].casefold()))`)
+  // so a merge never reshuffles the board under the reader.
+  //
+  // Unassigned first, keyed on `assignee_id == null` rather than on the display
+  // name, so a real member literally called "Unassigned" still sorts under U —
+  // the same distinction the server makes. Then case-insensitive by name;
+  // `sensitivity: "accent"` is the JS analogue of Python's `casefold()`
+  // (ignores case, still distinguishes accented letters).
+  //
+  // This sorted by `total` DESCENDING until 2026-08-22, left behind when #46
+  // moved the server to alphabetical and updated only the server. The comment
+  // here claimed the two matched, which is why review kept passing over it. The
+  // first paint looked correct because a first fetch has no base to merge with
+  // (see the early return above) — the board only re-sorted once the reader
+  // scrolled and a second range merged in.
+  const sortedRows = merged.toSorted(
+    (a, b) =>
+      Number(a.assignee_id != null) - Number(b.assignee_id != null) ||
+      a.assignee_name.localeCompare(b.assignee_name, undefined, { sensitivity: "accent" })
+  );
 
   return {
     granularity: add.granularity,
