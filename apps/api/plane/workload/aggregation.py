@@ -115,6 +115,16 @@ def enumerate_periods(win_from: date, win_to: date, granularity: str, week_start
     raise ValueError(f"invalid granularity: {granularity!r}")
 
 
+def _month_bounds(d: date):
+    """First and last calendar day of the month containing `d`."""
+    first = date(d.year, d.month, 1)
+    if d.month == 12:
+        last = date(d.year, 12, 31)
+    else:
+        last = date(d.year, d.month + 1, 1) - timedelta(days=1)
+    return first, last
+
+
 def spread_estimate(hours, start, target, win_from, win_to, granularity, workdays, week_start_day):
     """Spread one issue's hours across its [start, target] span, clipped to the
     request window [win_from, win_to].
@@ -124,15 +134,43 @@ def spread_estimate(hours, start, target, win_from, win_to, granularity, workday
                            inside the window), keyed at the REQUESTED granularity.
                            Per-day rate is computed on the FULL span, never on the
                            clipped window.
-      month_buckets      : dict "YYYY-MM" -> cents (sparse; same [win_from, win_to]
-                           clip as `buckets`), keyed at CALENDAR-MONTH granularity
-                           regardless of the requested `granularity` (plan D6). This
-                           exists because a `week` bucket is attributed to the month
-                           its week STARTS in, so a week straddling a month boundary
-                           would otherwise credit those days to the wrong month's
-                           total — `buckets` and `month_buckets` can therefore
-                           legitimately disagree on which month a given day's cents
-                           are filed under; both are exact for what they measure.
+      month_buckets      : dict "YYYY-MM" -> cents (sparse), keyed at
+                           CALENDAR-MONTH granularity regardless of the requested
+                           `granularity` (plan D6). CLIPPED TO A DELIBERATELY
+                           WIDER RANGE than `buckets`: the whole calendar months
+                           `[win_from, win_to]` touches — i.e.
+                           `[first-of-win_from's-month, last-of-win_to's-month]`
+                           — not `[win_from, win_to]` itself. `buckets` and
+                           `month_buckets` therefore use DIFFERENT windows on
+                           purpose, for two independent reasons:
+                             1. a `week` bucket is attributed to the month its
+                                week STARTS in, so a week straddling a month
+                                boundary would otherwise credit those days to
+                                the wrong month's total;
+                             2. the client (packages/workload-ext/src/merge.ts)
+                                UNIONS `month_buckets` across paginated fetches
+                                with a plain object spread, keyed by month —
+                                never re-summing from `buckets`. If a month key
+                                only ever carried the slice of that month inside
+                                whichever [win_from, win_to] happened to be
+                                fetched, scrolling the timeline so a later fetch
+                                's window clips a previously-complete month
+                                would silently OVERWRITE the correct total with
+                                a partial one (observed: a member's July read
+                                193.5h correct after one scroll, then 25h after
+                                the next — same month, same data, different
+                                window). Widening the clip to whole calendar
+                                months makes every fetch that touches a given
+                                month report that month's COMPLETE total, so the
+                                union is idempotent regardless of scroll order.
+                           This is safe with no wider query: `_base_queryset`
+                           (service.py) already returns every in-scope estimate
+                           unfiltered by date, so `spread_estimate` seeing a day
+                           outside `[win_from, win_to]` but inside its calendar
+                           month is not missing data — it is data the caller
+                           already had, previously discarded by an over-narrow
+                           clip. Do NOT "fix" this asymmetry by matching the two
+                           clips again; that reintroduces the clobber bug above.
       unscheduled_cents  : cents that land in the Unscheduled bucket (no target).
       dirty              : True when start > target (defensive; import/partial-update).
 
@@ -141,7 +179,12 @@ def spread_estimate(hours, start, target, win_from, win_to, granularity, workday
       - target is None       -> all cents unscheduled
       - start is None        -> single day on target
       - start > target       -> single day on target, dirty=True
-      - span outside window  -> {} buckets, {} month_buckets, 0 unscheduled (it has a target)
+      - span outside window  -> {} buckets (0 unscheduled, it has a target).
+                               `month_buckets` may still be non-empty here: the
+                               span can fall outside [win_from, win_to] while
+                               still touching the wider whole-calendar-month
+                               range `month_buckets` uses (see above) — that is
+                               the fix, not a bug.
 
     Workday-only spreading (plan D4): hours land only on days where
     `_is_workday(d, workdays)` holds, computed over the FULL [span_start,
@@ -179,16 +222,22 @@ def spread_estimate(hours, start, target, win_from, win_to, granularity, workday
 
     per_day = distribute_cents(cents, len(target_days))  # rate over the FULL span's workdays
 
+    # `month_buckets` uses a WIDER clip than `buckets` on purpose — see the
+    # docstring above. Computed once per call, not per day.
+    month_from, _ = _month_bounds(win_from)
+    _, month_to = _month_bounds(win_to)
+
     buckets = {}
     month_buckets = {}
     for idx, d in enumerate(target_days):
         if win_from <= d <= win_to:
             key = period_key(d, granularity, week_start_day)
             buckets[key] = buckets.get(key, 0) + per_day[idx]
-            # Calendar-month accumulation (plan D6) — independent of `granularity`
-            # and of `week_start_day` (period_key ignores week_start_day for
-            # "month"). Same clip as `buckets` so the two maps always agree on
-            # which days exist.
+        if month_from <= d <= month_to:
+            # Calendar-month accumulation (plan D6) — independent of
+            # `granularity` and of `week_start_day` (period_key ignores
+            # week_start_day for "month"). Deliberately clipped to
+            # [month_from, month_to], NOT [win_from, win_to] — see docstring.
             month_key = period_key(d, "month", week_start_day)
             month_buckets[month_key] = month_buckets.get(month_key, 0) + per_day[idx]
     return buckets, month_buckets, 0, dirty

@@ -853,3 +853,70 @@ class TestMonthBuckets(TransactionTestCase):
         self.assertAlmostEqual(total_aug, 10.0, places=2)
         self.assertAlmostEqual(total_sep, 40.0, places=2)
         self.assertAlmostEqual(total_aug + total_sep, 50.0, places=2)
+
+    def test_month_buckets_reports_the_complete_month_when_window_starts_mid_month(self):
+        """THE BUG REPRO, end-to-end. A window that starts mid-month (as the
+        timeline's own scroll-driven fetch does) must still report the
+        COMPLETE calendar month in `month_buckets` — not just the slice of
+        it inside [date_from, date_to]. Before this fix, scrolling the
+        workload timeline so a later fetch's window clipped a previously-
+        complete month would silently overwrite it with a partial total on
+        the client (packages/workload-ext/src/merge.ts unions month_buckets
+        by month key with a plain object spread)."""
+        ws = _ws()
+        proj = _project(ws)
+        u = _user()
+        _pmember(ws, proj, u)
+        st = _state(ws, proj, "started")
+        _settings(ws, max_daily_hours=1.0, workdays=[0, 1, 2, 3, 4, 5, 6])  # every day counts
+
+        # 31h over all of July -> exactly 1h/day, so the FULL July total is
+        # unambiguous (31.0h) and any partial slice is immediately visible.
+        start, target = date(2026, 7, 1), date(2026, 7, 31)
+        issue = _issue(ws, proj, st, u, start=start, target=target)
+        _assign(ws, proj, issue, u, created_at=_t(1))
+        _estimate(ws, proj, issue, 31.0)
+
+        # Window starts mid-July and runs into September — exactly the shape
+        # a "scroll right" fetch produces.
+        win_from, win_to = date(2026, 7, 27), date(2026, 9, 6)
+        data = compute_workload(u, ws.slug, "week", win_from, win_to)
+        row = next(r for r in data["rows"] if r["assignee_id"] == str(u.id))
+
+        # buckets: still clipped to the window — only Jul 27-31 (5h).
+        self.assertAlmostEqual(sum(row["buckets"].values()), 5.0, places=2)
+
+        # month_buckets: the WHOLE July total, not the 5h window slice.
+        self.assertIn("2026-07", row["month_buckets"])
+        self.assertAlmostEqual(row["month_buckets"]["2026-07"], 31.0, places=2)
+
+    def test_month_buckets_only_owner_still_appears_in_rows(self):
+        """`month_buckets` is now clipped WIDER than `buckets` (see
+        aggregation.spread_estimate's docstring), so an owner whose only
+        estimate falls entirely before the request window — but still inside
+        the window's own calendar month — can have data in `month_buckets`
+        with NOTHING in `buckets` or `unscheduled`. `compute_workload` must
+        still surface that owner's row (service.py's `owner_ids` union), or
+        their month total would be silently dropped from the response."""
+        ws = _ws()
+        proj = _project(ws)
+        u = _user()
+        _pmember(ws, proj, u)
+        st = _state(ws, proj, "started")
+        _settings(ws, max_daily_hours=1.0, workdays=[0, 1, 2, 3, 4, 5, 6])
+
+        # Entirely BEFORE the window, but inside the window's own month (July).
+        start, target = date(2026, 7, 1), date(2026, 7, 5)
+        issue = _issue(ws, proj, st, u, start=start, target=target)
+        _assign(ws, proj, issue, u, created_at=_t(1))
+        _estimate(ws, proj, issue, 5.0)
+
+        win_from, win_to = date(2026, 7, 27), date(2026, 9, 6)
+        data = compute_workload(u, ws.slug, "week", win_from, win_to)
+
+        row = next((r for r in data["rows"] if r["assignee_id"] == str(u.id)), None)
+        self.assertIsNotNone(row, "owner with month-only data must still appear in rows")
+        self.assertEqual(row["buckets"], {})
+        self.assertAlmostEqual(row["month_buckets"]["2026-07"], 5.0, places=2)
+        self.assertEqual(row["total"], 0.0)
+        self.assertEqual(row["tasks"], [])
