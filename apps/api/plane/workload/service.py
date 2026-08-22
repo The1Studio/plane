@@ -24,10 +24,12 @@ from plane.db.models.state import StateGroup
 
 from .aggregation import (
     capacity_for_period,
+    distribute_cents,
     enumerate_periods,
     from_cents,
     quantize_hours,
     spread_estimate,
+    to_cents,
 )
 from .constants import DEFAULT_MAX_WEEKLY_HOURS, DEFAULT_WEEK_START_DAY, DEFAULT_WORKDAYS
 from .models import WorkloadEstimate, WorkloadSettings
@@ -218,12 +220,24 @@ def _base_queryset(slug, scope_q, state_groups):
 
 
 def _resolve_owners(issue_ids):
-    """Map issue_id -> (assignee_id, display_name) for the earliest ACTIVE,
-    non-bot assignee. Issues with no qualifying assignee are absent (→ Unassigned).
+    """Map issue_id -> [(assignee_id, display_name), ...] for EVERY ACTIVE,
+    non-bot assignee, ordered earliest-assigned first. Issues with no
+    qualifying assignee are absent (→ Unassigned).
 
     One query: filter out bots + soft-deleted, require an active ProjectMember
-    for the issue's project, order ASC and keep the first per issue. Avoids the
-    M2M-join fan-out that would multi-count an issue's hours.
+    for the issue's project, order ASC.
+
+    Plane mirrors ClickUp in allowing several assignees on one work item, so an
+    issue legitimately has more than one owner. The caller must therefore SPLIT
+    each issue's hours across this list rather than adding the full estimate to
+    every owner — a raw M2M join would multi-count a shared issue's hours once
+    per assignee and inflate the matrix. `compute_workload` does that split with
+    `distribute_cents`, so the per-owner shares re-sum to the issue's estimate
+    exactly.
+
+    This deliberately no longer collapses to the earliest assignee alone: doing
+    so credited a shared task entirely to one person and left every other
+    assignee's contribution invisible in the matrix.
     """
     if not issue_ids:
         return {}
@@ -242,11 +256,10 @@ def _resolve_owners(issue_ids):
         .order_by("issue_id", "created_at", "assignee_id")
         .values_list("issue_id", "assignee_id", "assignee__display_name")
     )
-    owners = {}
+    owners = defaultdict(list)
     for issue_id, assignee_id, name in rows:
-        if issue_id not in owners:  # first = earliest active non-bot
-            owners[issue_id] = (assignee_id, name)
-    return owners
+        owners[issue_id].append((assignee_id, name))
+    return dict(owners)
 
 
 def _resolve_work_settings(slug):
@@ -392,11 +405,24 @@ def compute_workload(
         project_identifier,
         state_group,
     ) in est_rows:
-        owner = owners.get(issue_id)
-        owner_id = owner[0] if owner else None
-        if assignee_filter is not None and owner_id not in assignee_filter:
+        # An issue may carry SEVERAL assignees (ClickUp parity). Its hours are
+        # split evenly across them, so two people sharing an 8h task each carry
+        # 4h — never 8h apiece, which would double-count the work, and never 8h
+        # to one of them, which would hide the other's load entirely.
+        issue_owners = owners.get(issue_id) or [(None, "Unassigned")]
+        n_owners = len(issue_owners)
+
+        # Apply the assignee filter to the OWNERS, not to the issue: the split
+        # is always computed over the full owner list, so filtering the matrix
+        # down to one person shows that person's SHARE (4h), not the whole
+        # estimate they happen to co-own.
+        visible = [
+            (idx, oid, oname)
+            for idx, (oid, oname) in enumerate(issue_owners)
+            if assignee_filter is None or oid in assignee_filter
+        ]
+        if not visible:
             continue
-        names[owner_id] = owner[1] if owner else "Unassigned"
 
         b, uns_cents, dirty = spread_estimate(
             hours, start, target, date_from, date_to, granularity, workdays, week_start_day
@@ -406,10 +432,22 @@ def compute_workload(
             meta["dirty_date_count"] += 1
         if target is None:
             meta["issues_unscheduled"] += 1
-        for k, c in b.items():
-            buckets[owner_id][k] += c
-        if uns_cents:
-            unscheduled[owner_id] += uns_cents
+
+        # Split with the SAME largest-remainder rule the day-spread uses, per
+        # bucket and on the whole-issue estimate alike, so every owner's shares
+        # re-sum to the issue's own total exactly — an odd cent is handed to the
+        # earliest assignee rather than rounded away. Splitting each bucket
+        # (not each owner's total) keeps the per-period columns exact too.
+        bucket_shares = {k: distribute_cents(c, n_owners) for k, c in b.items()}
+        uns_shares = distribute_cents(uns_cents, n_owners) if uns_cents else None
+        est_shares = distribute_cents(to_cents(hours), n_owners)
+
+        for idx, owner_id, owner_name in visible:
+            names[owner_id] = owner_name
+            for k, parts in bucket_shares.items():
+                buckets[owner_id][k] += parts[idx]
+            if uns_shares:
+                unscheduled[owner_id] += uns_shares[idx]
 
 
         # A task appears in `tasks` iff it has a visible representation in
@@ -424,26 +462,34 @@ def compute_workload(
         # plot it in, and counting it would burn the truncation cap on rows
         # invisible to the current request.
         if b or target is None:
-            tasks_by_owner[owner_id].append(
-                {
-                    "id": str(issue_id),
-                    "project_id": str(project_id),
-                    "identifier": f"{project_identifier}-{sequence_id}",
-                    "name": issue_name,
-                    # The WHOLE issue estimate, not the windowed slice `b`
-                    # sums to — see the docstring on the `tasks` assembly
-                    # below for why these two deliberately do not reconcile.
-                    "hours": quantize_hours(hours),
-                    "start_date": start.isoformat() if start else None,
-                    "target_date": target.isoformat() if target else None,
-                    "state_group": state_group,
-                    "overdue": bool(
-                        target is not None
-                        and target < today
-                        and state_group not in _TERMINAL_STATE_GROUPS
-                    ),
-                }
-            )
+            for idx, owner_id, _ in visible:
+                tasks_by_owner[owner_id].append(
+                    {
+                        "id": str(issue_id),
+                        "project_id": str(project_id),
+                        "identifier": f"{project_identifier}-{sequence_id}",
+                        "name": issue_name,
+                        # THIS OWNER'S SHARE of the whole issue estimate — not
+                        # the windowed slice `b` sums to (see the docstring on
+                        # the `tasks` assembly below for why those two
+                        # deliberately do not reconcile), and not the issue
+                        # total when the issue is shared. A row's `hours` must
+                        # be what that person carries, or the task list would
+                        # contradict the buckets above it. `total_hours` keeps
+                        # the undivided estimate available for display.
+                        "hours": from_cents(est_shares[idx]),
+                        "total_hours": quantize_hours(hours),
+                        "assignee_count": n_owners,
+                        "start_date": start.isoformat() if start else None,
+                        "target_date": target.isoformat() if target else None,
+                        "state_group": state_group,
+                        "overdue": bool(
+                            target is not None
+                            and target < today
+                            and state_group not in _TERMINAL_STATE_GROUPS
+                        ),
+                    }
+                )
 
     period_set = set()
     for pm in buckets.values():

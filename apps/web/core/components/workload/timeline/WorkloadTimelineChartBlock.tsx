@@ -118,7 +118,15 @@ export const WorkloadTimelineChartBlock = observer(function WorkloadTimelineChar
                     ? "bg-danger-subtle text-danger-primary hover:bg-danger-subtle/80"
                     : "bg-accent-primary/15 text-accent-primary hover:bg-accent-primary/25"
                 )}
-                title={`${task.identifier} ${task.name} · ${task.hours}h${task.overdue ? " · overdue" : ""}`}
+                // The bar shows this member's SHARE. A work item can carry
+                // several assignees (ClickUp parity) and its estimate is split
+                // evenly across them, so a bar reading "4h" on a shared 8h task
+                // is correct but looks wrong against the work item itself —
+                // the tooltip spells the split out rather than leaving the
+                // reader to think the estimate changed.
+                title={`${task.identifier} ${task.name} · ${task.hours}h${
+                  task.assignee_count > 1 ? ` of ${task.total_hours}h, split ${task.assignee_count} ways` : ""
+                }${task.overdue ? " · overdue" : ""}`}
               >
                 {/* Name and hours only. The identifier prefix ate a third of a
                     narrow bar's width without telling the reader anything they
