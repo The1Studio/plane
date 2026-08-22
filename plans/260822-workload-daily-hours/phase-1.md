@@ -98,11 +98,11 @@ Requirements:
 Rename the first parameter of `capacity_for_period` to `max_daily_hours` and rewrite the
 three branches per `plan.md`'s contract table:
 
-| granularity | new expression |
-|---|---|
-| `day` | `round(float(max_daily_hours), 2)` on a workday, else `0.0` |
-| `week` | `round(max_daily_hours * len(workdays), 2)` |
-| `month` | `round(max_daily_hours * _workdays_in_month(year, month, workdays), 2)` |
+| granularity | new expression                                                          |
+| ----------- | ----------------------------------------------------------------------- |
+| `day`       | `round(float(max_daily_hours), 2)` on a workday, else `0.0`             |
+| `week`      | `round(max_daily_hours * len(workdays), 2)`                             |
+| `month`     | `round(max_daily_hours * _workdays_in_month(year, month, workdays), 2)` |
 
 - `_is_workday()` and `_workdays_in_month()` are unchanged.
 - Rewrite the function docstring's basis explanation: the basis is now one configured
@@ -152,6 +152,7 @@ three branches per `plan.md`'s contract table:
 
   Compute the expected month values from a hand-verified workday count, not from the
   function under test.
+
 - Keep the existing empty/degenerate-workdays coverage. If a test named for the old field
   exists (`..._max_weekly_hours`), rename it rather than deleting it.
 
@@ -192,3 +193,87 @@ Run from `apps/api/` (see the `backend-test-db-isolation` notes for interpreter/
 ## Commit
 
 `feat(workload): configure the hour cap per day (default 8h) instead of per week`
+
+---
+
+## Step 1.8 — `month_buckets`: calendar-month hours (added 2026-08-22, plan D6)
+
+Added after the rename was already in progress, on the user's validation request that a month
+must be measured 1st-to-last-day rather than first-week-to-last-week. **Land this as its own
+commit, after the rename commit** — it is a separate concern and a separate reviewable change.
+
+### The defect it fixes
+
+At month zoom the chart requests `granularity=week`, and the badge attributes a week bucket to
+the month containing the week's START. Verified against real dates (Mon-Fri, week starts Monday):
+
+```
+bucket 2026-08-03  ->  Aug 3..Aug 7    ok
+bucket 2026-08-10  ->  Aug 10..Aug 14  ok
+bucket 2026-08-17  ->  Aug 17..Aug 21  ok
+bucket 2026-08-24  ->  Aug 24..Aug 28  ok
+bucket 2026-08-31  ->  Aug 31..Sep 4   LEAKS 4 workdays into August, and removes
+                                       them from September's own total
+```
+
+Up to ~32h misattributed against a 168h denominator, in both directions depending on the month.
+The client cannot repair it: at week granularity it holds only week-summed hours.
+
+**Quarter focus is already exact** — its buckets are whole months, and a month bucket cannot
+straddle a quarter boundary. Do not "fix" it.
+
+### The change — `aggregation.py`
+
+`spread_estimate` already iterates `target_days` and calls `period_key(d, granularity,
+week_start_day)` per day. Accumulate a second dict in the SAME loop, keyed by calendar month:
+
+- Reuse `period_key(d, "month", week_start_day)` for the key. Do NOT hand-format `f"{d.year}-
+{d.month:02d}"` — the month key format must have exactly one definition, and `period_key`
+  already owns it (`week_start_day` is ignored for `month`, which is why passing it is safe).
+- Clip identically to `buckets`: only days satisfying `win_from <= d <= win_to` are counted.
+  The two maps must agree on which days exist, or the badge and the columns describe different
+  windows.
+- Return `(buckets, month_buckets, unscheduled_cents, dirty)` — a 4-tuple. There is exactly one
+  production call site (`service.py`) plus the pure tests, so widening the tuple is cheaper and
+  more honest than a flag argument or a second traversal.
+- Update the docstring's Returns block and add `month_buckets` to the semantics list.
+
+### The change — `service.py`
+
+- Unpack the new element at the `spread_estimate(...)` call.
+- Accumulate per-row `month_buckets` the same way `sparse` is accumulated, in cents, converting
+  with `from_cents` at the response boundary so it reconciles exactly like `buckets`.
+- Emit `"month_buckets": <dict>` on every row, next to `"buckets"`. Sparse — a month with no
+  hours is simply absent; do NOT pad it with zeros against `periods`, because `month_buckets` is
+  deliberately independent of the requested granularity.
+- `_empty_response` needs no change (it emits no rows).
+- Do NOT touch `capacity_buckets`, `over`, `total`, `total_capacity` or `periods`. This adds a
+  field; it changes no existing one.
+
+### Tests
+
+`tests/test_aggregation_pure.py`:
+
+- Update every existing `spread_estimate` unpack to the 4-tuple.
+- Add the straddle test, which is the whole point: one issue spanning `2026-08-31 .. 2026-09-04`
+  at `granularity="week"` must produce a single `buckets` entry keyed `2026-08-31`, and
+  `month_buckets` split across `2026-08` (Aug 31 only) and `2026-09` (Sep 1-4). Assert the two
+  maps sum to the same total — the split must lose no cents.
+- Add a test that `month_buckets` respects the `[win_from, win_to]` clip.
+
+`tests/test_workload_db.py`:
+
+- Assert `month_buckets` is present on a row and carries the calendar-month total for a
+  boundary-spanning issue.
+
+### Success criteria for 1.8
+
+- `python -m pytest plane/workload -q` green.
+- The straddle test fails if `month_buckets` is replaced by a copy of `buckets` — verify by
+  making it fail once on purpose before accepting it.
+- `buckets`, `capacity_buckets`, `periods` and every total are byte-identical to before 1.8 for
+  the same request.
+
+## Commit for 1.8
+
+`feat(workload): report calendar-month hours so the badge is exact at month zoom`
