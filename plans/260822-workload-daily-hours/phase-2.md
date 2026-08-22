@@ -42,6 +42,26 @@ per plan D5.
 
 ## Part A — the rename
 
+### 2.0 — `packages/workload-ext/src/types.ts`
+
+Add the field Phase 1 now emits, next to `buckets` on `TWorkloadRow`:
+
+```ts
+/**
+ * Hours per CALENDAR month ("2026-08"), independent of the requested
+ * granularity. Sparse. Exists because a week bucket is keyed by the date its
+ * week begins, so summing week buckets for a month credits a straddling week
+ * entirely to the month it started in — see plan D6.
+ */
+month_buckets?: Record<string, number>;
+```
+
+Also extend `merge.ts`'s row merge to carry `month_buckets` through the same spread-merge as
+`buckets` (`{ ...base.month_buckets, ...add.month_buckets }`), or a scrolled-in range will
+silently drop it. This is the one file the original phase told you not to touch — that
+instruction is superseded for this field only; `capacity_buckets`, `total_capacity` and
+`total_over` are still out of scope.
+
 ### 2.1 — `packages/types/src/workload.ts`
 
 - `max_weekly_hours: number` → `max_daily_hours: number`.
@@ -109,7 +129,7 @@ art across `packages/workload-ext/src/`, `apps/web/core/components/workload/`,
  * Dates are parsed as UTC and stepped by whole UTC days, so a viewer in any
  * timezone counts the same days for the same range.
  */
-export function countWorkdays(from: string, to: string, workdays: number[]): number
+export function countWorkdays(from: string, to: string, workdays: number[]): number;
 ```
 
 Requirements:
@@ -130,11 +150,24 @@ Requirements:
   already holds it (it reads `weekStartDay` from the same source for `focusPeriodFor`), and
   one object keeps the two values that must agree travelling together.
 - `periodFigures(row, focus, workSettings)`:
-  - **`used` is unchanged** — still the sum of `row.buckets` entries whose period key starts
-    inside the focus range, still via `isInFocus`. Do not touch `isInFocus`; its month-key
-    widening (`"2026-08"` → `"2026-08-01"`) is still exactly right.
+  - **`used` is measured over the same calendar range as `capacity`** (plan D6 — this replaces
+    the original "used is unchanged" instruction):
+    - **week focus** (day buckets) → sum `row.buckets` entries inside the range, via
+      `isInFocus` as today. Day keys cannot straddle, so this is already exact.
+    - **month focus** (week buckets) → read `row.month_buckets[focus month]`. Do NOT sum
+      `row.buckets`: a week bucket is keyed by the date its week starts, so the `2026-08-31`
+      bucket (Aug 31 – Sep 4) would credit four September workdays to August and strip them
+      from September. Phase 1 step 1.8 adds `month_buckets` precisely so the client does not
+      have to guess at this.
+    - **quarter focus** (month buckets) → sum `row.month_buckets` over the quarter's three
+      months. Summing `row.buckets` would also be correct here, since a month bucket cannot
+      straddle a quarter, but reading one field for both coarse zooms keeps a single code path.
+      Derive the focus month key as `focus.from.slice(0, 7)` — `focusPeriodFor` already guarantees
+      `focus.from` is the 1st of the month (`monthRange`) or of the quarter's first month
+      (`quarterRange`), both verified calendar-exact.
+  - `isInFocus` stays as-is and is still used for the week-focus branch. Do not delete it.
   - **`capacity` is now** `countWorkdays(focus.from, focus.to, workSettings.workdays) *
-    workSettings.max_daily_hours`, rounded via the existing `round2`.
+workSettings.max_daily_hours`, rounded via the existing `round2`.
   - **Stop reading `row.capacity_buckets` entirely** in this function.
   - `hasData` no longer means "some bucket fell in focus" — capacity is now always defined
     for a non-null focus. Collapse it: return the `—` placeholder when `focus` is `null`
@@ -174,12 +207,15 @@ Requirements:
 5. Badge, checked at all three zooms against a workspace on 8h/Mon-Fri:
    - **week zoom** (day buckets, week focus) → denominator `40h`.
    - **month zoom** (week buckets, month focus) → denominator equals that month's workday
-     count x 8. August 2026 → **`168h`**, not `200h`. This is the change; verify this one
-     specifically, not just that the code compiles.
+     count x 8. August 2026 → **`168h`**, not `200h`. Verify this one specifically, not just
+     that the code compiles.
+   - **month-boundary correctness** — with an estimate spanning 2026-08-31 to 2026-09-04,
+     August's badge must NOT include the Sep 1–4 hours and September's badge MUST include them.
+     This is the defect the user asked to have validated; check both months, not just one.
    - **quarter zoom** (month buckets, quarter focus) → sum of the three months' workday
      counts x 8 (Q3 2026: Jul 23 + Aug 21 + Sep 22 = 66 workdays → `528h`).
-   Verify the workday counts against a calendar by hand before accepting the rendered number —
-   reading them back off the UI proves nothing.
+     Verify the workday counts against a calendar by hand before accepting the rendered number —
+     reading them back off the UI proves nothing.
 6. A member with zero booked hours in the focused period renders `0h/<capacity>h`, not `—`.
 7. Heat cells are visually unchanged from before the change (they still read
    `capacity_buckets`, whose values are identical for the default config per Phase 1).
