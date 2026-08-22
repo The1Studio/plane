@@ -18,7 +18,15 @@
       "estimateHours": 11,
       "stage": "todo",
       "updatedAt": "2026-08-22T08:37:13.938Z"
+    },
+    {
+      "id": "5666daef-394c-46ba-9271-2b99e54dc27d",
+      "identifier": "PLANE-115",
+      "name": "[UI][Polish] Workload timeline: drop lane sidebar labels, default-collapse at Month/Quarter",
+      "estimateHours": 2,
+      "stage": "todo",
+      "updatedAt": "2026-08-22T11:13:59.007Z"
     }
   ],
-  "updatedAt": "2026-08-22T08:37:13.939Z"
+  "updatedAt": "2026-08-22T11:13:59.007Z"
 }
