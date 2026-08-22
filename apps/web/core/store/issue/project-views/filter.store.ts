@@ -23,6 +23,14 @@ import type {
 } from "@plane/types";
 import { EIssuesStoreType } from "@plane/types";
 import { handleIssueQueryParamsByLayout } from "@plane/utils";
+// The1Studio fork (views-search) — `withEntityNameSearch` emits the `name` query param, NOT
+// `search`. This surface hits CORE's `/api/workspaces/<slug>/projects/<id>/issues/` via
+// `IssueService.getIssues`, which dispatches `name` to `name__icontains` and silently ignores
+// `search` (no error, just an unfiltered result set) — so the `withGlobalViewSearch`/`search`
+// pairing from the workspace Views tab must NOT be copied here. `name` is not a member of the
+// sealed `TIssueParams`, so the fork widens the key from the `@plane/views-ext` side exactly as
+// the workspace store does for `search`.
+import { withEntityNameSearch } from "@plane/views-ext";
 // services
 import { ViewService } from "@/services/view.service";
 import type { IBaseIssueFilterStore } from "../helpers/issue-filter-helper.store";
@@ -125,7 +133,18 @@ export class ProjectViewIssuesFilter extends IssueFilterHelperStore implements I
       filteredParams
     );
 
-    return filteredRouteParams;
+    // The1Studio fork (views-search) — injecting the ephemeral term into `getAppliedFilters`,
+    // deliberately NEVER `updateFilters` (B2): a project view is SHARED, so a term written back
+    // there would PATCH the view and change what every member sees. The term is read here — the
+    // only read-only param assembly point on the request path (`getFilterParams` →
+    // `getAppliedFilters`). The store key matches the header's composite
+    // `"<EIssuesStoreType>:<entityId>"` (plan.md D3), so a project view's term can never
+    // collide with a module/cycle that happens to share its id. A blank/whitespace term returns
+    // `filteredRouteParams` unchanged — no hidden `name` key (empty ≡ absent).
+    const searchQuery = this.rootIssueStore.rootStore.viewsSearchStore.getSearchQuery(
+      `${EIssuesStoreType.PROJECT_VIEW}:${viewId}`
+    );
+    return withEntityNameSearch(filteredRouteParams, searchQuery);
   }
 
   getFilterParams = computedFn(

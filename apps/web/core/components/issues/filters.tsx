@@ -13,6 +13,12 @@ import { useTranslation } from "@plane/i18n";
 import { Button } from "@plane/propel/button";
 import type { IIssueDisplayFilterOptions, IIssueDisplayProperties } from "@plane/types";
 import { EIssueLayoutTypes, EIssuesStoreType } from "@plane/types";
+// The1Studio fork (views-search) — `WorkItemSearchInput` is a controlled, store-free input
+// (packages/views-ext/src/search-input.tsx). Imported from the fork-owned package rather than
+// reimplemented here because this surface reuses the exact same search interaction the
+// workspace Views tab / cycle / module headers already ship; a package under `packages/` cannot
+// import from `apps/web/core/`, so the views-ext copy is the shared home.
+import { WorkItemSearchInput } from "@plane/views-ext";
 // hooks
 import { useIssues } from "@/hooks/store/use-issues";
 // plane web imports
@@ -33,6 +39,11 @@ type Props = {
   workspaceSlug: string;
   canUserCreateIssue: boolean | undefined;
   storeType?: EIssuesStoreType.PROJECT | EIssuesStoreType.EPIC;
+  // The1Studio fork (views-search) — optional so a caller that doesn't wire up the search term
+  // (e.g. a future Epic surface) simply doesn't render the box; the Project Work Items header
+  // owns the store lookup and debounce, this component only renders + forwards keystrokes.
+  searchQuery?: string;
+  updateSearchQuery?: (query: string) => void;
 };
 const LAYOUTS = [
   EIssueLayoutTypes.LIST,
@@ -49,6 +60,8 @@ export const HeaderFilters = observer(function HeaderFilters(props: Props) {
     workspaceSlug,
     canUserCreateIssue,
     storeType = EIssuesStoreType.PROJECT,
+    searchQuery,
+    updateSearchQuery,
   } = props;
   // i18n
   const { t } = useTranslation();
@@ -94,6 +107,14 @@ export const HeaderFilters = observer(function HeaderFilters(props: Props) {
         projectDetails={currentProjectDetails ?? undefined}
         isEpic={storeType === EIssuesStoreType.EPIC}
       />
+      {/* The1Studio fork (views-search) — first child of the right-hand group, before the
+          layout selection, matching the reading order the workspace Views tab / cycle / module
+          headers already established (search -> layout -> filters -> display -> create). Gated
+          on `updateSearchQuery` being provided rather than `storeType`, so this stays correct if
+          a future caller wires the Epic surface up the same way. */}
+      {updateSearchQuery && (
+        <WorkItemSearchInput searchQuery={searchQuery ?? ""} updateSearchQuery={updateSearchQuery} />
+      )}
       <div className="hidden @4xl:flex">
         <LayoutSelection
           layouts={LAYOUTS}

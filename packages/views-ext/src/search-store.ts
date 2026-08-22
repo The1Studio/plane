@@ -14,12 +14,18 @@ import { action, makeObservable, observable } from "mobx";
 
 export interface IViewsSearchStore {
   /**
-   * The active search term for `viewId`, or `""` when none has been set. Never returns
+   * The active search term for `key`, or `""` when none has been set. Never returns
    * `undefined` — the consumer treats empty as "no filter" and must not need a null check.
+   *
+   * `key` is an OPAQUE STRING, not necessarily a view id. The workspace Views tab passes a bare
+   * `globalViewId`; the project-scoped lists (Project Work Items, Module, Cycle, Project Views)
+   * pass a composite `"<EIssuesStoreType>:<entityId>"` so that, say, a module and a cycle that
+   * happened to share an id could never collide. Any caller-chosen scheme works as long as it is
+   * stable for the surface and distinct across surfaces — the store never parses it.
    */
-  getSearchQuery(viewId: string): string;
-  setSearchQuery(viewId: string, query: string): void;
-  clearSearchQuery(viewId: string): void;
+  getSearchQuery(key: string): string;
+  setSearchQuery(key: string, query: string): void;
+  clearSearchQuery(key: string): void;
 }
 
 export class ViewsSearchStore implements IViewsSearchStore {
