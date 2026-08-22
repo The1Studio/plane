@@ -646,6 +646,47 @@ The same change makes the `/api/workload/workspaces/<slug>/` response carry `wee
 than only the populated buckets. `total_over` keeps its definition but changes its **value** as a
 result — the one silent behavioural change for downstream consumers.
 
+### Cascade-confirm modal for sub-work items — fenced `The1Studio fork (cascade-confirm)`
+
+Setting a parent work item to a terminal state (Completed/Cancelled) can optionally cascade the
+same terminal group onto its sub-items, behind a confirmation modal (issue #54,
+`plans/260822-cascade-complete-sub-items/plan.md`). Backend: new `cascade_ext` Django app, two
+endpoints, **zero core backend edits** (mounts via touch-point 2 only). Frontend: new
+`packages/cascade-ext/` package (store, modal, API client, the pure `shouldPromptCascade` guard)
+plus the fenced core delegations below.
+
+**One choke point, not two.** The plan's own seam table names two entry points —
+`issue-details/issue.store.ts:181` `updateIssue` (detail dropdown) and
+`helpers/base-issues.store.ts` `updateIssue` (list/spreadsheet/kanban) — as if they needed
+independent guards. They don't: every per-store-type subclass (`project/issue.store.ts`,
+`cycle/issue.store.ts`, `module/issue.store.ts`, `project-views/issue.store.ts`,
+`profile/issue.store.ts`, `workspace/issue.store.ts`) aliases `updateIssue = this.issueUpdate`,
+where `issueUpdate` is the ONE method defined on the shared `BaseIssuesStore` base class in
+`helpers/base-issues.store.ts`. `issue-details/issue.store.ts`'s own `updateIssue` (the detail/peek
+dropdown's entry point) itself calls `currentStore.updateIssue(...)`, which resolves through that
+same alias into the identical `issueUpdate`. Fencing the guard in BOTH files as the phase file
+describes would have fired it **twice** for the detail-dropdown path — once in
+`issue.store.ts`, then again when it delegates into `issueUpdate` — reopening a second modal (or
+double-POSTing `cascade-apply`) after the user had already made a choice. The guard therefore lives
+in exactly one place, `issueUpdate`, which structurally covers all three of #54's required entry
+points (detail dropdown, list/spreadsheet dropdown, kanban drag-drop) at once.
+`issue-details/issue.store.ts` carries no cascade-confirm edit at all.
+
+| File                                                            | What                                                                                                                                                                                                                                     | Why no seam                                                                                                                                                                          |
+| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/core/store/issue/helpers/base-issues.store.ts`        | Module-level `cascadeConfirmStore` singleton (`@plane/cascade-ext` ships only the class), and — at the top of `issueUpdate` — `shouldPromptCascade` guard → `cascadeService.getPreview` → (if any row is eligible) `cascadeConfirmStore.requestCascade` → on a cascade choice with ticked children, `cascadeService.apply` and an early `return` so the plain PATCH below never double-writes the parent. Every other case (no target group, empty/all-ineligible preview, "only this item", zero ticked children) falls through unchanged | No upstream pre-update hook on the issue stores, and `issueUpdate` is the one method every list/spreadsheet/kanban/detail state write funnels through — see "One choke point" above |
+| `apps/web/app/root.tsx`                                          | Mounts `<CascadeConfirmModal store={cascadeConfirmStore} />` inside `<AppProvider>`, importing the singleton back from `base-issues.store.ts`                                                                                          | No global modal-host seam exists for a fork-owned dialog; this widens touch-point 7 beyond its documented white-label-branding purpose (`VITE_APP_TITLE` etc.) — noted here rather than left for a future reader to wonder about |
+
+**`plane-isolation-audit` / fork-ownership note:** `packages/cascade-ext` uses the `@plane/` npm
+scope but is **fork-owned** (not upstream) — same clarification as `@plane/workload-ext` /
+`@plane/views-ext` above. Allowlist `@plane/cascade-ext` so it isn't false-flagged as a
+sealed-package edit.
+
+**Rebase handling:** these files ARE expected conflict points (unlike the abort-on-conflict rule
+for everything else). On conflict, re-apply the fork block — each is fenced by a
+`The1Studio fork (cascade-confirm)` comment — and keep upstream's changes around it. Do NOT abort
+the rebase for a conflict confined to this set.
+
 ### Fork bugfix exceptions (upstream bugs, fenced, upstream-PR candidates)
 
 Minimal fenced fixes for bugs that exist in upstream itself (verified unfixed at

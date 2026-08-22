@@ -25,10 +25,12 @@ export interface TCascadeDescendant {
   depth: number;
   project_id: string;
   project_name: string;
-  state_id: string;
-  state_name: string;
-  state_group: string;
-  target_state_id: string;
+  /** Backend emits `null` when `child.state` is falsy (`service.py::collect_descendants`). */
+  state_id: string | null;
+  state_name: string | null;
+  state_group: string | null;
+  /** Backend emits `null` for ineligible rows — the project has no matching target state. */
+  target_state_id: string | null;
   eligible: boolean;
   reason: TCascadeIneligibleReason | null;
 }

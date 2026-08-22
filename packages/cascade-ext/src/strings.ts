@@ -20,7 +20,10 @@ export const CASCADE_STRINGS = {
   title: "Change sub-items too?",
   description: (parentIdentifier: string, targetGroup: TCascadeStateGroup) =>
     `${parentIdentifier} is moving to ${TARGET_GROUP_LABEL[targetGroup]}. Choose which of its sub-items should move too.`,
-  currentState: (stateName: string) => `Currently ${stateName}`,
+  // `stateName` widens to `| null` alongside `TCascadeDescendant.state_name` (types.ts) — the
+  // backend's `child.state` FK is nullable (`Issue.state`, apps/api/plane/db/models/issue.py),
+  // so an eligible descendant can, in principle, have no state at all.
+  currentState: (stateName: string | null) => (stateName ? `Currently ${stateName}` : "No current state"),
   ineligibleReason: (reason: TCascadeIneligibleReason | null) =>
     reason ? INELIGIBLE_REASON_LABEL[reason] : "Not eligible",
   rowCheckboxLabel: (identifier: string) => `Change ${identifier} too`,

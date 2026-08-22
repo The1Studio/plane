@@ -9,6 +9,13 @@ import { action, computed, makeObservable, observable, runInAction } from "mobx"
 import { computedFn } from "mobx-utils";
 // plane constants
 import { ALL_ISSUES, ISSUE_PRIORITIES } from "@plane/constants";
+// The1Studio fork (cascade-confirm) — see docs/FORK.md § "Cascade-confirm modal for sub-work
+// items". `cascadeConfirmStore` is instantiated here (not in `@plane/cascade-ext`, which ships
+// only the class) because this is the one file every list/spreadsheet/kanban/detail state write
+// funnels through (`issueUpdate` below); `root.tsx` imports it back to mount the modal.
+import { cascadeService, CascadeConfirmStore, shouldPromptCascade } from "@plane/cascade-ext";
+export const cascadeConfirmStore = new CascadeConfirmStore();
+// end The1Studio fork (cascade-confirm)
 // types
 import type {
   TIssue,
@@ -558,6 +565,38 @@ export abstract class BaseIssuesStore implements IBaseIssuesStore {
     data: Partial<TIssue>,
     shouldSync = true
   ) {
+    // The1Studio fork (cascade-confirm) — every list/spreadsheet/kanban state write funnels here
+    // (detail-dropdown too: issue-details/issue.store.ts's updateIssue delegates into this exact
+    // method via the per-store-type `updateIssue = this.issueUpdate` alias), so one guard here
+    // covers all three of #54's entry points with no duplicate fence anywhere else.
+    const cascadeIssue = this.rootIssueStore.issues.getIssueById(issueId);
+    const targetGroup = shouldPromptCascade({
+      data,
+      subIssuesCount: cascadeIssue?.sub_issues_count ?? 0,
+      getStateGroupById: (id) => this.rootIssueStore.stateMap?.[id]?.group,
+    });
+    if (targetGroup) {
+      const preview = await cascadeService.getPreview(workspaceSlug, projectId, issueId, targetGroup);
+      const eligible = preview.descendants.filter((d) => d.eligible);
+      if (eligible.length > 0) {
+        const parentProjectIdentifier = this.rootIssueStore.projectMap?.[projectId]?.identifier ?? projectId;
+        const choice = await cascadeConfirmStore.requestCascade({
+          parentIdentifier: `${parentProjectIdentifier}-${cascadeIssue?.sequence_id ?? issueId}`,
+          targetGroup,
+          descendants: preview.descendants,
+        });
+        if (choice.cascade && choice.childIds.length > 0) {
+          // apply() writes the parent's new state INSIDE its own transaction — falling through
+          // to the plain PATCH below would write the parent a second time, outside it.
+          await cascadeService.apply(workspaceSlug, projectId, issueId, data.state_id as string, choice.childIds);
+          return;
+        }
+      }
+    }
+    // Every other case — no target group, an empty/all-ineligible preview, "only this item", or
+    // zero ticked children — falls through unchanged to the plain PATCH below.
+    // end The1Studio fork (cascade-confirm)
+
     // Store Before state of the issue
     const issueBeforeUpdate = clone(this.rootIssueStore.issues.getIssueById(issueId));
     try {
