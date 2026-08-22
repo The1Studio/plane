@@ -54,6 +54,8 @@ For each changed file → classify via plane-classify-path.cjs:
                    (warn if an existing touch-point line was deleted or modified — diff must show
                     only "+" lines in the fork-specific block, no "-" lines)
   custom-app/pkg → OK
+  custom-infra   → OK (fork-created infrastructure: deploy scripts, the fork's own CI workflows,
+                   plans/, docs/FORK.md — see fork-convention.md "forkPaths")
 
 Then content scans (apply to the full diff text, not just filenames):
   1. A new field added to a core-model class (Issue / Page / Module / State / Intake / Asset)?

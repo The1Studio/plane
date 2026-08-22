@@ -731,6 +731,51 @@ Expected result: Django loads cleanly, the URL resolver finds no issues, and aft
 working tree is clean. This proves that new apps integrate via the documented touch-points
 without any core surgery.
 
+### Fork-owned infrastructure paths (`custom-infra`)
+
+Not every fork-created path is a Django app (`custom-app`) or a frontend package
+(`custom-package`). A short list of paths are **wholly fork-created infrastructure** — absent
+upstream, owned entirely by this fork, and outside the app/package conventions. They classify as a
+new isolation category, **`custom-infra`**, and edits to them are OK: `plane-isolation-audit`
+treats them the same as `custom-app` / `custom-package`, not as core leaks.
+
+The complete list (verified by `git log --diff-filter=A` — do not extend it without an explicit
+ownership decision):
+
+| Path | Creating commit | What it is |
+| --- | --- | --- |
+| `.claude/` | upstream dir, fork content | Fork maintenance tooling: `scripts/`, `rules/`, `plans/`, `skills/_shared/`, every `skills/plane-*/`. See the carve-out below |
+| `deployments/selfhost/` | fork | The1Studio self-host deploy stack (compose, scripts); the only `deployments/` subtree we own |
+| `plans/` | fork | Per-feature planning artefacts (phase docs, plan trees) |
+| `docs/FORK.md` | fork | This document — the convention's own SSOT |
+| `.github/workflows/company-main-ci.yml` | fork | Fork CI gate (makemigrations --check, Django check, pnpm check) |
+| `.github/workflows/deploy-company-main.yml` | fork | Fork production deploy workflow |
+
+`plane-classify-path.cjs` reads this list from the `forkPaths` array in
+`.claude/skills/_shared/references/fork-convention.md`. A prefix ending in `/` matches the
+directory and everything beneath it; a prefix with no trailing `/` must match the path exactly
+(so `docs/FORK.md` does not match `docs/FORK.md.bak`, and `plans/` is not matched by
+`plansible/`). The classifier normalizes both sides before comparing and never uses bare
+`startsWith` on a non-`/`-terminated prefix.
+
+**`.claude/` is whitelisted with a two-file carve-out.** Upstream created the directory
+(`f1d567accc`, "Claude Code skills for PR descriptions", #8920) but contributed exactly two files
+to it — `skills/pr-description.md` and `skills/release-notes.md`. Everything else beneath it is
+fork-authored, mostly by `5105532b68` ("add plane-* fork maintenance skill set"). So `.claude/`
+is in `forkPaths` and those two files are named in **`forkPathExceptions`**, which is checked
+first and returns them to `core`.
+
+That shape was chosen over enumerating the fork subdirectories deliberately: a newly added
+`plane-*` skill is then covered automatically, whereas an enumerated list would silently miss it
+and report the new skill as a core leak. Verify provenance with `git log --diff-filter=A -- <path>`
+before adding to either array — a too-broad `forkPaths` prefix silently grants fork-edit approval
+to upstream files, which is the failure this whole mechanism exists to prevent.
+
+The exclusion applies to `deployments/cli/`, `deployments/aio/`, `deployments/kubernetes/`,
+`deployments/swarm/`, `deployments/r2-proxy/` (upstream `6d01622663`) — only `deployments/selfhost/`
+is ours — and to the upstream `.github/workflows/*.yml` files (e.g. `codeql.yml`); only the two
+fork workflows listed above are `custom-infra`.
+
 ---
 
 ## CI gates
