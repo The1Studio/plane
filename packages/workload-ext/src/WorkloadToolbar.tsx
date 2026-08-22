@@ -14,7 +14,7 @@ export type WorkloadToolbarProps = {
   /** Whether the current viewer is a workspace admin — gates the "Manage" link in the settings readout. */
   isAdmin?: boolean;
   /**
-   * Workspace-wide work settings, rendered as a read-only readout ("Max Nh/week
+   * Workspace-wide work settings, rendered as a read-only readout ("Max Nh/day
    * · workdays · week starts Day"). `undefined` renders nothing — the host
    * fetches this via the app's `useWorkSettings()` hook, since this package
    * cannot import app hooks (context-agnostic, same inversion as `isAdmin`).
@@ -44,17 +44,17 @@ export type WorkloadToolbarProps = {
 /** EStartOfTheWeek numbering (@plane/types) — SUNDAY = 0 .. SATURDAY = 6. */
 const DAY_ABBR = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-/** Formats `hours` without a trailing ".0" (e.g. "40h", "37.5h/week"). */
-function formatWeeklyHours(hours: number): string {
+/** Formats `hours` without a trailing ".0" (e.g. "8h", "7.5h/day"). */
+function formatDailyHours(hours: number): string {
   return Number.isInteger(hours) ? `${hours}` : hours.toFixed(1);
 }
 
-/** "Max 40h/week · Mon, Tue, Wed, Thu, Fri · week starts Monday" */
+/** "Max 8h/day · Mon, Tue, Wed, Thu, Fri · week starts Monday" */
 function formatWorkSettingsReadout(settings: TWorkSettings): string {
   const workdaysLabel = settings.workdays.map((d) => DAY_ABBR[d] ?? "?").join(", ");
   const weekStartLabel = DAY_ABBR[settings.week_start_day] ?? "?";
   return wlt("toolbar.settings_readout", {
-    hours: formatWeeklyHours(settings.max_weekly_hours),
+    hours: formatDailyHours(settings.max_daily_hours),
     workdays: workdaysLabel,
     weekStart: weekStartLabel,
   });

@@ -19,8 +19,11 @@
  * needed at the API boundary in either direction.
  */
 export type TWorkSettings = {
-  /** 0 <= x <= 10000 (MAX_HOURS, apps/api/plane/workload/aggregation.py). */
-  max_weekly_hours: number;
+  /**
+   * 0 <= x <= 10000 (MAX_HOURS, apps/api/plane/workload/aggregation.py). Hours
+   * per configured workday, not per week.
+   */
+  max_daily_hours: number;
   /** Non-empty, unique, ascending EStartOfTheWeek values. */
   workdays: number[];
   /** EStartOfTheWeek value. */
