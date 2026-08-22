@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "sessionKey": "2026-08-20",
+  "repoKey": "The1Studio/plane",
+  "workItems": [
+    {
+      "id": "6292479d-790c-4e5d-8c1d-487058c369dc",
+      "identifier": "PLANE-80",
+      "name": null,
+      "estimateHours": null,
+      "stage": "in_progress",
+      "updatedAt": "2026-08-20T04:04:59.613Z"
+    }
+  ],
+  "updatedAt": "2026-08-20T04:04:59.613Z"
+}
