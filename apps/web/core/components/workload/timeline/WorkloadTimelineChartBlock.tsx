@@ -21,7 +21,7 @@
 
 import { observer } from "mobx-react";
 import { cn } from "@plane/utils";
-import { periodDateRange } from "@plane/workload-ext";
+import { hoursLabelStep, periodDateRange } from "@plane/workload-ext";
 import type { TWorkloadGranularity, TWorkloadTask } from "@plane/workload-ext";
 import { getPositionFromDate } from "@/components/gantt-chart/views";
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
@@ -38,34 +38,38 @@ type Props = {
 /**
  * Floor for a task bar's rendered width, in px.
  *
- * A bar must stay wide enough to render its `Nh` estimate WHOLE — that number
- * is the point of this view, and the hours span below is `shrink-0` inside an
- * `overflow-hidden` row, so a bar too narrow for it clips the number's TAIL:
- * `10.75h` renders as a confident, wrong `10.7`. A missing label is recoverable
- * (the `title` still carries the value); a truncated one is a lie.
+ * This is a DURATION floor, and only that: it exists so a bar can never be
+ * drawn at zero width. It is deliberately no longer a label floor.
  *
- * Sized against the widest realistic label rather than the common one, because
- * `hours` is a 2-decimal float (`quantize_hours` → `round(cents / 100, 2)` in
- * `plane/workload/aggregation.py`), not an integer: `10.75h` is ~34px at
- * `text-11`, and the row spends 16px on `px-2`. 60px therefore leaves ~44px of
- * label room at Quarter zoom — the only zoom this floor reaches, and the one
- * zoom that drops the title, so there is no `gap-1.5` to pay for either. That
- * covers every estimate short of a three-digit decimal.
+ * It used to be 60px and it used to carry both jobs. The argument for 60 was
+ * legibility: `hours` is a 2-decimal float (`quantize_hours` → `round(cents /
+ * 100, 2)` in `plane/workload/aggregation.py`), so the widest realistic label
+ * is `10.75h` — ~34px at `text-11`, plus 16px of `px-2` — and 60px was the
+ * width at which that still rendered whole. The row is `overflow-hidden` and,
+ * with no title beside it, `justify-center`, so a bar too narrow for its label
+ * does not clip politely at the tail: it eats BOTH ends and `10.75h` renders
+ * as a confident, wrong `0.75`.
  *
- * Which zooms this actually binds on — `dayWidth` is 180 at Week, 60 at Month,
- * 30 at Quarter (gantt-chart/data/index.ts). A bar is at minimum one full day
- * wide, so at Week and Month the true width already clears this floor and
- * nothing is distorted. It binds ONLY at Quarter zoom, and only on a 1-day
- * task, which is drawn 60px — 2 days' worth; a 2-day task already sits exactly
- * on the floor. That is a deliberate trade: at Quarter zoom the timeline is
- * read for load, not for duration, and an always-legible estimate is worth
- * more there than an exact sliver.
+ * That guarantee has not been dropped, it has moved. `hoursLabelStep`
+ * (`@plane/workload-ext`) now answers "does this label fit in this bar", and
+ * steps `text-11` → `text-9` → no label at all rather than ever clipping. Its
+ * unit tests pin the boundaries against the three `dayWidth` values below,
+ * which is more than this constant's docstring could ever do.
  *
- * Keep this paragraph in step with `VIEWS_LIST` — widening a zoom's `dayWidth`
- * shrinks how far this floor reaches, and the numbers above are the only place
- * that relationship is written down.
+ * Which zooms this binds on — `dayWidth` is 180 at Week, 60 at Month, 30 at
+ * Quarter (gantt-chart/data/index.ts). A bar is at minimum one full day wide,
+ * so at Week (180px) and Month (60px) the true width already clears 30 and
+ * nothing is distorted. It binds ONLY at Quarter, where it is now exactly one
+ * day — so a 1-day task is drawn one day wide instead of the two days' worth
+ * the old 60px floor inflated it to.
+ *
+ * That inflation was not free, which is the second reason for the change:
+ * `packTasksIntoLanes` packs tasks into a lane by DATE and knows nothing about
+ * rendered pixels, so a 1-day task stretched to two days could paint over the
+ * task starting the next day in the same lane. Halving the floor strictly
+ * reduces that overlap.
  */
-const MIN_BAR_WIDTH = 60;
+const MIN_BAR_WIDTH = 30;
 
 export const WorkloadTimelineChartBlock = observer(function WorkloadTimelineChartBlock({
   data,
@@ -83,15 +87,31 @@ export const WorkloadTimelineChartBlock = observer(function WorkloadTimelineChar
     const laneBlock = getBlockById(data.id);
     const laneMarginLeft = laneBlock?.position?.marginLeft ?? 0;
     const dayWidth = currentViewData.data.dayWidth;
-    // At quarter zoom a bar spans a handful of pixels per day, so a title is
-    // never more than two or three characters before the ellipsis — it costs
-    // the whole bar and tells the reader nothing. Drop it there and show the
-    // estimate alone; the name stays one hover away in the `title` below, and
-    // in the sidebar. Week and month keep both.
-    const isQuarter = currentViewData.key === "quarter";
+    // Week is the zoom read for DETAIL — which item, whose, how long — and it
+    // has the pixels to answer all three: a bar is at least 180px, so it can
+    // afford a second line carrying the work-item identifier.
+    //
+    // Month and Quarter are read for LOAD. There the name is the first thing
+    // to go: at Month a bar is 60px per day and a name is two or three
+    // characters before the ellipsis, which costs the width the estimate needs
+    // and tells the reader nothing they could not get by hovering. Both zooms
+    // therefore show the estimate alone, centred; the name and identifier stay
+    // one hover away in the `title` below, which is now their ONLY home on
+    // those zooms — the lane's sidebar cell is deliberately blank
+    // (WorkloadTimelineSidebarRow), so do not let that tooltip decay.
+    const isWeek = currentViewData.key === "week";
+    // 40px inside core's 44px BLOCK_HEIGHT lane row. Verified against
+    // gantt-chart/blocks/{block,block-row}.tsx: neither sets `overflow:
+    // hidden`, and both set exactly BLOCK_HEIGHT, so the taller bar fits with
+    // 4px to spare. If a core update ever adds `overflow-hidden` there, this
+    // is the line that breaks.
+    const barHeightClass = isWeek ? "h-10" : "h-8";
 
     return (
-      <div className="relative h-8 w-full">
+      // The container tracks the bar height rather than staying at h-8: the
+      // bars inside are absolutely positioned and would overflow it silently,
+      // which makes every later reader distrust the row alignment.
+      <div className={cn("relative w-full", barHeightClass)}>
         {data.tasks.map((task: TWorkloadTask) => {
           const start = task.start_date ?? task.target_date!;
           const startPos = getPositionFromDate(currentViewData, start, 0);
@@ -100,20 +120,38 @@ export const WorkloadTimelineChartBlock = observer(function WorkloadTimelineChar
           const endPos = getPositionFromDate(currentViewData, task.target_date!, dayWidth);
           const left = startPos - laneMarginLeft;
           const width = Math.max(endPos - startPos, MIN_BAR_WIDTH);
+          const hoursLabel = `${task.hours}h`;
+          // Week bars are 180px at minimum and clear the ladder trivially, so
+          // they are not run through it — otherwise a pathological label could
+          // shrink the font on a bar with room to spare.
+          const labelStep = isWeek ? "normal" : hoursLabelStep(width, hoursLabel);
           return (
             <WorkloadTaskLink
               key={task.id}
               task={task}
               workspaceSlug={workspaceSlug}
-              className="absolute top-0 block h-8"
+              className={cn("absolute top-0 block", barHeightClass)}
               style={{ left: `${left}px`, width: `${width}px` }}
             >
               <div
                 className={cn(
-                  "flex h-8 w-full cursor-pointer items-center overflow-hidden rounded-sm px-2 text-11 font-medium transition-colors",
-                  // With the title gone there is nothing to sit opposite, so
-                  // the estimate centres rather than hugging an edge.
-                  isQuarter ? "justify-center" : "gap-1.5",
+                  "w-full cursor-pointer overflow-hidden rounded-sm font-medium transition-colors",
+                  barHeightClass,
+                  isWeek
+                    ? // Two lines: identifier, then name + hours. `flex-col`
+                      // keeps them as siblings so the identifier's own
+                      // truncation cannot push the row below it around.
+                      "flex flex-col justify-center px-2 text-11"
+                    : // One line. With the name gone there is nothing to sit
+                      // opposite, so the estimate centres rather than hugging
+                      // an edge. Padding and font size come from the ladder:
+                      // at 30px the small step has none to spare (see
+                      // BAR_LABEL_STEPS.small).
+                      cn(
+                        "flex items-center justify-center",
+                        labelStep === "normal" && "px-2 text-11",
+                        labelStep === "small" && "px-0 text-9"
+                      ),
                   task.overdue
                     ? "bg-danger-subtle text-danger-primary hover:bg-danger-subtle/80"
                     : "bg-accent-primary/15 text-accent-primary hover:bg-accent-primary/25"
@@ -128,28 +166,39 @@ export const WorkloadTimelineChartBlock = observer(function WorkloadTimelineChar
                   task.assignee_count > 1 ? ` of ${task.total_hours}h, split ${task.assignee_count} ways` : ""
                 }${task.overdue ? " · overdue" : ""}`}
               >
-                {/* Name and hours only. The identifier prefix ate a third of a
-                    narrow bar's width without telling the reader anything they
-                    could not get from hovering — the `title` above is now the
-                    only place it survives, since the lane's sidebar cell is
-                    deliberately blank (WorkloadTimelineSidebarRow).
-
-                    These are two nodes on purpose — do NOT collapse them back
-                    into one truncating span. Sharing a single text node made
-                    the name and the hours compete for the same ellipsis, and
-                    the name always won: a long title clipped the estimate
-                    entirely. Now the title yields (`min-w-0` is what lets a
-                    flex child shrink below its content width and actually
-                    truncate) while the hours never shrink, so `Nh` is the last
-                    thing standing on a narrow bar. `gap-1.5` supplies the
-                    separation the old `·` used to; `overflow-hidden` on the
-                    row keeps a shrunk title from bleeding past the bar edge.
-
-                    At quarter zoom the title is dropped entirely rather than
-                    truncated — see `isQuarter` above. The estimate is the one
-                    element that survives every zoom. */}
-                {!isQuarter && <span className="min-w-0 flex-1 truncate">{task.name}</span>}
-                <span className="shrink-0 tabular-nums">{task.hours}h</span>
+                {isWeek ? (
+                  <>
+                    {/* The identifier is a lookup key, not the label, so it is
+                        dimmed and set smaller — the eye should land on the
+                        name. It gets its OWN truncation; sharing a text node
+                        with the name would let one eat the other's ellipsis,
+                        which is the same mistake the row below already
+                        documents. */}
+                    <span className="truncate text-9 leading-tight tabular-nums opacity-70">{task.identifier}</span>
+                    <span className="flex items-center gap-1.5 leading-tight">
+                      {/* These are two nodes on purpose — do NOT collapse them
+                          back into one truncating span. Sharing a single text
+                          node made the name and the hours compete for the same
+                          ellipsis, and the name always won: a long title
+                          clipped the estimate entirely. Now the name yields
+                          (`min-w-0` is what lets a flex child shrink below its
+                          content width and actually truncate) while the hours
+                          never shrink, so `Nh` is the last thing standing on a
+                          narrow bar. `gap-1.5` supplies the separation the old
+                          `·` used to; `overflow-hidden` on the bar keeps a
+                          shrunk name from bleeding past its edge. */}
+                      <span className="min-w-0 flex-1 truncate">{task.name}</span>
+                      <span className="shrink-0 tabular-nums">{hoursLabel}</span>
+                    </span>
+                  </>
+                ) : (
+                  // The estimate is the one element that survives every zoom —
+                  // except where it cannot survive WHOLE. `hidden` renders a
+                  // bare coloured bar rather than a partial number; the `title`
+                  // above still carries the value, and a rounded or abbreviated
+                  // stand-in would be the same lie in fewer characters.
+                  labelStep !== "hidden" && <span className="tabular-nums">{hoursLabel}</span>
+                )}
               </div>
             </WorkloadTaskLink>
           );

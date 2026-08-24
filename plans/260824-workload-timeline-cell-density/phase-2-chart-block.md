@@ -64,10 +64,14 @@ const step = hoursLabelStep(width, label); // `width` is the computed bar width,
 
 Map the step to classes in this file (phase 1 deliberately returns no class strings):
 
+The small step carries `px-0`, not the `px-0.5` this plan first assumed: `10.75h` measures
+28px at 9px and the narrowest bar it must serve is 30px, so any padding at all drops the one
+label the step was added for. The arithmetic is in `BAR_LABEL_STEPS.small`.
+
 | step | classes on the bar row |
 |---|---|
 | `"normal"` | `px-2 text-11` |
-| `"small"` | `px-0.5 text-9` |
+| `"small"` | `px-0 text-9` |
 | `"hidden"` | `px-0` — and render no hours span at all |
 
 **At Week, always render the hours at `"normal"`.** A 180px bar clears the ladder trivially, and
