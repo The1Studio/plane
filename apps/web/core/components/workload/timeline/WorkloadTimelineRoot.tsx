@@ -344,13 +344,19 @@ export const WorkloadTimelineRoot = observer(function WorkloadTimelineRoot({ sto
   }, [store]);
 
   // A one-day default span matches core's own week-zoom ChartAddBlock
-  // behaviour (gantt-chart/helpers/add-block.tsx), widened to 7 only at
-  // quarter zoom — a one-day bar there is a 30px sliver.
+  // behaviour (gantt-chart/helpers/add-block.tsx), widened to a week only at
+  // quarter zoom — a one-day bar there is a 30px sliver. "N days" in this
+  // app's own inclusive convention (getItemPositionWidth's `+1`, and
+  // dateRange.ts's resizeStart/resizeEnd boundary fix) means `target_date`
+  // is `start_date` plus `N - 1` days, NOT `N` — a 1-day span is
+  // `start_date === target_date` (previously `+1`, which drew a visibly
+  // 2-day-wide bar for what the comment called "one day"), and a 7-day span
+  // is `start_date + 6` (previously `+7`, an 8-day-wide bar).
   const seedData: Partial<TIssue> | undefined = createSeed
     ? {
         start_date: renderFormattedPayloadDate(createSeed.day),
         target_date: renderFormattedPayloadDate(
-          addDays(createSeed.day, timelineStore.currentView === "quarter" ? 7 : 1)
+          addDays(createSeed.day, timelineStore.currentView === "quarter" ? 6 : 0)
         ),
         assignee_ids: createSeed.assigneeId ? [createSeed.assigneeId] : [],
         // A convenience only when exactly one project filter is active — the

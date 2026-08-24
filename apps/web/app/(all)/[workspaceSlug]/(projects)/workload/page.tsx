@@ -42,6 +42,33 @@ export default observer(function WorkloadPage() {
   // (WorkloadTimelineRoot's viewport sync), so a fixed window fetched on mount
   // would either duplicate that request or fight it.
 
+  // `workloadStore` is a singleton (useWorkload's own doc comment — "the
+  // singleton store accessed via StoreContext"), so switching workspace via
+  // the top-level nav does NOT recreate it: `loadedRanges`/`workloadData`
+  // survive the switch untouched. `ensureRange`'s gap-check has no concept of
+  // WHICH workspace a range was loaded for — only the date span — so if the
+  // new workspace's viewport happens to cover a span already marked loaded
+  // (the common case: the same "today"-centred window), `gaps.length === 0`
+  // short-circuits and no request is ever sent. The board keeps showing the
+  // PREVIOUS workspace's data under the new one's UI — read as "doesn't
+  // reload". `selectedProjectIds`/`selectedAssigneeIds` are workspace-scoped
+  // UUIDs too — carrying them over risks silently filtering the new
+  // workspace's request down to entities that don't exist there, which
+  // presents identically (an empty-looking board with no visible cause).
+  // `selectedStateGroups` are generic enum values (backlog/started/…), safe
+  // across any workspace, and are left alone.
+  const prevWorkspaceSlugRef = useRef(workspaceSlug);
+  useEffect(() => {
+    if (prevWorkspaceSlugRef.current !== workspaceSlug) {
+      // Either setter alone already calls `resetCoverage()` internally
+      // (unconditionally, even when the new value is unchanged) — clearing
+      // both here is not two separate invalidations stacked on a third.
+      workloadStore.setProjectIds([]);
+      workloadStore.setAssigneeIds([]);
+    }
+    prevWorkspaceSlugRef.current = workspaceSlug;
+  }, [workspaceSlug, workloadStore]);
+
   // The peek panel can change start date, target date, assignee and state —
   // every field this view aggregates — so on close the range cache is dropped
   // and the viewport refetches. Invalidating on close, rather than diffing
