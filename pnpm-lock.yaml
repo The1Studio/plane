@@ -615,6 +615,9 @@ importers:
       '@plane/views-ext':
         specifier: workspace:*
         version: link:../../packages/views-ext
+      '@plane/work-item-defaults-ext':
+        specifier: workspace:*
+        version: link:../../packages/work-item-defaults-ext
       '@plane/workload-ext':
         specifier: workspace:*
         version: link:../../packages/workload-ext
@@ -1665,6 +1668,28 @@ importers:
       typescript:
         specifier: 5.8.3
         version: 5.8.3
+
+  packages/work-item-defaults-ext:
+    dependencies:
+      '@plane/types':
+        specifier: workspace:*
+        version: link:../types
+      '@plane/utils':
+        specifier: workspace:*
+        version: link:../utils
+    devDependencies:
+      '@plane/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      tsdown:
+        specifier: 'catalog:'
+        version: 0.16.0(typescript@5.8.3)(unrun@0.2.34)
+      typescript:
+        specifier: 5.8.3
+        version: 5.8.3
+      vitest:
+        specifier: ^4.0.8
+        version: 4.0.15(@opentelemetry/api@1.9.0)(@types/node@22.12.0)(jiti@2.6.1)(jsdom@26.1.0)(lightningcss@1.30.2)(terser@5.43.1)(yaml@2.8.3)
 
   packages/workload-ext:
     dependencies:
@@ -15483,7 +15508,7 @@ snapshots:
     dependencies:
       '@babel/core': 7.29.7
       '@babel/traverse': 7.28.4
-      '@babel/types': 7.28.5
+      '@babel/types': 7.29.7
       '@types/babel__core': 7.20.5
       '@types/babel__traverse': 7.28.0
       '@types/doctrine': 0.0.9
@@ -15819,9 +15844,9 @@ snapshots:
 
   rolldown-plugin-dts@0.17.8(rolldown@1.0.0-beta.46)(typescript@5.8.3):
     dependencies:
-      '@babel/generator': 7.28.5
-      '@babel/parser': 7.28.5
-      '@babel/types': 7.28.5
+      '@babel/generator': 7.29.7
+      '@babel/parser': 7.29.7
+      '@babel/types': 7.29.7
       ast-kit: 2.2.0
       birpc: 2.9.0
       dts-resolver: 2.1.3
