@@ -5,6 +5,7 @@ export * from "./types";
 export * from "./service";
 export * from "./store";
 export * from "./dateRange";
+export * from "./barLabel";
 export * from "./merge";
 export * from "./WorkloadToolbar";
 export * from "./estimateInput";
