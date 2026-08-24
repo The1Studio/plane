@@ -225,8 +225,19 @@ class TestAccessBoundary(TransactionTestCase):
         _estimate(ws, p2, issue2, 8.0)
 
         data = compute_workload(user, ws.slug, "week", WIN_FROM, WIN_TO)
-        self.assertEqual(data["rows"], [])
+        # `user` is an active member of p1, so they get their own (empty) row
+        # now — every active in-scope member does. `rows == []` used to stand in
+        # for "nothing leaked", and it stopped being that statement once member
+        # rows existed. What the boundary actually forbids is asserted directly,
+        # and more precisely than the old proxy could:
+        #   - p2's owner must not appear at all (they are outside `user`'s scope,
+        #     so `_scope_member_ids` never sees their project either);
+        #   - p2's issue must not be counted or reach anyone's tasks/hours.
+        names_ids = {r["assignee_id"] for r in data["rows"]}
+        self.assertNotIn(str(other.id), names_ids, "a member of an unauthorized project leaked")
         self.assertEqual(data["meta"]["issues_counted"], 0)
+        self.assertTrue(all(r["tasks"] == [] for r in data["rows"]))
+        self.assertTrue(all(r["total"] == 0 for r in data["rows"]))
 
     def test_flag_off_guest_sees_only_own_workload(self):
         """Core parity: a GUEST in a guest_view_all_features=False project sees

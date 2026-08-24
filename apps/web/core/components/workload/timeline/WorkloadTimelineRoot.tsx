@@ -376,7 +376,18 @@ export const WorkloadTimelineRoot = observer(function WorkloadTimelineRoot({ sto
   //    have replaced the placeholder.
   //  - Returning early on `isLoading` would blank the whole board on every pan,
   //    since panning is now what triggers loading.
-  const hasRows = (store.workloadData?.rows.length ?? 0) > 0;
+  // Whether this window holds any WORK — deliberately not whether it holds any
+  // rows. Every active member now gets a row whether or not they carry
+  // anything (see plane/workload/service.py), so `rows.length` counts PEOPLE
+  // and answers nothing about whether there is work to look at. Reading it as
+  // a work signal would leave the overlay below unreachable on a board where
+  // every single lane is empty, which is exactly the board that most needs it.
+  //
+  // Both halves are load-bearing. `total > 0` misses a member whose only work
+  // is unscheduled, because the API routes an unestimated-date task to its own
+  // `unscheduled` bucket and never into `buckets`; `tasks.length > 0` misses
+  // hours whose task rows were cut by the 200-task cap.
+  const hasWork = (store.workloadData?.rows ?? []).some((row) => row.tasks.length > 0 || row.total > 0);
   const counted = store.workloadData?.meta?.issues_counted ?? 0;
 
   return (
@@ -391,7 +402,7 @@ export const WorkloadTimelineRoot = observer(function WorkloadTimelineRoot({ sto
             Full-screen mode is unaffected: it `createPortal`s out to
             #full-screen-portal, which is not inside this container. */}
         <div className="relative isolate h-[70vh] w-full">
-          {!hasRows && (
+          {!hasWork && (
             // "No rows" and "no data" are NOT the same thing, and conflating them
             // is what let a real bug hide: a member with 71 estimated tasks
             // rendered an empty board because every target date fell just outside
