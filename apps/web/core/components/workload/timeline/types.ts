@@ -45,13 +45,18 @@ export type TWorkloadHeaderBlockData = {
 
 /**
  * One LANE of task bars — a set of tasks whose date ranges do not overlap, so
- * they can share a single row without colliding.
+ * they can share a single row without colliding. May be EMPTY (`tasks: []`)
+ * for a member with no scheduled tasks — see `blocks.ts`'s `lanesToRender`
+ * fallback — so this still exists as a click-to-create surface even then.
  *
  * The chart lays out one row per blockId at a fixed `BLOCK_HEIGHT`, so packing
  * cannot be done by giving several blocks the same row. Instead a lane is ONE
- * block spanning min(start)..max(target) of its tasks, and the bars are
- * positioned inside its box — the same technique the header row already uses to
- * place per-period heat cells (see WorkloadTimelineChartBlock).
+ * block spanning the swimlane's WHOLE response window (same range as its
+ * header), not just its own tasks' bounding range — the bars are positioned
+ * inside that box by absolute date, the same technique the header row already
+ * uses to place per-period heat cells (see WorkloadTimelineChartBlock). This
+ * is also what gives `WorkloadCreateOverlay` a click-to-create surface across
+ * the full row rather than only the gaps between existing bars (I1).
  *
  * Only tasks with a non-null `target_date` are placed. A task with no target is
  * "Unscheduled": the timeline has no window to plot it in, and it is surfaced

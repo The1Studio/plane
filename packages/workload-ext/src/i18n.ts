@@ -69,6 +69,19 @@ export const WORKLOAD_STRINGS = {
   "timeline.week_of": "Week of {date}",
   "timeline.no_data_in_range":
     "{count} estimated work items exist, but none fall in this date range — widen it to see them.",
+  // Bar drag/resize (The1Studio fork — Phase 3 of the timeline scheduling plan).
+  "timeline.resize_start": "Drag to change start date",
+  "timeline.resize_end": "Drag to change target date",
+  "timeline.drag_to_reschedule": "Drag to reschedule",
+  // Write path (The1Studio fork — Phase 4 of the timeline scheduling plan).
+  // Success is silent (D10/phase-4 "Toasts") — the bar staying where it was
+  // dropped is already the confirmation, so there is no matching success key.
+  "timeline.reschedule_failed": "Couldn't reschedule {identifier} — the change was reverted.",
+  // Click-to-create (The1Studio fork — Phase 5 of the timeline scheduling
+  // plan). The overlay's own hover tooltip is the clicked day itself (a raw
+  // formatted date, not a template), so this is the only key that phase adds
+  // — an accessible name for the icon-only "+" affordance.
+  "timeline.create_work_item": "Create work item",
 } as const;
 
 export type TWorkloadStringKey = keyof typeof WORKLOAD_STRINGS;

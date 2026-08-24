@@ -6,7 +6,7 @@
  * only render Plane's DateRangeDropdown; it must not re-derive the clamp rules).
  */
 
-import type { TWorkloadGranularity } from "./types";
+import type { TWorkloadGranularity, TWorkloadTask } from "./types";
 
 /** Max date-range span in days per granularity. Mirrors `_SPAN_CAPS` in the API's views.py. */
 export const MAX_SPAN_DAYS: Record<TWorkloadGranularity, number> = {
@@ -103,4 +103,58 @@ export function countWorkdays(from: string, to: string, workdays: number[]): num
     if (workdaySet.has(new Date(t).getUTCDay())) count++;
   }
   return count;
+}
+
+// ── Task-bar drag/resize date algebra (phase-2-drag-hook.md) ─────────────────
+//
+// Moved here from apps/web's useTaskBarDrag.ts (phase-6-verify-docs.md "Pure-
+// function assertions") so packages/workload-ext/verify-merge.mjs can assert
+// them from a hand-runnable node script with no DOM or React — the hook
+// itself has no store access, no network call, and no permission logic, so
+// this is pure date algebra with no dependency the app-side file needed.
+
+/** The dates a drag/resize would write — the same shape `patchTaskDates`
+ *  (store.ts) and the write path (WorkloadTimelineRoot) consume. */
+export type TDraggedDates = { start_date: string | null; target_date: string };
+
+export type TDatedTask = Pick<TWorkloadTask, "start_date" | "target_date">;
+
+/**
+ * `move`: shift both dates by the same day count, preserving duration (D7). A task
+ * with no `start_date` (drawn from `target_date` alone) gains one equal to its new
+ * `target_date` (D8) — but only when something actually moved: at `days === 0` the
+ * dates are returned exactly as given, `start_date` included, so a zero-pixel drag
+ * on a null-start task doesn't manufacture a "changed" result out of a no-op.
+ */
+export function shiftDates(task: TDatedTask, days: number): TDraggedDates {
+  if (!task.target_date) throw new Error("shiftDates: task has no target_date and cannot be dragged");
+  if (days === 0) return { start_date: task.start_date, target_date: task.target_date };
+  const target_date = shiftDate(task.target_date, days);
+  const start_date = task.start_date ? shiftDate(task.start_date, days) : target_date;
+  return { start_date, target_date };
+}
+
+/**
+ * `resize-start`: write `start_date` only. Clamped to at most `target_date` minus
+ * one day — the clamp is a stop, not a rejection, so dragging past the right edge
+ * parks one day short rather than swapping the dates (D7). A null `start_date` is
+ * materialized directly at `newStart` (D8) — resize-start always sets it, whether
+ * or not the drag actually moved.
+ */
+export function resizeStart(task: TDatedTask, newStart: string): { start_date: string; target_date: string } {
+  if (!task.target_date) throw new Error("resizeStart: task has no target_date and cannot be dragged");
+  const start_date = newStart >= task.target_date ? shiftDate(task.target_date, -1) : newStart;
+  return { start_date, target_date: task.target_date };
+}
+
+/**
+ * `resize-end`: write `target_date` only. Clamped to at least `start_date` plus one
+ * day, but only "when a start exists" (D7) — a null `start_date` is left untouched
+ * by a right-resize (only `move` and `resize-start` ever materialize it, per D8).
+ */
+export function resizeEnd(task: TDatedTask, newEnd: string): TDraggedDates {
+  if (!task.target_date) throw new Error("resizeEnd: task has no target_date and cannot be dragged");
+  if (!task.start_date) return { start_date: task.start_date, target_date: newEnd };
+  const target_date = newEnd <= task.start_date ? shiftDate(task.start_date, 1) : newEnd;
+  return { start_date: task.start_date, target_date };
 }

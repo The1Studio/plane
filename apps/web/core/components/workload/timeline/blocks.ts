@@ -149,22 +149,31 @@ export function buildWorkloadBlocks(
     // scheduled tasks was 49 rows tall; packed, it is as many rows as they have
     // genuinely concurrent work, which is usually a handful.
     const lanes = packTasksIntoLanes(row.tasks);
-    lanes.forEach((laneTasks, laneIndex) => {
+    // A member with no scheduled tasks — zero tasks at all, or every task
+    // unscheduled (no `target_date`, so `packTasksIntoLanes` places none of
+    // them) — packs into zero lanes. Without this fallback that member would
+    // get no lane block at all, and therefore no click-to-create surface
+    // (I1): render one empty lane so the row still exists to click on.
+    const lanesToRender = lanes.length > 0 ? lanes : [[]];
+    lanesToRender.forEach((laneTasks, laneIndex) => {
       const laneId = `wl-lane:${key}:${laneIndex}`;
-      // The lane's own box spans its first bar's start to its last bar's end;
-      // each bar is then positioned INSIDE that box by the chart renderer.
-      const laneStart = laneTasks[0].start_date ?? laneTasks[0].target_date!;
-      const laneEnd = laneTasks.reduce((latest, t) => (t.target_date! > latest ? t.target_date! : latest), laneStart);
       blockIds.push(laneId);
       dataById[laneId] = {
         kind: "lane",
         id: laneId,
-        name: laneTasks[0].name,
+        name: laneTasks[0]?.name ?? row.assignee_name,
         assigneeId: row.assignee_id,
         tasks: laneTasks,
         sort_order: order++,
-        start_date: laneStart,
-        target_date: laneEnd,
+        // The lane's box spans the WHOLE response window (same as the header
+        // block above), not the bars' own bounding range — this is what gives
+        // `WorkloadCreateOverlay` a click-to-create surface across the FULL
+        // swimlane row (I1), not just the gaps between existing bars, and
+        // what lets a lane with zero tasks still render a create-surface at
+        // all. Bars are positioned inside this box by ABSOLUTE date, so
+        // widening the box changes nothing about where a bar paints.
+        start_date: headerStart,
+        target_date: headerEnd,
       };
     });
 
