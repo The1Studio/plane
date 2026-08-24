@@ -19,13 +19,21 @@
 //   position relative to this block's box, which is what its wrapper div's
 //   `position: relative` coordinate system expects.
 
+import { useCallback } from "react";
 import { observer } from "mobx-react";
+import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
+import type { ChartDataType } from "@plane/types";
 import { cn } from "@plane/utils";
-import { hoursLabelStep, periodDateRange } from "@plane/workload-ext";
+import { hoursLabelStep, periodDateRange, wlt } from "@plane/workload-ext";
 import type { TWorkloadGranularity, TWorkloadTask } from "@plane/workload-ext";
 import { getPositionFromDate } from "@/components/gantt-chart/views";
+import { useUserPermissions } from "@/hooks/store/user";
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 import { heatCellColorClass } from "./heat-color";
+import type { TDraggedDates } from "./useTaskBarDrag";
+import { useTaskBarDrag } from "./useTaskBarDrag";
+import type { TCreateSeed } from "./WorkloadCreateOverlay";
+import { WorkloadCreateOverlay } from "./WorkloadCreateOverlay";
 import { WorkloadTaskLink } from "./WorkloadTaskLink";
 import type { TWorkloadTimelineBlockData } from "./types";
 
@@ -33,6 +41,16 @@ type Props = {
   data: TWorkloadTimelineBlockData;
   granularity: TWorkloadGranularity;
   workspaceSlug: string;
+  /** The real write path (phase-4-write-path.md), threaded down from
+   *  WorkloadTimelineRoot — patches the store optimistically, then
+   *  `patchIssue`s, rolling back and toasting on failure. */
+  onCommitDates: (task: TWorkloadTask, dates: TDraggedDates) => void;
+  /** phase-5-click-to-create.md "Permission" — workspace-level "can create
+   *  somewhere" gate for the empty-space overlay's own visibility. */
+  canCreateAnywhere: boolean;
+  /** phase-5-click-to-create.md — a click on empty lane space asks
+   *  WorkloadTimelineRoot to open the (single, root-mounted) create modal. */
+  onRequestCreate: (seed: TCreateSeed) => void;
 };
 
 /**
@@ -71,10 +89,253 @@ type Props = {
  */
 const MIN_BAR_WIDTH = 30;
 
+/**
+ * Width of each resize-handle strip, in px (phase-3-bar-wiring.md "Handles").
+ * `w-1.5` in Tailwind's default 4px scale.
+ */
+const HANDLE_WIDTH_PX = 6;
+
+/**
+ * Below this much remaining body (bar width minus both handles), the left
+ * handle is dropped and only the right one renders — resizing the end is the
+ * common operation, and a bar with two handles and no body left is not
+ * draggable at all (phase-3-bar-wiring.md "Handles").
+ */
+const MIN_BODY_WITH_BOTH_HANDLES_PX = 24;
+
+type WorkloadTaskBarProps = {
+  task: TWorkloadTask;
+  workspaceSlug: string;
+  chart: ChartDataType;
+  laneMarginLeft: number;
+  dayWidth: number;
+  onCommitDates: (task: TWorkloadTask, dates: TDraggedDates) => void;
+};
+
+/**
+ * One draggable/resizable bar inside a `kind: "lane"` block. Pulled out of the
+ * lane's `.map()` because `useUserPermissions`/`useTaskBarDrag` are hooks and
+ * hooks cannot be called from inside a `.map()` callback — each bar needs its
+ * own hook instance (phase-3-bar-wiring.md "Where the code goes").
+ */
+const WorkloadTaskBar = observer(function WorkloadTaskBar({
+  task,
+  workspaceSlug,
+  chart,
+  laneMarginLeft,
+  dayWidth,
+  onCommitDates,
+}: WorkloadTaskBarProps) {
+  const { allowPermissions } = useUserPermissions();
+
+  // D4 — gated per BAR on that task's OWN project, never the board's. A single
+  // swimlane routinely mixes projects, and `allowPermissions` needs an
+  // explicit `projectId` since this route has no `:projectId` param of its own.
+  const canEdit = allowPermissions(
+    [EUserPermissions.ADMIN, EUserPermissions.MEMBER],
+    EUserPermissionsLevel.PROJECT,
+    workspaceSlug,
+    task.project_id
+  );
+
+  const handleCommit = useCallback(
+    (dates: TDraggedDates) => {
+      onCommitDates(task, dates);
+    },
+    [task, onCommitDates]
+  );
+
+  const { onPointerDown, preview, isDragging, suppressClick } = useTaskBarDrag({
+    task,
+    chart,
+    laneMarginLeft,
+    disabled: !canEdit,
+    onCommit: handleCommit,
+  });
+
+  // Week is the zoom read for DETAIL — which item, whose, how long — and it
+  // has the pixels to answer all three: a bar is at least 180px, so it can
+  // afford a second line carrying the work-item identifier.
+  //
+  // Month and Quarter are read for LOAD. There the name is the first thing
+  // to go: at Month a bar is 60px per day and a name is two or three
+  // characters before the ellipsis, which costs the width the estimate needs
+  // and tells the reader nothing they could not get by hovering. Both zooms
+  // therefore show the estimate alone, centred; the name and identifier stay
+  // one hover away in the `title` below, which is now their ONLY home on
+  // those zooms — the lane's sidebar cell is deliberately blank
+  // (WorkloadTimelineSidebarRow), so do not let that tooltip decay.
+  const isWeek = chart.key === "week";
+  // 40px inside core's 44px BLOCK_HEIGHT lane row. Verified against
+  // gantt-chart/blocks/{block,block-row}.tsx: neither sets `overflow:
+  // hidden`, and both set exactly BLOCK_HEIGHT, so the taller bar fits with
+  // 4px to spare. If a core update ever adds `overflow-hidden` there, this
+  // is the line that breaks.
+  const barHeightClass = isWeek ? "h-10" : "h-8";
+
+  const start = task.start_date ?? task.target_date!;
+  const startPos = getPositionFromDate(chart, start, 0);
+  // Land on the END of the target day, not its start — a bar for a
+  // single-day task would otherwise have zero width.
+  const endPos = getPositionFromDate(chart, task.target_date!, dayWidth);
+
+  // Note the asymmetry: `MIN_BAR_WIDTH` is applied to the committed (non-drag)
+  // position but NOT to `preview` — during a resize the user is setting a
+  // real duration and must see it; clamping the preview to the floor would
+  // show a longer bar while they drag out a shorter one. The floor returns on
+  // the next render from committed data (phase-3-bar-wiring.md "Applying the
+  // preview").
+  const left = preview ? preview.left : startPos - laneMarginLeft;
+  const width = preview ? preview.width : Math.max(endPos - startPos, MIN_BAR_WIDTH);
+  // The COMMITTED width — the bar's last non-preview geometry, always at least
+  // `MIN_BAR_WIDTH`. Handle visibility is derived from THIS, never from the live
+  // `preview.width`: during a left-edge resize at quarter zoom a one-day preview
+  // can drop below `MIN_BODY_WITH_BOTH_HANDLES_PX` once both handles are paid
+  // for. If `showLeftHandle` tracked the preview, React would unmount the very
+  // handle the pointer is captured on mid-drag, the pointerup/pointercancel
+  // listeners bound to that element would never fire, `dragStateRef` would
+  // never clear, and the bar would freeze permanently (B1). `isDragging` keeps
+  // the handle mounted for the duration of the gesture regardless of preview
+  // width.
+  const committedWidth = Math.max(endPos - startPos, MIN_BAR_WIDTH);
+
+  const hoursLabel = `${task.hours}h`;
+  // Week bars are 180px at minimum and clear the ladder trivially, so they
+  // are not run through it — otherwise a pathological label could shrink the
+  // font on a bar with room to spare. Stepped against the LIVE width (preview
+  // during a drag, committed otherwise) so the label keeps pace with the bar
+  // the user is actually looking at instead of jumping on drop.
+  const labelStep = isWeek ? "normal" : hoursLabelStep(width, hoursLabel);
+
+  const showRightHandle = canEdit;
+  const showLeftHandle =
+    canEdit && (committedWidth - 2 * HANDLE_WIDTH_PX >= MIN_BODY_WITH_BOTH_HANDLES_PX || isDragging);
+
+  const handleResizeStartPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    e.preventDefault();
+    onPointerDown(e, "resize-start");
+  };
+  const handleResizeEndPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    e.preventDefault();
+    onPointerDown(e, "resize-end");
+  };
+  const handleBodyPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    // Same native-drag concern as the handles below — `preventDefault` keeps
+    // the browser from starting a text selection instead of handing
+    // pointermove events to the drag hook.
+    e.preventDefault();
+    onPointerDown(e, "move");
+  };
+
+  return (
+    <WorkloadTaskLink
+      task={task}
+      workspaceSlug={workspaceSlug}
+      className={cn("group absolute top-0 block", barHeightClass)}
+      style={{ left: `${left}px`, width: `${width}px` }}
+      suppressClick={suppressClick}
+    >
+      <div
+        className={cn(
+          "w-full overflow-hidden rounded-sm font-medium transition-colors",
+          barHeightClass,
+          canEdit ? (isDragging ? "cursor-grabbing" : "cursor-grab") : "cursor-pointer",
+          isWeek
+            ? // Two lines: identifier, then name + hours. `flex-col` keeps
+              // them as siblings so the identifier's own truncation cannot
+              // push the row below it around.
+              "flex flex-col justify-center px-2 text-11"
+            : // One line. With the name gone there is nothing to sit opposite,
+              // so the estimate centres rather than hugging an edge. Padding
+              // and font size come from the ladder: at the smallest step
+              // there is none to spare (see BAR_LABEL_STEPS.small).
+              cn(
+                "flex items-center justify-center",
+                labelStep === "normal" && "px-2 text-11",
+                labelStep === "small" && "px-0 text-9"
+              ),
+          task.overdue
+            ? "bg-danger-subtle text-danger-primary hover:bg-danger-subtle/80"
+            : "bg-accent-primary/15 text-accent-primary hover:bg-accent-primary/25"
+        )}
+        onPointerDown={handleBodyPointerDown}
+        // The bar shows this member's SHARE. A work item can carry
+        // several assignees (ClickUp parity) and its estimate is split
+        // evenly across them, so a bar reading "4h" on a shared 8h task
+        // is correct but looks wrong against the work item itself —
+        // the tooltip spells the split out rather than leaving the
+        // reader to think the estimate changed.
+        title={`${task.identifier} ${task.name} · ${task.hours}h${
+          task.assignee_count > 1 ? ` of ${task.total_hours}h, split ${task.assignee_count} ways` : ""
+        }${task.overdue ? " · overdue" : ""}${canEdit ? ` · ${wlt("timeline.drag_to_reschedule")}` : ""}`}
+      >
+        {isWeek ? (
+          <>
+            {/* The identifier is a lookup key, not the label, so it is
+                dimmed and set smaller — the eye should land on the name. It
+                gets its OWN truncation; sharing a text node with the name
+                would let one eat the other's ellipsis, which is the same
+                mistake the row below already documents. */}
+            <span className="truncate text-9 leading-tight tabular-nums opacity-70">{task.identifier}</span>
+            <span className="flex items-center gap-1.5 leading-tight">
+              {/* These are two nodes on purpose — do NOT collapse them back
+                  into one truncating span. Sharing a single text node made
+                  the name and the hours compete for the same ellipsis, and
+                  the name always won: a long title clipped the estimate
+                  entirely. Now the name yields (`min-w-0` is what lets a
+                  flex child shrink below its content width and actually
+                  truncate) while the hours never shrink, so `Nh` is the last
+                  thing standing on a narrow bar. `gap-1.5` supplies the
+                  separation the old `·` used to; `overflow-hidden` on the
+                  bar keeps a shrunk name from bleeding past its edge. */}
+              <span className="min-w-0 flex-1 truncate">{task.name}</span>
+              <span className="shrink-0 tabular-nums">{hoursLabel}</span>
+            </span>
+          </>
+        ) : (
+          // The estimate is the one element that survives every zoom — except
+          // where it cannot survive WHOLE. `hidden` renders a bare coloured
+          // bar rather than a partial number; the `title` above still carries
+          // the value, and a rounded or abbreviated stand-in would be the
+          // same lie in fewer characters.
+          labelStep !== "hidden" && <span className="tabular-nums">{hoursLabel}</span>
+        )}
+      </div>
+      {/* Handles sit above the ControlLink's own hit area (z-10 vs. the
+          body's auto stacking) and stop/prevent their own pointerdown so a
+          resize never also starts a native anchor drag or bubbles into a
+          "move". Below `MIN_BODY_WITH_BOTH_HANDLES_PX` of remaining body the
+          left handle is dropped — resizing the end is the common operation,
+          and two handles with no body between them isn't draggable at all. */}
+      {showLeftHandle && (
+        <div
+          tabIndex={0}
+          title={wlt("timeline.resize_start")}
+          className="absolute inset-y-0 left-0 z-10 w-1.5 cursor-ew-resize opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+          onPointerDown={handleResizeStartPointerDown}
+        />
+      )}
+      {showRightHandle && (
+        <div
+          tabIndex={0}
+          title={wlt("timeline.resize_end")}
+          className="absolute inset-y-0 right-0 z-10 w-1.5 cursor-ew-resize opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+          onPointerDown={handleResizeEndPointerDown}
+        />
+      )}
+    </WorkloadTaskLink>
+  );
+});
+
 export const WorkloadTimelineChartBlock = observer(function WorkloadTimelineChartBlock({
   data,
   granularity,
   workspaceSlug,
+  onCommitDates,
+  canCreateAnywhere,
+  onRequestCreate,
 }: Props) {
   const { currentViewData, getBlockById } = useTimeLineChartStore();
 
@@ -87,122 +348,36 @@ export const WorkloadTimelineChartBlock = observer(function WorkloadTimelineChar
     const laneBlock = getBlockById(data.id);
     const laneMarginLeft = laneBlock?.position?.marginLeft ?? 0;
     const dayWidth = currentViewData.data.dayWidth;
-    // Week is the zoom read for DETAIL — which item, whose, how long — and it
-    // has the pixels to answer all three: a bar is at least 180px, so it can
-    // afford a second line carrying the work-item identifier.
-    //
-    // Month and Quarter are read for LOAD. There the name is the first thing
-    // to go: at Month a bar is 60px per day and a name is two or three
-    // characters before the ellipsis, which costs the width the estimate needs
-    // and tells the reader nothing they could not get by hovering. Both zooms
-    // therefore show the estimate alone, centred; the name and identifier stay
-    // one hover away in the `title` below, which is now their ONLY home on
-    // those zooms — the lane's sidebar cell is deliberately blank
-    // (WorkloadTimelineSidebarRow), so do not let that tooltip decay.
-    const isWeek = currentViewData.key === "week";
-    // 40px inside core's 44px BLOCK_HEIGHT lane row. Verified against
-    // gantt-chart/blocks/{block,block-row}.tsx: neither sets `overflow:
-    // hidden`, and both set exactly BLOCK_HEIGHT, so the taller bar fits with
-    // 4px to spare. If a core update ever adds `overflow-hidden` there, this
-    // is the line that breaks.
-    const barHeightClass = isWeek ? "h-10" : "h-8";
+    // The container tracks the bar height rather than staying fixed: bars
+    // inside are absolutely positioned and would overflow it silently at
+    // Week zoom's taller row, which makes every later reader distrust the
+    // row alignment. `WorkloadTaskBar` derives the same `isWeek`/height class
+    // itself from `chart.key`, so the two stay in step without a prop.
+    const barHeightClass = currentViewData.key === "week" ? "h-10" : "h-8";
 
     return (
-      // The container tracks the bar height rather than staying at h-8: the
-      // bars inside are absolutely positioned and would overflow it silently,
-      // which makes every later reader distrust the row alignment.
       <div className={cn("relative w-full", barHeightClass)}>
-        {data.tasks.map((task: TWorkloadTask) => {
-          const start = task.start_date ?? task.target_date!;
-          const startPos = getPositionFromDate(currentViewData, start, 0);
-          // Land on the END of the target day, not its start — a bar for a
-          // single-day task would otherwise have zero width.
-          const endPos = getPositionFromDate(currentViewData, task.target_date!, dayWidth);
-          const left = startPos - laneMarginLeft;
-          const width = Math.max(endPos - startPos, MIN_BAR_WIDTH);
-          const hoursLabel = `${task.hours}h`;
-          // Week bars are 180px at minimum and clear the ladder trivially, so
-          // they are not run through it — otherwise a pathological label could
-          // shrink the font on a bar with room to spare.
-          const labelStep = isWeek ? "normal" : hoursLabelStep(width, hoursLabel);
-          return (
-            <WorkloadTaskLink
-              key={task.id}
-              task={task}
-              workspaceSlug={workspaceSlug}
-              className={cn("absolute top-0 block", barHeightClass)}
-              style={{ left: `${left}px`, width: `${width}px` }}
-            >
-              <div
-                className={cn(
-                  "w-full cursor-pointer overflow-hidden rounded-sm font-medium transition-colors",
-                  barHeightClass,
-                  isWeek
-                    ? // Two lines: identifier, then name + hours. `flex-col`
-                      // keeps them as siblings so the identifier's own
-                      // truncation cannot push the row below it around.
-                      "flex flex-col justify-center px-2 text-11"
-                    : // One line. With the name gone there is nothing to sit
-                      // opposite, so the estimate centres rather than hugging
-                      // an edge. Padding and font size come from the ladder:
-                      // at 30px the small step has none to spare (see
-                      // BAR_LABEL_STEPS.small).
-                      cn(
-                        "flex items-center justify-center",
-                        labelStep === "normal" && "px-2 text-11",
-                        labelStep === "small" && "px-0 text-9"
-                      ),
-                  task.overdue
-                    ? "bg-danger-subtle text-danger-primary hover:bg-danger-subtle/80"
-                    : "bg-accent-primary/15 text-accent-primary hover:bg-accent-primary/25"
-                )}
-                // The bar shows this member's SHARE. A work item can carry
-                // several assignees (ClickUp parity) and its estimate is split
-                // evenly across them, so a bar reading "4h" on a shared 8h task
-                // is correct but looks wrong against the work item itself —
-                // the tooltip spells the split out rather than leaving the
-                // reader to think the estimate changed.
-                title={`${task.identifier} ${task.name} · ${task.hours}h${
-                  task.assignee_count > 1 ? ` of ${task.total_hours}h, split ${task.assignee_count} ways` : ""
-                }${task.overdue ? " · overdue" : ""}`}
-              >
-                {isWeek ? (
-                  <>
-                    {/* The identifier is a lookup key, not the label, so it is
-                        dimmed and set smaller — the eye should land on the
-                        name. It gets its OWN truncation; sharing a text node
-                        with the name would let one eat the other's ellipsis,
-                        which is the same mistake the row below already
-                        documents. */}
-                    <span className="truncate text-9 leading-tight tabular-nums opacity-70">{task.identifier}</span>
-                    <span className="flex items-center gap-1.5 leading-tight">
-                      {/* These are two nodes on purpose — do NOT collapse them
-                          back into one truncating span. Sharing a single text
-                          node made the name and the hours compete for the same
-                          ellipsis, and the name always won: a long title
-                          clipped the estimate entirely. Now the name yields
-                          (`min-w-0` is what lets a flex child shrink below its
-                          content width and actually truncate) while the hours
-                          never shrink, so `Nh` is the last thing standing on a
-                          narrow bar. `gap-1.5` supplies the separation the old
-                          `·` used to; `overflow-hidden` on the bar keeps a
-                          shrunk name from bleeding past its edge. */}
-                      <span className="min-w-0 flex-1 truncate">{task.name}</span>
-                      <span className="shrink-0 tabular-nums">{hoursLabel}</span>
-                    </span>
-                  </>
-                ) : (
-                  // The estimate is the one element that survives every zoom —
-                  // except where it cannot survive WHOLE. `hidden` renders a
-                  // bare coloured bar rather than a partial number; the `title`
-                  // above still carries the value, and a rounded or abbreviated
-                  // stand-in would be the same lie in fewer characters.
-                  labelStep !== "hidden" && <span className="tabular-nums">{hoursLabel}</span>
-                )}
-              </div>
-            </WorkloadTaskLink>
-          );
-        })}
+        {/* Mounted BEFORE the bars below — see this file's header comment for
+            why plain DOM order, with no z-index on either side, already keeps
+            a bar's own click from reaching this layer. */}
+        <WorkloadCreateOverlay
+          chart={currentViewData}
+          laneMarginLeft={laneMarginLeft}
+          assigneeId={data.assigneeId}
+          canCreate={canCreateAnywhere}
+          onRequestCreate={onRequestCreate}
+        />
+        {data.tasks.map((task: TWorkloadTask) => (
+          <WorkloadTaskBar
+            key={task.id}
+            task={task}
+            workspaceSlug={workspaceSlug}
+            chart={currentViewData}
+            laneMarginLeft={laneMarginLeft}
+            dayWidth={dayWidth}
+            onCommitDates={onCommitDates}
+          />
+        ))}
       </div>
     );
   }

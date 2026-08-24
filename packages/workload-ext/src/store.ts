@@ -9,9 +9,48 @@ import type {
   TWorkloadGranularity,
   TWorkloadResponse,
   TWorkloadRollup,
+  TWorkloadRow,
+  TWorkloadTask,
 } from "./types";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Today as a local-calendar `YYYY-MM-DD` string, for the client-side `overdue`
+ * recompute in `patchTaskDates`. Same local-parse idiom as `dateRange.ts`'s
+ * `shiftDate`/`periodDateRange` — this is a display-only approximation good
+ * until the background refetch (triggered by the same patch) lands the
+ * server's own workspace-timezone `overdue` value; see `_resolve_today` in
+ * `apps/api/plane/workload/service.py`.
+ */
+function todayDateString(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * Mirrors `_TERMINAL_STATE_GROUPS` in `apps/api/plane/workload/service.py` —
+ * a task in either group is done/abandoned and can never be flagged overdue,
+ * however far in the past its `target_date` sits.
+ */
+const TERMINAL_STATE_GROUPS = new Set(["completed", "cancelled"]);
+
+/**
+ * A task's dates as they were immediately before `patchTaskDates` rewrote
+ * them, plus the id they belong to — enough for `rollbackTaskDates` (or a
+ * future phase 4) to restore the pre-patch state on a rejected write.
+ * `target_date` is non-null here because a task with no `target_date` is
+ * never drawn on the timeline and is therefore never draggable (plan D8) —
+ * there is no dateless state to snapshot.
+ */
+export type TTaskDatesSnapshot = {
+  issueId: string;
+  start_date: string | null;
+  target_date: string;
+};
 
 // ── Interface ─────────────────────────────────────────────────────────────────
 
@@ -86,6 +125,26 @@ export interface IWorkloadStore {
   /** Bypasses the rollup dedup set for a single id — used by the 400 UX
    *  backstop when a PUT is rejected with PARENT_HAS_CHILDREN. */
   forceRefetchRollup: (workspaceSlug: string, issueId: string) => Promise<void>;
+  /**
+   * Rewrites `issueId`'s dates in the client cache — every occurrence of it,
+   * since a task shared across assignees appears on one row per assignee
+   * (plan risk "shared-assignee task patched on one row only") — and returns
+   * a snapshot of what the dates were before the patch, so a caller (the
+   * write path added in a later phase) can roll back on a rejected PATCH.
+   * Recomputes `overdue`; deliberately leaves `buckets`, `capacity_buckets`,
+   * `over`, `total`, and `month_buckets` untouched (see the `patchTaskDates`
+   * method body for why). Invalidates coverage WITHOUT blanking the board —
+   * see D11 — so the timeline's own `coverageVersion` effect refetches the
+   * viewport and folds the server's truth back in.
+   */
+  patchTaskDates: (issueId: string, dates: { start_date: string | null; target_date: string }) => TTaskDatesSnapshot;
+  /**
+   * Restores a task's dates (every occurrence) from a snapshot returned by
+   * `patchTaskDates` — the rollback path for a write the backend rejected
+   * (D10). The bar snapping back to its pre-drag position is the visible
+   * signal that the write did not land.
+   */
+  rollbackTaskDates: (snapshot: TTaskDatesSnapshot) => void;
 }
 
 // ── Store ─────────────────────────────────────────────────────────────────────
@@ -202,6 +261,8 @@ export class WorkloadStore implements IWorkloadStore {
       deleteEstimate: action,
       fetchRollups: action,
       forceRefetchRollup: action,
+      patchTaskDates: action,
+      rollbackTaskDates: action,
     });
   }
 
@@ -250,6 +311,85 @@ export class WorkloadStore implements IWorkloadStore {
     this.workloadData = null;
     this._inFlight.clear();
     this.coverageVersion += 1;
+  }
+
+  patchTaskDates(issueId: string, dates: { start_date: string | null; target_date: string }): TTaskDatesSnapshot {
+    const snapshot = this._applyTaskDates(issueId, dates);
+    // Invalidate WITHOUT blanking (D11) — resetCoverage's `workloadData = null`
+    // would flash the whole board empty on every drag. Clearing `loadedRanges`
+    // makes the next `ensureRange` treat the viewport as an unfetched gap
+    // (`store.ts` `gaps.length === 0` short-circuit no longer applies), and
+    // bumping `coverageVersion` both discards any response already in flight
+    // when the patch landed (`_fetchGap`'s `requestedVersion` check) and fires
+    // the timeline's own `coverageVersion` effect, which re-syncs the viewport
+    // with no new React-side wiring needed.
+    this.loadedRanges = [];
+    this.coverageVersion += 1;
+    return snapshot ?? { issueId, start_date: dates.start_date, target_date: dates.target_date };
+  }
+
+  rollbackTaskDates(snapshot: TTaskDatesSnapshot): void {
+    this._applyTaskDates(snapshot.issueId, { start_date: snapshot.start_date, target_date: snapshot.target_date });
+    // No second `loadedRanges` clear needed: `patchTaskDates` already cleared
+    // it, and whatever refetch that triggered either already landed (its
+    // dates now match this rollback) or is still in flight and will be
+    // discarded by the version bump below — either way a later viewport sync
+    // re-fetches cleanly. See phase-1 spec's `rollbackTaskDates` note.
+    this.coverageVersion += 1;
+  }
+
+  /**
+   * Shared body for `patchTaskDates`/`rollbackTaskDates`: rewrite `issueId`'s
+   * dates on EVERY row that carries it (a shared task appears once per
+   * assignee's row) and recompute that task's `overdue` flag, returning the
+   * pre-patch dates from the first occurrence found. Returns `null` when
+   * `workloadData` hasn't loaded yet or carries no occurrence of `issueId` —
+   * both mean there is nothing to patch.
+   *
+   * Replaces `workloadData` with a new top-level object, and gives only the
+   * CHANGED rows new object identity (`data.rows.map` returns the original
+   * row reference for every row without a match) — the `blockIds` memo in
+   * `WorkloadTimelineRoot.tsx` keys on `store.workloadData`, so an in-place
+   * mutation would never re-run `packTasksIntoLanes` and the bar would not
+   * repack, while an unnecessarily-new reference on an untouched row would
+   * bust memoization for swimlanes nothing changed in.
+   *
+   * Deliberately does NOT recompute `buckets`, `month_buckets`,
+   * `capacity_buckets`, `over`, or `total` — those are aggregates the server
+   * computes from `apps/api/plane/workload/aggregation.py`, and the refetch
+   * this triggers (see `patchTaskDates`) supplies them; recomputing here
+   * would mean keeping a second implementation of that arithmetic in step.
+   */
+  private _applyTaskDates(
+    issueId: string,
+    dates: { start_date: string | null; target_date: string }
+  ): TTaskDatesSnapshot | null {
+    const data = this.workloadData;
+    if (!data) return null;
+
+    let snapshot: TTaskDatesSnapshot | null = null;
+    const today = todayDateString();
+
+    const rows: TWorkloadRow[] = data.rows.map((row) => {
+      let changed = false;
+      const tasks: TWorkloadTask[] = row.tasks.map((task) => {
+        if (task.id !== issueId) return task;
+        if (!snapshot) {
+          // `target_date` is non-null here per this task's own doc comment —
+          // a task with no target date is never drawn, so it cannot be the
+          // one a drag/resize is patching.
+          snapshot = { issueId, start_date: task.start_date, target_date: task.target_date as string };
+        }
+        changed = true;
+        const overdue = dates.target_date < today && !TERMINAL_STATE_GROUPS.has(task.state_group);
+        return { ...task, start_date: dates.start_date, target_date: dates.target_date, overdue };
+      });
+      return changed ? { ...row, tasks } : row;
+    });
+
+    if (!snapshot) return null;
+    this.workloadData = { ...data, rows };
+    return snapshot;
   }
 
   async ensureRange(workspaceSlug: string, range: TDateRange, weekStartDay: number): Promise<void> {

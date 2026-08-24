@@ -32,6 +32,14 @@ type Props = {
   className?: string;
   /** Absolute positioning for a bar inside its lane box (see the lane renderer). */
   style?: React.CSSProperties;
+  /**
+   * True for the click a drag's own pointerup synthesizes (see `useTaskBarDrag`,
+   * D6) — swallows that click instead of opening the peek panel. The hook's own
+   * capture-phase listener already stops most of these before they reach here;
+   * this is the belt-and-suspenders path for the browsers/cases where a click
+   * still arrives.
+   */
+  suppressClick?: boolean;
   children: React.ReactNode;
 };
 
@@ -40,6 +48,7 @@ export const WorkloadTaskLink = observer(function WorkloadTaskLink({
   workspaceSlug,
   className,
   style,
+  suppressClick,
   children,
 }: Props) {
   const { setPeekIssue } = useIssueDetail();
@@ -60,6 +69,10 @@ export const WorkloadTaskLink = observer(function WorkloadTaskLink({
     // The bar sits inside `ChartDraggable`, and the surrounding `BlockRow`
     // owns hover/active state — let neither see this click.
     event.stopPropagation();
+    if (suppressClick) {
+      event.preventDefault();
+      return;
+    }
     setPeekIssue({ workspaceSlug, projectId: task.project_id, issueId: task.id });
   };
 

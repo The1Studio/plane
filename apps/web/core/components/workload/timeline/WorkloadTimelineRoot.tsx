@@ -34,22 +34,35 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { autorun, reaction } from "mobx";
 import { observer } from "mobx-react";
-import { GANTT_TIMELINE_TYPE } from "@plane/types";
-import type { IBlockUpdateData, TGanttViews } from "@plane/types";
-import type { IWorkloadStore, TWorkloadGranularity } from "@plane/workload-ext";
+import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
+import { TOAST_TYPE, setToast } from "@plane/propel/toast";
+import { EIssuesStoreType, GANTT_TIMELINE_TYPE } from "@plane/types";
+import type { IBlockUpdateData, TGanttViews, TIssue } from "@plane/types";
+import { renderFormattedPayloadDate } from "@plane/utils";
+import type { IWorkloadStore, TWorkloadGranularity, TWorkloadTask } from "@plane/workload-ext";
 import { wlt } from "@plane/workload-ext";
 import { TimeLineTypeContext } from "@/components/gantt-chart/contexts";
 import { GanttChartRoot } from "@/components/gantt-chart/root";
+import { CreateUpdateIssueModal } from "@/components/issues/issue-modal/modal";
+import { IssueService } from "@/services/issue/issue.service";
 import { useTimeLineChart } from "@/hooks/use-timeline-chart";
+import { useUserPermissions } from "@/hooks/store/user";
 import { BaseTimeLineStore } from "@/plane-web/store/timeline/base-timeline.store";
 import { SIDEBAR_WIDTH } from "@/components/gantt-chart/constants";
 import { getDateFromPositionOnGantt } from "@/components/gantt-chart/views";
 import { useWorkSettings } from "@/hooks/store/use-work-settings";
 import { buildWorkloadBlocks, focusPeriodFor } from "./blocks";
 import type { TFocusPeriod } from "./blocks";
+import type { TDraggedDates } from "./useTaskBarDrag";
+import type { TCreateSeed } from "./WorkloadCreateOverlay";
 import { WorkloadTimelineChartBlock } from "./WorkloadTimelineChartBlock";
 import { WorkloadTimelineSidebarRow } from "./WorkloadTimelineSidebarRow";
 import type { TWorkloadTimelineBlockData } from "./types";
+
+// A plain `APIService` with no store dependency, same pattern `WorkloadStore`
+// uses for `WorkloadService` (packages/workload-ext/src/store.ts) — module
+// scope is safe since the service carries no per-render state of its own.
+const issueService = new IssueService();
 
 type Props = {
   store: IWorkloadStore;
@@ -95,12 +108,36 @@ function toDateStr(d: Date): string {
   return `${d.getFullYear()}-${m}-${day}`;
 }
 
-const noopBlockUpdateHandler = (_block: unknown, _payload: IBlockUpdateData) => {
-  // Drag/resize/reorder are all disabled (D14, out of scope) — GanttChartRoot
-  // still requires a handler prop, but it is never invoked.
-};
+/**
+ * True when `issueId`'s CURRENT dates in the store still equal `dates` — the
+ * ones ONE SPECIFIC patch wrote. Used by `handleTaskCommit`'s rollback guard
+ * (phase-4-write-path.md "Concurrency"): a second drag on the same task can
+ * land, optimistically or confirmed, while an earlier drag's request is still
+ * in flight, and that later commit's dates must survive the earlier one's
+ * failure. `TTaskDatesSnapshot` only carries the pre-patch ("before") dates,
+ * so the comparison is made here against the patch's own `dates` argument
+ * (the "after") rather than added to the snapshot shape in
+ * `packages/workload-ext/src/store.ts`.
+ */
+function taskDatesStillMatch(store: IWorkloadStore, issueId: string, dates: TDraggedDates): boolean {
+  for (const row of store.workloadData?.rows ?? []) {
+    const current = row.tasks.find((t) => t.id === issueId);
+    if (current) return current.start_date === dates.start_date && current.target_date === dates.target_date;
+  }
+  return false;
+}
 
 export const WorkloadTimelineRoot = observer(function WorkloadTimelineRoot({ store, workspaceSlug }: Props) {
+  // phase-5-click-to-create.md "Permission" — a workspace-level visibility
+  // gate for the empty-space overlay's own "+" affordance, mirroring
+  // WorkloadPage's own `isAdmin` check. The create modal's project picker
+  // still enforces the real per-project right on submit.
+  const { allowPermissions } = useUserPermissions();
+  const canCreateAnywhere = allowPermissions(
+    [EUserPermissions.ADMIN, EUserPermissions.MEMBER],
+    EUserPermissionsLevel.WORKSPACE
+  );
+
   // Only the keys the reader has toggled BY HAND in the current zoom. Every
   // other key falls through to `defaultCollapsed` below — see `isCollapsed`.
   const [collapseOverrides, setCollapseOverrides] = useState<Record<string, boolean>>({});
@@ -263,6 +300,66 @@ export const WorkloadTimelineRoot = observer(function WorkloadTimelineRoot({ sto
 
   const granularity = store.granularity;
 
+  // ── Write path (phase-4-write-path.md) ─────────────────────────────────────
+  //
+  // Patch the store BEFORE awaiting the request (D3): the bar must stay put
+  // the instant it is dropped, not snap back and forward again once the
+  // response arrives. `patchTaskDates`'s own `coverageVersion` bump already
+  // triggers the viewport refetch on success — nothing further to do there.
+  const handleTaskCommit = useCallback(
+    async (task: TWorkloadTask, dates: TDraggedDates) => {
+      const snapshot = store.patchTaskDates(task.id, dates);
+      try {
+        await issueService.patchIssue(workspaceSlug, task.project_id, task.id, dates);
+      } catch {
+        // See `taskDatesStillMatch` above — only undo THIS patch if nothing
+        // newer has landed on the same task since.
+        if (taskDatesStillMatch(store, task.id, dates)) {
+          store.rollbackTaskDates(snapshot);
+        }
+        setToast({ type: TOAST_TYPE.ERROR, title: wlt("timeline.reschedule_failed", { identifier: task.identifier }) });
+      }
+    },
+    [store, workspaceSlug]
+  );
+
+  // ── Click-to-create (phase-5-click-to-create.md) ───────────────────────────
+  //
+  // One modal instance for the whole board, not one per lane — driven by a
+  // `{ day, assigneeId } | null` seed the overlay sets on click.
+  const [createSeed, setCreateSeed] = useState<TCreateSeed | null>(null);
+
+  const handleRequestCreate = useCallback((seed: TCreateSeed) => {
+    setCreateSeed(seed);
+  }, []);
+
+  const handleCreateModalClose = useCallback(() => setCreateSeed(null), []);
+
+  // `resetCoverage()` on submit is correct HERE, unlike after a drag (D11): a
+  // new work item can land anywhere and changes row membership, not just one
+  // bar's position, so the full drop-and-refetch is the honest invalidation —
+  // the same call the peek-panel-close effect already makes (workload/page.tsx).
+  const handleCreateSubmit = useCallback(async () => {
+    store.resetCoverage();
+  }, [store]);
+
+  // A one-day default span matches core's own week-zoom ChartAddBlock
+  // behaviour (gantt-chart/helpers/add-block.tsx), widened to 7 only at
+  // quarter zoom — a one-day bar there is a 30px sliver.
+  const seedData: Partial<TIssue> | undefined = createSeed
+    ? {
+        start_date: renderFormattedPayloadDate(createSeed.day),
+        target_date: renderFormattedPayloadDate(
+          addDays(createSeed.day, timelineStore.currentView === "quarter" ? 7 : 1)
+        ),
+        assignee_ids: createSeed.assigneeId ? [createSeed.assigneeId] : [],
+        // A convenience only when exactly one project filter is active — the
+        // board is workspace-wide, so there is no single project to infer
+        // otherwise, and the picker stays enabled either way (never disabled).
+        ...(store.selectedProjectIds.length === 1 ? { project_id: store.selectedProjectIds[0] } : {}),
+      }
+    : undefined;
+
   // The chart is ALWAYS rendered. Every state below is an overlay on top of it,
   // never a replacement, for two reasons:
   //
@@ -277,68 +374,98 @@ export const WorkloadTimelineRoot = observer(function WorkloadTimelineRoot({ sto
   const counted = store.workloadData?.meta?.issues_counted ?? 0;
 
   return (
-    <TimeLineTypeContext.Provider value={GANTT_TIMELINE_TYPE.WORKLOAD}>
-      {/* `isolate` confines every z-index inside the chart to this container.
-          Without it the gantt sidebar (`sticky z-10`, sidebar/root.tsx) ties with
-          the toolbar dropdowns' panels (`fixed z-10`, e.g. dropdowns/project/base.tsx)
-          and wins on DOM order, because the timeline is rendered after the
-          toolbar — so an open Projects/Members dropdown was painted UNDER the
-          board. Isolating here fixes it without editing either core file.
-          Full-screen mode is unaffected: it `createPortal`s out to
-          #full-screen-portal, which is not inside this container. */}
-      <div className="relative isolate h-[70vh] w-full">
-        {!hasRows && (
-          // "No rows" and "no data" are NOT the same thing, and conflating them
-          // is what let a real bug hide: a member with 71 estimated tasks
-          // rendered an empty board because every target date fell just outside
-          // the window. `issues_counted` is counted BEFORE date clipping, so it
-          // tells the two apart.
-          <div className="pointer-events-none absolute inset-0 z-[5] flex items-start justify-center pt-24">
-            <span className="text-13 text-placeholder">
-              {store.isLoading
-                ? wlt("common.loading")
-                : counted > 0
-                  ? wlt("timeline.no_data_in_range", { count: counted })
-                  : wlt("timeline.no_workload_data")}
-            </span>
-          </div>
-        )}
-        {store.error && (
-          // Shown alongside the board, not instead of it: one failed span must
-          // not discard the spans that loaded fine.
-          <div className="absolute top-2 right-2 z-[6] rounded-md bg-danger-subtle px-2 py-1 text-11 text-danger-primary">
-            {store.error}
-          </div>
-        )}
-        <GanttChartRoot
-          border
-          title={wlt("matrix.assignee")}
-          loaderTitle="members"
-          blockIds={blockIds}
-          blockUpdateHandler={noopBlockUpdateHandler}
-          blockToRender={(data: TWorkloadTimelineBlockData) => (
-            <WorkloadTimelineChartBlock data={data} granularity={granularity} workspaceSlug={workspaceSlug} />
+    <>
+      <TimeLineTypeContext.Provider value={GANTT_TIMELINE_TYPE.WORKLOAD}>
+        {/* `isolate` confines every z-index inside the chart to this container.
+            Without it the gantt sidebar (`sticky z-10`, sidebar/root.tsx) ties with
+            the toolbar dropdowns' panels (`fixed z-10`, e.g. dropdowns/project/base.tsx)
+            and wins on DOM order, because the timeline is rendered after the
+            toolbar — so an open Projects/Members dropdown was painted UNDER the
+            board. Isolating here fixes it without editing either core file.
+            Full-screen mode is unaffected: it `createPortal`s out to
+            #full-screen-portal, which is not inside this container. */}
+        <div className="relative isolate h-[70vh] w-full">
+          {!hasRows && (
+            // "No rows" and "no data" are NOT the same thing, and conflating them
+            // is what let a real bug hide: a member with 71 estimated tasks
+            // rendered an empty board because every target date fell just outside
+            // the window. `issues_counted` is counted BEFORE date clipping, so it
+            // tells the two apart.
+            <div className="pointer-events-none absolute inset-0 z-[5] flex items-start justify-center pt-24">
+              <span className="text-13 text-placeholder">
+                {store.isLoading
+                  ? wlt("common.loading")
+                  : counted > 0
+                    ? wlt("timeline.no_data_in_range", { count: counted })
+                    : wlt("timeline.no_workload_data")}
+              </span>
+            </div>
           )}
-          sidebarToRender={() => (
-            <WorkloadTimelineSidebarRow
-              blockIds={blockIds}
-              isCollapsed={isCollapsed}
-              onToggleCollapse={toggleCollapse}
-              focus={focus}
-              granularity={granularity}
-              workSettings={workSettings}
-            />
+          {store.error && (
+            // Shown alongside the board, not instead of it: one failed span must
+            // not discard the spans that loaded fine.
+            <div className="absolute top-2 right-2 z-[6] rounded-md bg-danger-subtle px-2 py-1 text-11 text-danger-primary">
+              {store.error}
+            </div>
           )}
-          enableBlockLeftResize={false}
-          enableBlockRightResize={false}
-          enableBlockMove={false}
-          enableReorder={false}
-          enableAddBlock={false}
-          enableSelection={false}
-          enableDependency={false}
-          showToday
-        />
-      </div>
-    </TimeLineTypeContext.Provider>
+          <GanttChartRoot
+            border
+            title={wlt("matrix.assignee")}
+            loaderTitle="members"
+            blockIds={blockIds}
+            // Drag/resize/reorder are all disabled below (enableBlockMove etc.
+            // are false, D1/D14) — GanttChartRoot still requires a handler
+            // prop, but core's own drag path is unused; the real write path is
+            // WorkloadTaskBar's `onCommit` → `handleTaskCommit` above.
+            blockUpdateHandler={(_block: unknown, _payload: IBlockUpdateData) => {}}
+            blockToRender={(data: TWorkloadTimelineBlockData) => (
+              <WorkloadTimelineChartBlock
+                data={data}
+                granularity={granularity}
+                workspaceSlug={workspaceSlug}
+                onCommitDates={handleTaskCommit}
+                canCreateAnywhere={canCreateAnywhere}
+                onRequestCreate={handleRequestCreate}
+              />
+            )}
+            sidebarToRender={() => (
+              <WorkloadTimelineSidebarRow
+                blockIds={blockIds}
+                isCollapsed={isCollapsed}
+                onToggleCollapse={toggleCollapse}
+                focus={focus}
+                granularity={granularity}
+                workSettings={workSettings}
+              />
+            )}
+            enableBlockLeftResize={false}
+            enableBlockRightResize={false}
+            enableBlockMove={false}
+            enableReorder={false}
+            enableAddBlock={false}
+            enableSelection={false}
+            enableDependency={false}
+            showToday
+          />
+        </div>
+      </TimeLineTypeContext.Provider>
+      {/* Mounted ONCE for the whole board, not per lane — phase-5-click-to-create.md
+          "The modal". `storeType` is passed explicitly: without it
+          `CreateUpdateIssueModalBase` falls back to `useIssueStoreType()`
+          (issue-modal/base.tsx), and the workload route sits in no
+          issue-layout context. `PROJECT` resolves to `useProjectIssueActions`,
+          whose `createIssue` needs only `workspaceSlug` from the route plus
+          the `project_id` the modal itself collects — so it works on a route
+          with no `:projectId` param. No estimated-hours field is added here;
+          a work item created from this modal lands as a `0h` bar until its
+          estimate is set. */}
+      <CreateUpdateIssueModal
+        isOpen={createSeed !== null}
+        onClose={handleCreateModalClose}
+        data={seedData}
+        storeType={EIssuesStoreType.PROJECT}
+        onSubmit={handleCreateSubmit}
+      />
+    </>
   );
 });
