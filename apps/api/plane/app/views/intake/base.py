@@ -257,6 +257,11 @@ class IntakeIssueViewSet(BaseViewSet):
                 "workspace_id": project.workspace_id,
                 "default_assignee_id": project.default_assignee_id,
                 "allow_triage_state": True,
+                # The1Studio fork (work-item creation defaults) — intake is
+                # opted out. Submitters are frequently not project members, so
+                # assigning them their own submission would be wrong, and
+                # dating a triage queue misrepresents it.
+                "apply_creation_defaults": False,
             },
         )
         if serializer.is_valid():

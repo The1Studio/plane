@@ -11,7 +11,16 @@ from django.db import IntegrityError
 # Third Party imports
 from rest_framework import serializers
 
+# Third Party imports
+from crum import get_current_user
+
 # Module imports
+# The1Studio fork (work-item creation defaults) — decision logic lives in the
+# fork app; see plane/issue_defaults_ext/defaults.py.
+from plane.issue_defaults_ext.defaults import (
+    resolve_creation_assignee_id,
+    resolve_creation_target_date,
+)
 from .base import BaseSerializer, DynamicBaseSerializer
 from .user import UserLiteSerializer
 from .state import StateLiteSerializer
@@ -193,6 +202,22 @@ class IssueCreateSerializer(BaseSerializer):
         ):
             raise serializers.ValidationError("Estimate point is not valid please pass a valid estimate_point_id")
 
+        # The1Studio fork (work-item creation defaults) — an ABSENT target_date
+        # becomes today, or start_date when that is later. An explicit null is a
+        # deliberate "no due date" and is left alone, and an update never
+        # defaults at all. Placed after the start/target check on purpose: the
+        # value below is constructed never to violate it, and running it back
+        # through would change which error an invalid payload reports.
+        resolved_target_date = resolve_creation_target_date(
+            is_create=self.instance is None,
+            initial_data=self.initial_data,
+            context=self.context,
+            start_date=attrs.get("start_date"),
+            user=get_current_user(),
+        )
+        if resolved_target_date is not None:
+            attrs["target_date"] = resolved_target_date
+
         return attrs
 
     def create(self, validated_data):
@@ -229,19 +254,23 @@ class IssueCreateSerializer(BaseSerializer):
             except IntegrityError:
                 pass
         else:
-            # Then assign it to default assignee, if it is a valid assignee
-            if (
-                default_assignee_id is not None
-                and ProjectMember.objects.filter(
-                    member_id=default_assignee_id,
-                    project_id=project_id,
-                    role__gte=15,
-                    is_active=True,
-                ).exists()
-            ):
+            # The1Studio fork (work-item creation defaults) — the project's own
+            # default assignee first (unchanged behaviour, including on an
+            # explicit empty list), then the creator as a fallback. Only an
+            # ABSENT assignee_ids reaches the creator; an explicit [] means
+            # nobody and stays unassigned.
+            resolved_assignee_id = resolve_creation_assignee_id(
+                initial_data=self.initial_data,
+                context=self.context,
+                project_id=project_id,
+                default_assignee_id=default_assignee_id,
+                created_by_id=created_by_id,
+                assignee_field="assignee_ids",
+            )
+            if resolved_assignee_id is not None:
                 try:
                     IssueAssignee.objects.create(
-                        assignee_id=default_assignee_id,
+                        assignee_id=resolved_assignee_id,
                         issue=issue,
                         project_id=project_id,
                         workspace_id=workspace_id,
