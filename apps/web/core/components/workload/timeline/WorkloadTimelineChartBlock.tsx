@@ -241,6 +241,13 @@ const WorkloadTaskBar = observer(function WorkloadTaskBar({
         className={cn(
           "w-full overflow-hidden rounded-sm font-medium transition-colors",
           barHeightClass,
+          // Without this, a horizontal pointerdown-drag on a touchscreen or
+          // trackpad can be claimed by the browser's own pan/scroll gesture
+          // recognizer before our pointermove listener ever sees a second
+          // event — the gesture becomes a native scroll instead of a drag,
+          // silently, with no error to report. `touch-action: none` is what
+          // tells the browser this element owns its own pointer gestures.
+          canEdit && "touch-none",
           canEdit ? (isDragging ? "cursor-grabbing" : "cursor-grab") : "cursor-pointer",
           isWeek
             ? // Two lines: identifier, then name + hours. `flex-col` keeps
@@ -313,7 +320,10 @@ const WorkloadTaskBar = observer(function WorkloadTaskBar({
         <div
           tabIndex={0}
           title={wlt("timeline.resize_start")}
-          className="absolute inset-y-0 left-0 z-10 w-1.5 cursor-ew-resize opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+          // touch-none — see the content div's comment above; a resize handle
+          // is even narrower (6px) than the bar body, so it is the likeliest
+          // place for the browser to mistake a horizontal drag for a scroll.
+          className="absolute inset-y-0 left-0 z-10 w-1.5 cursor-ew-resize touch-none opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
           onPointerDown={handleResizeStartPointerDown}
         />
       )}
@@ -321,7 +331,7 @@ const WorkloadTaskBar = observer(function WorkloadTaskBar({
         <div
           tabIndex={0}
           title={wlt("timeline.resize_end")}
-          className="absolute inset-y-0 right-0 z-10 w-1.5 cursor-ew-resize opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+          className="absolute inset-y-0 right-0 z-10 w-1.5 cursor-ew-resize touch-none opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
           onPointerDown={handleResizeEndPointerDown}
         />
       )}
