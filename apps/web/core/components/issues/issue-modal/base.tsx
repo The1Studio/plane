@@ -14,6 +14,8 @@ import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import type { TBaseIssue, TIssue } from "@plane/types";
 import { EIssuesStoreType } from "@plane/types";
 import { EModalPosition, EModalWidth, ModalCore } from "@plane/ui";
+// The1Studio fork (SP2 workload / work-item modal estimated hours) — fork-owned
+import { parseEstimateHoursInput, PendingEstimateProvider, wlt } from "@plane/workload-ext";
 // hooks
 import { useIssueModal } from "@/hooks/context/use-issue-modal";
 import { useCycle } from "@/hooks/store/use-cycle";
@@ -21,6 +23,7 @@ import { useIssueDetail } from "@/hooks/store/use-issue-detail";
 import { useIssues } from "@/hooks/store/use-issues";
 import { useModule } from "@/hooks/store/use-module";
 import { useProject } from "@/hooks/store/use-project";
+import { useWorkload } from "@/hooks/store/use-workload";
 import { useIssueStoreType } from "@/hooks/use-issue-layout-store";
 import { useIssuesActions } from "@/hooks/use-issues-actions";
 // services
@@ -66,6 +69,9 @@ export const CreateUpdateIssueModalBase = observer(function CreateUpdateIssueMod
   const [description, setDescription] = useState<string | undefined>(undefined);
   const [uploadedAssetIds, setUploadedAssetIds] = useState<string[]>([]);
   const [isDuplicateModalOpen, setIsDuplicateModalOpen] = useState(false);
+  // The1Studio fork (SP2 workload) — create-mode "Estimated hours" draft; see
+  // packages/workload-ext/src/PendingEstimate.tsx.
+  const [pendingHours, setPendingHours] = useState<string>("");
   // store hooks
   const { t } = useTranslation();
   const { workspaceSlug, projectId: routerProjectId, cycleId, moduleId, workItem } = useParams();
@@ -77,6 +83,8 @@ export const CreateUpdateIssueModalBase = observer(function CreateUpdateIssueMod
   const { fetchIssue } = useIssueDetail();
   const { allowedProjectIds, handleCreateUpdatePropertyValues, handleCreateSubWorkItem } = useIssueModal();
   const { getProjectByIdentifier } = useProject();
+  // The1Studio fork (SP2 workload) — write path for the create-mode estimate.
+  const workloadStore = useWorkload();
   // current store details
   const { createIssue, updateIssue } = useIssuesActions(storeType);
   // derived values
@@ -124,11 +132,11 @@ export const CreateUpdateIssueModalBase = observer(function CreateUpdateIssueMod
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.project_id, data?.id, data?.sourceIssueId, projectId, isOpen, activeProjectId]);
 
-  const addIssueToCycle = async (issue: TIssue, cycleId: string) => {
+  const addIssueToCycle = async (issue: TIssue, targetCycleId: string) => {
     if (!workspaceSlug || !issue.project_id) return;
 
-    await issues.addIssueToCycle(workspaceSlug.toString(), issue.project_id, cycleId, [issue.id]);
-    fetchCycleDetails(workspaceSlug.toString(), issue.project_id, cycleId);
+    await issues.addIssueToCycle(workspaceSlug.toString(), issue.project_id, targetCycleId, [issue.id]);
+    fetchCycleDetails(workspaceSlug.toString(), issue.project_id, targetCycleId);
   };
 
   const addIssueToModule = async (issue: TIssue, moduleIds: string[]) => {
@@ -137,7 +145,8 @@ export const CreateUpdateIssueModalBase = observer(function CreateUpdateIssueMod
     await Promise.all([
       issues.changeModulesInIssue(workspaceSlug.toString(), issue.project_id, issue.id, moduleIds, []),
       ...moduleIds.map(
-        (moduleId) => issue.project_id && fetchModuleDetails(workspaceSlug.toString(), issue.project_id, moduleId)
+        (targetModuleId) =>
+          issue.project_id && fetchModuleDetails(workspaceSlug.toString(), issue.project_id, targetModuleId)
       ),
     ]);
   };
@@ -153,6 +162,9 @@ export const CreateUpdateIssueModalBase = observer(function CreateUpdateIssueMod
 
     setActiveProjectId(null);
     setChangesMade(null);
+    // The1Studio fork (SP2 workload) — reset the create-mode draft on close so
+    // a reopened modal starts clean (D11).
+    setPendingHours("");
     onClose();
     handleDuplicateIssueModal(false);
   };
@@ -213,6 +225,15 @@ export const CreateUpdateIssueModalBase = observer(function CreateUpdateIssueMod
         ) {
           await addIssueToModule(response, payload.module_ids);
         }
+      } else if (parseEstimateHoursInput(pendingHours, { allowEmpty: false }) !== null) {
+        // The1Studio fork (SP2 workload) — drafts have no db.Issue row to FK a
+        // WorkloadEstimate against (D5); warn instead of silently dropping the
+        // typed hours (D6).
+        setToast({
+          type: TOAST_TYPE.WARNING,
+          title: wlt("estimate.draft_not_saved_toast_title"),
+          message: wlt("estimate.draft_not_saved_toast_message"),
+        });
       }
 
       // add other property values
@@ -224,6 +245,27 @@ export const CreateUpdateIssueModalBase = observer(function CreateUpdateIssueMod
           workspaceSlug: workspaceSlug?.toString(),
           isDraft: is_draft_issue,
         });
+
+        // The1Studio fork (SP2 workload) — persist the create-mode estimate.
+        // MUST run before handleCreateSubWorkItem: that helper can give the new item
+        // children, and the backend rejects an estimate on a parent
+        // (PARENT_HAS_CHILDREN, apps/api/plane/workload/views.py). A failure here
+        // never fails the create — the work item exists and the success toast below
+        // still means what it says.
+        if (!is_draft_issue) {
+          const hours = parseEstimateHoursInput(pendingHours, { allowEmpty: false });
+          if (hours !== null) {
+            try {
+              await workloadStore.updateEstimate(workspaceSlug.toString(), response.project_id, response.id, hours);
+            } catch {
+              setToast({
+                type: TOAST_TYPE.ERROR,
+                title: wlt("estimate.create_failed_toast_title"),
+                message: wlt("estimate.create_failed_toast_message"),
+              });
+            }
+          }
+        }
 
         // create sub work item
         await handleCreateSubWorkItem({
@@ -249,6 +291,9 @@ export const CreateUpdateIssueModalBase = observer(function CreateUpdateIssueMod
       if (createMore && issueTitleRef) issueTitleRef?.current?.focus();
       setDescription("<p></p>");
       setChangesMade(null);
+      // The1Studio fork (SP2 workload) — clear the create-mode draft so
+      // "Create more" cannot carry this item's estimate into the next one (D11).
+      setPendingHours("");
       return response;
     } catch (error: any) {
       setToast({
@@ -260,20 +305,20 @@ export const CreateUpdateIssueModalBase = observer(function CreateUpdateIssueMod
     }
   };
 
-  const handleCycleChange = async (data: Partial<TIssue> | undefined, payload: Partial<TIssue>) => {
-    if (!workspaceSlug || !data?.project_id || !data?.id) return;
+  const handleCycleChange = async (issueData: Partial<TIssue> | undefined, payload: Partial<TIssue>) => {
+    if (!workspaceSlug || !issueData?.project_id || !issueData?.id) return;
     // return if user is not trying to change the cycle, i.e
     // - cycle_id is not present in payload
     // - cycle_id is the same as the current cycle id
-    if (!("cycle_id" in payload) || isEqual(data?.cycle_id, payload.cycle_id)) return;
+    if (!("cycle_id" in payload) || isEqual(issueData?.cycle_id, payload.cycle_id)) return;
 
     const slug = workspaceSlug.toString();
 
     // Removing the cycle
-    const currentCycleId = data?.cycle_id;
+    const currentCycleId = issueData?.cycle_id;
     if (currentCycleId && payload.cycle_id === null) {
-      await issues.removeIssueFromCycle(slug, data.project_id, currentCycleId, data.id);
-      fetchCycleDetails(slug, data.project_id, currentCycleId).catch((error) => {
+      await issues.removeIssueFromCycle(slug, issueData.project_id, currentCycleId, issueData.id);
+      fetchCycleDetails(slug, issueData.project_id, currentCycleId).catch((error) => {
         console.error(error);
       });
     }
@@ -281,12 +326,12 @@ export const CreateUpdateIssueModalBase = observer(function CreateUpdateIssueMod
     // Adding the cycle
     const newCycleId = payload.cycle_id;
     if (newCycleId && newCycleId !== "" && (payload.cycle_id !== cycleId || storeType !== EIssuesStoreType.CYCLE)) {
-      await addIssueToCycle(data as TBaseIssue, newCycleId);
+      await addIssueToCycle(issueData as TBaseIssue, newCycleId);
     }
   };
 
-  const handleModuleChange = async (data: Partial<TIssue>, payload: Partial<TIssue>) => {
-    if (!workspaceSlug || !data?.project_id || !data?.id) return;
+  const handleModuleChange = async (issueData: Partial<TIssue>, payload: Partial<TIssue>) => {
+    if (!workspaceSlug || !issueData?.project_id || !issueData?.id) return;
     // return if user is not trying to change the module, i.e
     // - module_ids is not present in payload
     // - module_ids is not an array
@@ -294,27 +339,27 @@ export const CreateUpdateIssueModalBase = observer(function CreateUpdateIssueMod
     if (
       !("module_ids" in payload) ||
       !Array.isArray(payload.module_ids) ||
-      isEqual(data?.module_ids, payload.module_ids)
+      isEqual(issueData?.module_ids, payload.module_ids)
     )
       return;
 
-    const updatedModuleIds = xor(data.module_ids, payload.module_ids);
+    const updatedModuleIds = xor(issueData.module_ids, payload.module_ids);
     const modulesToAdd: string[] = [];
     const modulesToRemove: string[] = [];
 
-    for (const moduleId of updatedModuleIds) {
-      if (data.module_ids?.includes(moduleId)) {
-        modulesToRemove.push(moduleId);
+    for (const updatedModuleId of updatedModuleIds) {
+      if (issueData.module_ids?.includes(updatedModuleId)) {
+        modulesToRemove.push(updatedModuleId);
       } else {
-        modulesToAdd.push(moduleId);
+        modulesToAdd.push(updatedModuleId);
       }
     }
     // update modules if there are modules to add or remove
     if (modulesToAdd.length > 0 || modulesToRemove.length > 0) {
       await issues.changeModulesInIssue(
         workspaceSlug.toString(),
-        data.project_id,
-        data.id,
+        issueData.project_id,
+        issueData.id,
         modulesToAdd,
         modulesToRemove
       );
@@ -419,11 +464,15 @@ export const CreateUpdateIssueModalBase = observer(function CreateUpdateIssueMod
       width={isDuplicateModalOpen ? EModalWidth.VIXL : EModalWidth.XXXXL}
       className="rounded-lg !bg-transparent shadow-none transition-[width] ease-linear"
     >
-      {withDraftIssueWrapper ? (
-        <DraftIssueLayout {...commonIssueModalProps} changesMade={changesMade} onChange={handleFormChange} />
-      ) : (
-        <IssueFormRoot {...commonIssueModalProps} />
-      )}
+      {/* The1Studio fork (SP2 workload) — holds the create-mode "Estimated
+          hours" draft, which cannot be PUT until the work item has an id. */}
+      <PendingEstimateProvider pendingHours={pendingHours} setPendingHours={setPendingHours}>
+        {withDraftIssueWrapper ? (
+          <DraftIssueLayout {...commonIssueModalProps} changesMade={changesMade} onChange={handleFormChange} />
+        ) : (
+          <IssueFormRoot {...commonIssueModalProps} />
+        )}
+      </PendingEstimateProvider>
     </ModalCore>
   );
 });

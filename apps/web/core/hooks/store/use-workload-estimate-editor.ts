@@ -23,7 +23,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { debounce } from "lodash-es";
 import { setToast, TOAST_TYPE } from "@plane/propel/toast";
-import { PARENT_HAS_CHILDREN_ERROR_CODE, WorkloadEstimateApiError, wlt } from "@plane/workload-ext";
+import {
+  PARENT_HAS_CHILDREN_ERROR_CODE,
+  parseEstimateHoursInput,
+  WorkloadEstimateApiError,
+  wlt,
+} from "@plane/workload-ext";
 import { useWorkloadEstimate } from "./use-workload-estimate";
 import { useWorkload } from "./use-workload";
 
@@ -84,12 +89,8 @@ export function useWorkloadEstimateEditor(args: TEstimateEditorArgs): TEstimateE
     async (raw: string, options: { allowEmpty: boolean }): Promise<void> => {
       if (!workspaceSlug || !projectId) return;
 
-      const trimmed = raw.trim();
-      // Never auto-save an empty field; only an explicit Enter/blur commits 0.
-      if (trimmed === "" && !options.allowEmpty) return;
-
-      const parsed = trimmed === "" ? 0 : Number(trimmed);
-      if (!Number.isFinite(parsed) || parsed < 0) return;
+      const parsed = parseEstimateHoursInput(raw, { allowEmpty: options.allowEmpty });
+      if (parsed === null) return;
 
       // Skip a value already stored or already in flight.
       if (parsed === (pendingValueRef.current ?? hours ?? 0)) return;

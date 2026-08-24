@@ -16,6 +16,8 @@
     "build": "tsdown",
     "dev": "tsdown --watch --no-clean",
     "check:types": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "clean": "rm -rf .turbo && rm -rf node_modules && rm -rf dist"
   },
   "dependencies": {
@@ -30,10 +32,16 @@
   },
   "devDependencies": {
     "@plane/typescript-config": "workspace:*",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
+    "@testing-library/user-event": "^14.5.2",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "^5.0.0",
+    "jsdom": "26.1.0",
     "tsdown": "catalog:",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "vitest": "^4.0.8"
   },
   "peerDependencies": {
     "react": ">=18",
