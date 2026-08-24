@@ -111,8 +111,24 @@ export interface IWorkloadStore {
    * issues no request.
    */
   ensureRange: (workspaceSlug: string, range: TDateRange, weekStartDay: number) => Promise<void>;
-  /** Drop every loaded range and refetch nothing — used when a filter changes. */
+  /**
+   * Drops every loaded range AND blanks `workloadData` — used when a filter
+   * or granularity change means the cache describes a query nobody is asking
+   * any more. The board flashes empty while the viewport refetches; see
+   * `invalidateCoverage` for the non-blanking sibling.
+   */
   resetCoverage: () => void;
+  /**
+   * Drops the loaded-range cache and bumps `coverageVersion` WITHOUT blanking
+   * `workloadData` — the timeline's `coverageVersion` effect refetches the
+   * viewport and folds the server's truth in on top of what is already on
+   * screen, so nothing flashes empty. The soft counterpart to `resetCoverage`,
+   * for a caller who knows the visible data MAY be stale (a task's dates,
+   * assignee, or state changed somewhere outside this store's own writes —
+   * e.g. an edit made through the peek panel) but holds no local snapshot of
+   * its own to patch in directly, the way `patchTaskDates` does.
+   */
+  invalidateCoverage: () => void;
   fetchEstimate: (workspaceSlug: string, projectId: string, issueId: string) => Promise<void>;
   fetchEstimatesBulk: (workspaceSlug: string, issueIds: string[]) => Promise<void>;
   /** Updates the estimate for `issueId`. Re-throws on failure (e.g. a typed
@@ -251,6 +267,7 @@ export class WorkloadStore implements IWorkloadStore {
 
       setGranularity: action,
       resetCoverage: action,
+      invalidateCoverage: action,
       setProjectIds: action,
       setAssigneeIds: action,
       setStateGroups: action,
@@ -313,18 +330,23 @@ export class WorkloadStore implements IWorkloadStore {
     this.coverageVersion += 1;
   }
 
+  invalidateCoverage(): void {
+    // Clearing `loadedRanges` makes the next `ensureRange` treat the viewport
+    // as an unfetched gap (`gaps.length === 0` short-circuit no longer
+    // applies), and bumping `coverageVersion` both discards any response
+    // already in flight (`_fetchGap`'s `requestedVersion` check) and fires
+    // the timeline's own `coverageVersion` effect, which re-syncs the
+    // viewport with no new React-side wiring needed. Deliberately does NOT
+    // touch `workloadData` or `_inFlight` — see the interface doc comment.
+    this.loadedRanges = [];
+    this.coverageVersion += 1;
+  }
+
   patchTaskDates(issueId: string, dates: { start_date: string | null; target_date: string }): TTaskDatesSnapshot {
     const snapshot = this._applyTaskDates(issueId, dates);
     // Invalidate WITHOUT blanking (D11) — resetCoverage's `workloadData = null`
-    // would flash the whole board empty on every drag. Clearing `loadedRanges`
-    // makes the next `ensureRange` treat the viewport as an unfetched gap
-    // (`store.ts` `gaps.length === 0` short-circuit no longer applies), and
-    // bumping `coverageVersion` both discards any response already in flight
-    // when the patch landed (`_fetchGap`'s `requestedVersion` check) and fires
-    // the timeline's own `coverageVersion` effect, which re-syncs the viewport
-    // with no new React-side wiring needed.
-    this.loadedRanges = [];
-    this.coverageVersion += 1;
+    // would flash the whole board empty on every drag.
+    this.invalidateCoverage();
     return snapshot ?? { issueId, start_date: dates.start_date, target_date: dates.target_date };
   }
 

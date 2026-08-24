@@ -467,19 +467,19 @@ eq(
   { start_date: "2026-03-02", target_date: "2026-03-10" }
 );
 eq(
-  "resizeStart: dragging onto target_date clamps one day short (never equal)",
+  "resizeStart: dragging exactly onto target_date reaches it — a valid one-day task, not a clamp",
   resizeStart({ start_date: "2026-03-05", target_date: "2026-03-10" }, "2026-03-10"),
-  { start_date: "2026-03-09", target_date: "2026-03-10" }
+  { start_date: "2026-03-10", target_date: "2026-03-10" }
 );
 eq(
-  "resizeStart: dragging past target_date clamps the same one-day-short stop, not further",
+  "resizeStart: dragging past target_date clamps AT target_date (a one-day task), not one day short",
   resizeStart({ start_date: "2026-03-05", target_date: "2026-03-10" }, "2026-03-20"),
-  { start_date: "2026-03-09", target_date: "2026-03-10" }
+  { start_date: "2026-03-10", target_date: "2026-03-10" }
 );
 eq(
-  "resizeStart: a single-day task (start === target) always clamps — there is no unclamped side",
+  "resizeStart: a single-day task's left handle can stay at start === target — no forced clamp",
   resizeStart({ start_date: "2026-03-10", target_date: "2026-03-10" }, "2026-03-10"),
-  { start_date: "2026-03-09", target_date: "2026-03-10" }
+  { start_date: "2026-03-10", target_date: "2026-03-10" }
 );
 eq(
   "resizeStart: null start_date materializes directly at newStart when unclamped",
@@ -494,24 +494,41 @@ eq(
   { start_date: "2026-03-05", target_date: "2026-03-15" }
 );
 eq(
-  "resizeEnd: dragging onto start_date clamps one day past (never equal)",
+  "resizeEnd: dragging exactly onto start_date reaches it — a valid one-day task, not a clamp",
   resizeEnd({ start_date: "2026-03-05", target_date: "2026-03-10" }, "2026-03-05"),
-  { start_date: "2026-03-05", target_date: "2026-03-06" }
+  { start_date: "2026-03-05", target_date: "2026-03-05" }
 );
 eq(
-  "resizeEnd: dragging before start_date clamps the same one-day-past stop, not further",
+  "resizeEnd: dragging before start_date clamps AT start_date (a one-day task), not one day past",
   resizeEnd({ start_date: "2026-03-05", target_date: "2026-03-10" }, "2026-02-20"),
-  { start_date: "2026-03-05", target_date: "2026-03-06" }
+  { start_date: "2026-03-05", target_date: "2026-03-05" }
 );
 eq(
-  "resizeEnd: a single-day task (start === target) always clamps — there is no unclamped side",
+  "resizeEnd: a single-day task's right handle can stay at target === start — no forced clamp",
   resizeEnd({ start_date: "2026-03-10", target_date: "2026-03-10" }, "2026-03-10"),
-  { start_date: "2026-03-10", target_date: "2026-03-11" }
+  { start_date: "2026-03-10", target_date: "2026-03-10" }
 );
 eq(
   "resizeEnd: null start_date is left untouched (unclamped) — only move/resize-start ever materialize it",
   resizeEnd({ start_date: null, target_date: "2026-03-10" }, "2026-03-20"),
   { start_date: null, target_date: "2026-03-20" }
+);
+
+// Direct regression pin for the live bug report: shrinking a 2-day task
+// (start, start+1) down to a 1-day task (start === target) via EITHER
+// handle. Before this fix both clamps used `>=`/`<=` and stopped one day
+// short of the boundary instead of AT it, so the drag that should have
+// produced a 1-day task silently kept producing a 2-day one — read by the
+// user as "shrink from 2 days to 1 day doesn't work".
+eq(
+  "resizeEnd: shrinking a 2-day task (start, start+1) down to 1 day via the right handle",
+  resizeEnd({ start_date: "2026-03-09", target_date: "2026-03-10" }, "2026-03-09"),
+  { start_date: "2026-03-09", target_date: "2026-03-09" }
+);
+eq(
+  "resizeStart: shrinking a 2-day task (target-1, target) down to 1 day via the left handle",
+  resizeStart({ start_date: "2026-03-09", target_date: "2026-03-10" }, "2026-03-10"),
+  { start_date: "2026-03-10", target_date: "2026-03-10" }
 );
 
 console.log(fail ? `\n${fail} FAILED` : "\nall passed");

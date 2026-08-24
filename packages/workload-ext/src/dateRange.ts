@@ -135,26 +135,32 @@ export function shiftDates(task: TDatedTask, days: number): TDraggedDates {
 }
 
 /**
- * `resize-start`: write `start_date` only. Clamped to at most `target_date` minus
- * one day — the clamp is a stop, not a rejection, so dragging past the right edge
- * parks one day short rather than swapping the dates (D7). A null `start_date` is
- * materialized directly at `newStart` (D8) — resize-start always sets it, whether
- * or not the drag actually moved.
+ * `resize-start`: write `start_date` only. Clamped to at most `target_date` itself
+ * — `start_date === target_date` is a valid, correctly-rendered one-day task (the
+ * bar's width math lands on exactly one `dayWidth`, same as core's own
+ * `getItemPositionWidth`, and the backend only rejects `start_date` EXCEEDING
+ * `target_date`, never equaling it) — so the clamp is a stop at the boundary, not
+ * one day short of it: dragging past the right edge parks exactly ON `target_date`
+ * rather than swapping the dates (D7). A null `start_date` is materialized directly
+ * at `newStart` (D8) — resize-start always sets it, whether or not the drag
+ * actually moved.
  */
 export function resizeStart(task: TDatedTask, newStart: string): { start_date: string; target_date: string } {
   if (!task.target_date) throw new Error("resizeStart: task has no target_date and cannot be dragged");
-  const start_date = newStart >= task.target_date ? shiftDate(task.target_date, -1) : newStart;
+  const start_date = newStart > task.target_date ? task.target_date : newStart;
   return { start_date, target_date: task.target_date };
 }
 
 /**
- * `resize-end`: write `target_date` only. Clamped to at least `start_date` plus one
- * day, but only "when a start exists" (D7) — a null `start_date` is left untouched
- * by a right-resize (only `move` and `resize-start` ever materialize it, per D8).
+ * `resize-end`: write `target_date` only. Clamped to at least `start_date` itself
+ * (the mirror of `resizeStart`'s boundary above — `target_date === start_date` is
+ * the same valid one-day task, reached from the other edge), but only "when a
+ * start exists" (D7) — a null `start_date` is left untouched by a right-resize
+ * (only `move` and `resize-start` ever materialize it, per D8).
  */
 export function resizeEnd(task: TDatedTask, newEnd: string): TDraggedDates {
   if (!task.target_date) throw new Error("resizeEnd: task has no target_date and cannot be dragged");
   if (!task.start_date) return { start_date: task.start_date, target_date: newEnd };
-  const target_date = newEnd <= task.start_date ? shiftDate(task.start_date, 1) : newEnd;
+  const target_date = newEnd < task.start_date ? task.start_date : newEnd;
   return { start_date: task.start_date, target_date };
 }

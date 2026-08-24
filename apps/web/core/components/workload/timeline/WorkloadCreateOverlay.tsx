@@ -13,12 +13,15 @@
 // handled by the bar (WorkloadTaskLink's ControlLink / drag handles) and never
 // reaches this layer's onClick.
 //
-// Mirrors core's ChartAddBlock affordance shape (gantt-chart/helpers/add-block.tsx
-// — a bordered 32px "+" button following the cursor, with a date tooltip)
-// without sharing its code: that component solves a different problem
-// (scheduling an existing DATELESS block via blockUpdateHandler) and is
-// unreachable here — see phase-5-click-to-create.md "Why core's ChartAddBlock
-// is not the answer".
+// Loosely mirrors core's ChartAddBlock affordance (gantt-chart/helpers/add-block.tsx
+// — a "+" button following the cursor, with a date tooltip) without sharing its
+// code: that component solves a different problem (scheduling an existing
+// DATELESS block via blockUpdateHandler) and is unreachable here — see
+// phase-5-click-to-create.md "Why core's ChartAddBlock is not the answer".
+// Diverges from it on click-target SIZE: the clickable area here is the full
+// day column (dayWidth wide, full lane height), not a small centred icon —
+// a small target proved too easy to miss, especially at Week zoom's wide
+// (180px) columns where the cursor could be far from a centred 32px button.
 
 import { useState } from "react";
 import { PlusIcon } from "@plane/propel/icons";
@@ -63,27 +66,20 @@ export function WorkloadCreateOverlay({ chart, laneMarginLeft, assigneeId, canCr
 
   const dayWidth = chart.data.dayWidth;
   // ONE source of truth for the hovered day. The date the tooltip shows, the
-  // date a click creates in, AND the column the "+" button snaps to are all
-  // derived from this single value. Previously the button snapped with
-  // `Math.floor(hoverX / dayWidth)` while `getDateFromPositionOnGantt` rounds
-  // with `Math.round`, so past a column's midpoint the tooltip/created-item
-  // advanced to day N+1 while the button stayed centred on day N — clicking
-  // the visible "+" reliably created on the wrong day (B2). Now the button's
-  // snapped screen position is re-derived from the SAME date (round-trip
-  // through `getPositionFromDate`), so the button, its tooltip, and what a
-  // click creates are always in agreement.
+  // date a click creates in, AND the column the clickable button spans are
+  // all derived from this single value — `getDateFromPositionOnGantt` rounds
+  // to the nearest day, and the button's own screen box is re-derived from
+  // that SAME date (round-trip through `getPositionFromDate`), so the button,
+  // its tooltip, and what a click creates can never disagree.
   const hoveredDay = hoverX !== null ? getDateFromPositionOnGantt(hoverX + laneMarginLeft, chart) : null;
   const columnLeft = hoveredDay ? getPositionFromDate(chart, hoveredDay, 0) - laneMarginLeft : 0;
 
-  // Click lands on the "+" button, not this whole tracking layer (below) — the
-  // button already re-derives its screen position from `hoveredDay` (see the
-  // comment above), so reusing that same value here keeps click, tooltip, and
-  // button position all in agreement with zero extra pixel math. This also
-  // keeps the div itself non-interactive: it only ever tracks the pointer
-  // (onMouseMove/onMouseLeave), so it needs no `role`/keyboard handler of its
-  // own — the actual affordance is a real, natively keyboard-operable
-  // `<button>`. Mirrors core's ChartAddBlock, whose own tracking div carries
-  // no onClick at all; only its button does.
+  // The div itself stays non-interactive — it only ever tracks the pointer
+  // (onMouseMove/onMouseLeave) — so it needs no `role`/keyboard handler of
+  // its own; the actual affordance is a real, natively keyboard-operable
+  // `<button>` that spans the hovered day's full column (below). Mirrors
+  // core's ChartAddBlock, whose own tracking div carries no onClick at all;
+  // only its button does.
   const handleCreateClick = () => {
     if (!hoveredDay) return;
     onRequestCreate({ day: hoveredDay, assigneeId });
@@ -93,24 +89,21 @@ export function WorkloadCreateOverlay({ chart, laneMarginLeft, assigneeId, canCr
   // descendant the pointer is actually over) + `clientX` minus the div's own
   // bounding-rect left, NOT `e.nativeEvent.offsetX`. `offsetX` is relative to
   // `e.target` — the actual innermost element under the cursor — so the
-  // instant the pointer entered the "+" button's own box, `hoverX` would jump
-  // to being relative to the BUTTON's tiny 32px frame instead of this div,
-  // corrupting `hoveredDay` right where a user naturally rests the cursor to
-  // click it. This computation is immune to that: it is the same value no
-  // matter which child (if any) is under the pointer.
+  // instant the pointer entered the clickable button's own box (now a good
+  // chunk of the lane, not a small icon), `hoverX` would jump to being
+  // relative to the BUTTON's own frame instead of this div, corrupting
+  // `hoveredDay` right where the cursor already is. This computation is
+  // immune to that: it is the same value no matter which child (if any) is
+  // under the pointer.
 
   return (
     <Tooltip
       tooltipContent={hoveredDay ? renderFormattedDate(hoveredDay) : ""}
       isMobile={isMobile}
-      // The Tooltip's Trigger merges its hover/focus handlers onto its child.
-      // The "+" button below is `pointer-events-none` (load-bearing — it keeps
-      // `nativeEvent.offsetX` on click resolving against THIS div, not the
-      // button), so a `pointer-events: none` element is never a hit-test
-      // target and the tooltip would never open if the Trigger wrapped it
-      // (B3). Attaching the Tooltip to THIS div instead — which does receive
-      // pointer events — is what lets the date tooltip show on hover while
-      // the button stays non-interactive for offsetX correctness.
+      // The Tooltip's Trigger merges its hover/focus handlers onto its child
+      // — attached to THIS div (which always receives pointer events, unlike
+      // the old small icon-only button that briefly went pointer-events-none)
+      // so the tooltip opens the instant a lane is hovered, everywhere in it.
       // The tooltip content is only rendered when there is a hovered day; an
       // empty string keeps the Tooltip component inert when the cursor is
       // outside this lane.
@@ -126,14 +119,15 @@ export function WorkloadCreateOverlay({ chart, laneMarginLeft, assigneeId, canCr
             type="button"
             aria-label={wlt("timeline.create_work_item")}
             onClick={handleCreateClick}
-            // Mouse-clickable: `hoverX` above no longer depends on `e.target`,
-            // so the button no longer needs `pointer-events-none` to protect
-            // it — that class previously made the button impossible to
-            // MOUSE-click at all (pointer-events:none blocks hit-testing
-            // outright; only keyboard activation, which bypasses hit-testing,
-            // ever reached its onClick). Real, natively keyboard-operable too.
-            className="absolute top-1/2 grid h-8 w-8 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-sm border border-strong bg-layer-1 p-1.5 text-secondary"
-            style={{ left: `${columnLeft + dayWidth / 2}px` }}
+            // The clickable area is the FULL day column, not a small icon
+            // centred in it — one `dayWidth` wide, full lane height, so a
+            // click anywhere in the hovered day's cell creates there. The
+            // "+" icon inside is purely a visual affordance; it does not
+            // define the hit area (that was the earlier, more fragile
+            // design: a 32x32 target easy to miss, and offset from wherever
+            // the cursor actually was within a wide Week-zoom column).
+            className="absolute inset-y-0 flex items-center justify-center rounded-sm border border-transparent text-secondary transition-colors hover:border-strong hover:bg-layer-1"
+            style={{ left: `${columnLeft}px`, width: `${dayWidth}px` }}
           >
             <PlusIcon className="h-3.5 w-3.5" />
           </button>

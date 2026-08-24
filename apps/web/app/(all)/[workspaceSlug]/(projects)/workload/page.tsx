@@ -44,13 +44,18 @@ export default observer(function WorkloadPage() {
 
   // The peek panel can change start date, target date, assignee and state —
   // every field this view aggregates — so on close the range cache is dropped
-  // and the timeline reloads whatever is on screen. Invalidating on close,
-  // rather than diffing what changed, keeps this to one reload per edit
-  // session and needs no knowledge of the panel's internals.
+  // and the viewport refetches. Invalidating on close, rather than diffing
+  // what changed, keeps this to one refetch per edit session and needs no
+  // knowledge of the panel's internals. `invalidateCoverage` (not
+  // `resetCoverage`): the drag path already established that a viewport
+  // refetch should fold in on top of what is on screen rather than blanking
+  // the board first — closing the peek panel is the same "may be stale,
+  // reconcile quietly" case, not a filter change that makes the cache
+  // describe a different query outright.
   const hadPeekRef = useRef(false);
   useEffect(() => {
     const isOpen = Boolean(peekIssue);
-    if (hadPeekRef.current && !isOpen && workspaceSlug) workloadStore.resetCoverage();
+    if (hadPeekRef.current && !isOpen && workspaceSlug) workloadStore.invalidateCoverage();
     hadPeekRef.current = isOpen;
   }, [peekIssue, workloadStore, workspaceSlug]);
 
