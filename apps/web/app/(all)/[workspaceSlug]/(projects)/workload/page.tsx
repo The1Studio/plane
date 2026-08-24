@@ -42,32 +42,20 @@ export default observer(function WorkloadPage() {
   // (WorkloadTimelineRoot's viewport sync), so a fixed window fetched on mount
   // would either duplicate that request or fight it.
 
-  // `workloadStore` is a singleton (useWorkload's own doc comment — "the
-  // singleton store accessed via StoreContext"), so switching workspace via
-  // the top-level nav does NOT recreate it: `loadedRanges`/`workloadData`
-  // survive the switch untouched. `ensureRange`'s gap-check has no concept of
-  // WHICH workspace a range was loaded for — only the date span — so if the
-  // new workspace's viewport happens to cover a span already marked loaded
-  // (the common case: the same "today"-centred window), `gaps.length === 0`
-  // short-circuits and no request is ever sent. The board keeps showing the
-  // PREVIOUS workspace's data under the new one's UI — read as "doesn't
-  // reload". `selectedProjectIds`/`selectedAssigneeIds` are workspace-scoped
-  // UUIDs too — carrying them over risks silently filtering the new
-  // workspace's request down to entities that don't exist there, which
-  // presents identically (an empty-looking board with no visible cause).
-  // `selectedStateGroups` are generic enum values (backlog/started/…), safe
-  // across any workspace, and are left alone.
-  const prevWorkspaceSlugRef = useRef(workspaceSlug);
-  useEffect(() => {
-    if (prevWorkspaceSlugRef.current !== workspaceSlug) {
-      // Either setter alone already calls `resetCoverage()` internally
-      // (unconditionally, even when the new value is unchanged) — clearing
-      // both here is not two separate invalidations stacked on a third.
-      workloadStore.setProjectIds([]);
-      workloadStore.setAssigneeIds([]);
-    }
-    prevWorkspaceSlugRef.current = workspaceSlug;
-  }, [workspaceSlug, workloadStore]);
+  // Workspace-switch invalidation deliberately does NOT live here as a
+  // `useEffect` keyed on `workspaceSlug` — an earlier attempt at that shape
+  // shipped and turned out not to fire: `workloadStore` is a SINGLETON
+  // (`useWorkload`'s own doc comment) that outlives this component, but the
+  // component itself does not reliably outlive a workspace switch — Plane's
+  // workspace switcher can navigate through an intermediate route (e.g. back
+  // to the dashboard) rather than staying on this page, unmounting and later
+  // remounting `WorkloadPage` fresh. A `useRef` seeded from `workspaceSlug`
+  // on that fresh mount starts already EQUAL to the current value, so a
+  // "did the prop change" comparison never fires, even though the singleton
+  // store underneath is still holding the previous workspace's data. The fix
+  // is now in `WorkloadStore.ensureRange` itself (`packages/workload-ext`),
+  // which self-invalidates on every call regardless of which component, or
+  // how many mounts, triggered it — see that method's own comment.
 
   // The peek panel can change start date, target date, assignee and state —
   // every field this view aggregates — so on close the range cache is dropped
