@@ -67,11 +67,23 @@ export function WorkloadCreateOverlay({ chart, laneMarginLeft, assigneeId, canCr
   const dayWidth = chart.data.dayWidth;
   // ONE source of truth for the hovered day. The date the tooltip shows, the
   // date a click creates in, AND the column the clickable button spans are
-  // all derived from this single value — `getDateFromPositionOnGantt` rounds
-  // to the nearest day, and the button's own screen box is re-derived from
-  // that SAME date (round-trip through `getPositionFromDate`), so the button,
-  // its tooltip, and what a click creates can never disagree.
-  const hoveredDay = hoverX !== null ? getDateFromPositionOnGantt(hoverX + laneMarginLeft, chart) : null;
+  // all derived from this single value, and the button's own screen box is
+  // re-derived from that SAME date (round-trip through `getPositionFromDate`),
+  // so the button, its tooltip, and what a click creates can never disagree
+  // with EACH OTHER — but all three could still disagree with the CURSOR.
+  //
+  // `getDateFromPositionOnGantt` rounds to the NEAREST day boundary — correct
+  // for the drag/resize snapping it was written for (useTaskBarDrag.ts wants
+  // "which grid line is closest"), wrong for "which day's CELL contains this
+  // pixel": rounding's tie point sits at the column's MIDPOINT, so hovering
+  // anywhere in the right half of day N's column already reports day N+1 —
+  // the highlighted cell (and the cell a click creates in) visibly led the
+  // cursor by up to half a `dayWidth`. Shifting the queried position left by
+  // half a day before rounding turns that "nearest boundary" into "which
+  // column contains this pixel" — `Math.round(v - 0.5) === Math.floor(v)` for
+  // any real `v`, so this is an exact floor, not an approximation, achieved
+  // by reusing the existing helper rather than duplicating its date-stepping.
+  const hoveredDay = hoverX !== null ? getDateFromPositionOnGantt(hoverX + laneMarginLeft - dayWidth / 2, chart) : null;
   const columnLeft = hoveredDay ? getPositionFromDate(chart, hoveredDay, 0) - laneMarginLeft : 0;
 
   // The div itself stays non-interactive — it only ever tracks the pointer
