@@ -262,6 +262,53 @@ def _resolve_owners(issue_ids):
     return dict(owners)
 
 
+def _scope_member_ids(scope, restricted, user):
+    """member_id -> display_name for everyone who COULD carry work in scope.
+
+    The companion to `_resolve_owners`, and deliberately built on the SAME
+    predicate — an active `ProjectMember`, non-bot. That function answers "who
+    owns the work that exists"; this one answers "who could have owned work at
+    all", and the two must agree. If they ever drift, a member can hold a bar
+    the board refuses to give a row to, or hold a row no assignment can reach.
+
+    Deliberately NOT `WorkspaceMember`: a member of the workspace with no
+    project in scope cannot be assigned anything this request returns, so a row
+    for them would be a lane nothing could ever fill.
+
+    GUEST RESTRICTION. A flag-off guest may see only their OWN issues in a
+    restricted project (`_guest_restricted_projects`), so that project's member
+    roster is exactly what the flag exists to withhold — listing it here would
+    leak through the workload view a set of names the issue views refuse to
+    show. Restricted projects therefore contribute no members EXCEPT the
+    requesting user themselves, which leaks nothing they do not already know
+    and keeps their own capacity row visible.
+    """
+    visible = set(scope) - set(restricted)
+    members = {}
+    if visible:
+        members.update(
+            ProjectMember.objects.filter(
+                project_id__in=visible,
+                is_active=True,
+                member__is_bot=False,
+            ).values_list("member_id", "member__display_name")
+        )
+    if restricted:
+        own = (
+            ProjectMember.objects.filter(
+                member=user,
+                project_id__in=restricted,
+                is_active=True,
+                member__is_bot=False,
+            )
+            .values_list("member_id", "member__display_name")
+            .first()
+        )
+        if own:
+            members.setdefault(own[0], own[1])
+    return members
+
+
 def _resolve_work_settings(slug):
     """Read this workspace's WorkloadSettings ONCE per request (never per
     row — every row shares the same effective capacity/workday config).
@@ -532,6 +579,29 @@ def compute_workload(
     # omit their row from the response even though `month_sparse` below has
     # a real total to show.
     owner_ids = set(buckets.keys()) | set(unscheduled.keys()) | set(month_buckets.keys())
+    # A member with no ESTIMATED work has no entry in any of the three maps
+    # above, so before this union they had no row at all — and the board could
+    # answer "who is overloaded" but never "who is free". Two different
+    # absences produced that same silence: no assigned work item, and assigned
+    # work items nobody estimated. Driving rows off the member list collapses
+    # them into one case, which is right, because from the reader's side they
+    # were never distinguishable.
+    #
+    # `names` is fed from the same call and this is load-bearing, not tidiness:
+    # `assignee_name` below falls back to "Unassigned" for an id `names` does
+    # not know, so a member id reaching `owner_ids` without a name renders as a
+    # SECOND row called "Unassigned" — worse than the row being missing.
+    #
+    # Filtered to `assignee_filter` for the same reason the per-issue owner
+    # split is (see its comment above): that filter is applied to OWNERS, never
+    # to `owner_ids`, so without this a request narrowed to one person would
+    # still carry every other member's empty lane.
+    scope_members = _scope_member_ids(scope, restricted, user)
+    for member_id, display_name in scope_members.items():
+        if assignee_filter is not None and member_id not in assignee_filter:
+            continue
+        owner_ids.add(member_id)
+        names.setdefault(member_id, display_name)
     # Same workspace-wide capacity for every row now (D1) — computed ONCE and
     # referenced by each row below, not rebuilt per-owner. Prorated over
     # every period column in the response (not just a given row's populated

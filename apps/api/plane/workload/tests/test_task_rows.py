@@ -219,8 +219,25 @@ class TestUnscheduledTask(TransactionTestCase):
         _estimate(ws, proj, issue, 5.0)
 
         data = compute_workload(u, ws.slug, "day", WIN_FROM, WIN_TO)
-        # No row at all — the issue contributed nothing observable in-window.
-        self.assertEqual(data["rows"], [])
+        # `u` is an active project member, so they now get a row whether or not
+        # they carry anything (see `_scope_member_ids`). That row's EMPTINESS is
+        # what this test is about — asserting `rows == []` used it as a proxy
+        # for "the far-past issue contributed nothing", which stopped being the
+        # same statement once every member got a lane. Assert the subject
+        # directly instead: the issue is absent from `tasks`, from the hours,
+        # and from the counted set.
+        # `_rowfor` raises when the row is absent, so a missing row fails here
+        # loudly rather than sliding into an assertIsNotNone that cannot fire.
+        row = _rowfor(data, u)
+        self.assertEqual(row["tasks"], [], "the out-of-window issue must not be a task")
+        self.assertEqual(row["total"], 0)
+        # `issues_counted` is incremented BEFORE the window clip (right after
+        # `spread_estimate`), so this far-past issue IS counted even though it
+        # produced no bucket and no task. Not an inconsistency — it is the fact
+        # the timeline's empty-state overlay relies on to tell "N items exist,
+        # widen your range" apart from "nothing is estimated at all". This
+        # fixture is precisely that case: no work on screen, one item counted.
+        self.assertEqual(data["meta"]["issues_counted"], 1)
 
 
 class TestOverdueFlag(TransactionTestCase):
@@ -481,7 +498,12 @@ class TestRowOrdering(TransactionTestCase):
         ws = _ws()
         proj = _project(ws)
         st = _state(ws, proj, "started")
-        author = _user()
+        # Named on purpose. `author` carries no work of their own, and every
+        # active member now gets a row — so this fixture also proves the D13
+        # property that empty and loaded rows INTERLEAVE alphabetically rather
+        # than being grouped. An auto-generated `u-xxxxxxxx` name would make
+        # the expected list non-deterministic.
+        author = _user(display_name="Author Ann")
         _pmember(ws, proj, author)
 
         # Mixed case on purpose: a case-SENSITIVE sort would put every
@@ -512,7 +534,10 @@ class TestRowOrdering(TransactionTestCase):
         names = [r["assignee_name"] for r in data["rows"]]
 
         self.assertIsNone(data["rows"][0]["assignee_id"])
-        self.assertEqual(names, ["Unassigned", "alpha", "Mike", "Zulu"])
+        # "Author Ann" sits between "alpha" and "Mike" and carries NO work —
+        # an empty row placed by name, among loaded ones.
+        self.assertEqual(names, ["Unassigned", "alpha", "Author Ann", "Mike", "Zulu"])
+        self.assertEqual(_rowfor(data, author)["total"], 0)
 
         # Restate the two properties independently of the literal list above,
         # so a future fixture change cannot quietly weaken the test.
@@ -531,7 +556,7 @@ class TestRowOrdering(TransactionTestCase):
         ws = _ws()
         proj = _project(ws)
         st = _state(ws, proj, "started")
-        author = _user()
+        author = _user(display_name="Author Ann")
         _pmember(ws, proj, author)
 
         impostor = _user(display_name="Unassigned")
@@ -548,8 +573,14 @@ class TestRowOrdering(TransactionTestCase):
         data = compute_workload(author, ws.slug, "day", WIN_FROM, WIN_TO)
 
         # No genuinely-unassigned work here, so nothing is pinned and the
-        # impostor sorts after "alpha" on name alone.
+        # impostor sorts after "alpha" on name alone. `author` is present and
+        # empty — every active member gets a row now — which is why the list
+        # carries three names rather than two.
         self.assertEqual(
-            [r["assignee_name"] for r in data["rows"]], ["alpha", "Unassigned"]
+            [r["assignee_name"] for r in data["rows"]],
+            ["alpha", "Author Ann", "Unassigned"],
         )
-        self.assertIsNotNone(data["rows"][1]["assignee_id"])
+        # The property, stated independently of the literal list: nothing is
+        # pinned, because no row is genuinely unassigned.
+        self.assertTrue(all(r["assignee_id"] is not None for r in data["rows"]))
+        self.assertIsNotNone(data["rows"][-1]["assignee_id"])
