@@ -9,3 +9,5 @@ export * from "./parent-tag";
 export * from "./title-input";
 export * from "./description-editor";
 export * from "./default-properties";
+// The1Studio fork (SP2 workload) — Estimated-hours input for the work-item modal.
+export * from "./estimated-hours-input";

@@ -26,6 +26,8 @@ import { PriorityDropdown } from "@/components/dropdowns/priority";
 import { StateDropdown } from "@/components/dropdowns/state/dropdown";
 import { ParentIssuesListModal } from "@/components/issues/parent-issues-list-modal";
 import { IssueLabelSelect } from "@/components/issues/select";
+// The1Studio fork (SP2 workload) — "Estimated hours" input, see estimated-hours-input.tsx
+import { IssueEstimatedHoursInput } from "./estimated-hours-input";
 // helpers
 // hooks
 import { useProjectEstimates } from "@/hooks/store/estimates";
@@ -199,6 +201,16 @@ export const IssueDefaultProperties = observer(function IssueDefaultProperties(p
             />
           </div>
         )}
+      />
+      {/* The1Studio fork (SP2 workload) — "Estimated hours" input, placed after the
+          date dropdowns to mirror issue-detail/sidebar.tsx. Not a react-hook-form
+          Controller: hours live in WorkloadEstimate, not on TIssue. */}
+      <IssueEstimatedHoursInput
+        issueId={id}
+        projectId={projectId}
+        workspaceSlug={workspaceSlug}
+        isDraft={isDraft}
+        tabIndex={getIndex("estimate_point")}
       />
       {projectDetails?.cycle_view && (
         <Controller
