@@ -201,6 +201,70 @@ export function mergeWorkloadResponses(base: TWorkloadResponse | null, add: TWor
  * overlap — an issue with `start == target` occupies that whole day. Requiring
  * a strict gap keeps them on separate rows rather than rendering them fused.
  */
+/**
+ * How many unscheduled bars a swimlane draws before the footer takes over.
+ *
+ * A height budget, not a display preference. Every unscheduled task is drawn on
+ * its OWN row — they all sit on the same column, so they cannot share one the
+ * way `packTasksIntoLanes` lets scheduled tasks share — which means a member
+ * with 30 unscheduled items would be 30 rows tall and push everyone else off
+ * the screen. Whatever this cap hides, the footer counts.
+ */
+export const MAX_UNSCHEDULED_LANES = 3;
+
+export type TUnscheduledSelection = {
+  /** At most `maxLanes`, in server order. */
+  shown: TWorkloadTask[];
+  /** How many unscheduled tasks the cap left out. 0 when everything fits. */
+  hiddenCount: number;
+};
+
+/**
+ * Split a row's unscheduled tasks into the ones to draw and a count of the rest.
+ *
+ * `unscheduled` means `!task.target_date` — the exact predicate
+ * `packTasksIntoLanes` filters OUT, and the one the footer has always counted.
+ * The two must stay complements: any task the packer drops is a task this
+ * selector has to see, or that work disappears from the board entirely.
+ *
+ * Server order is preserved deliberately — no sort here. `service.py`'s
+ * `_task_sort_key` already ordered `tasks` by
+ * `(start is None, start, target is None, target)`, so within the unscheduled
+ * group a task carrying a start sorts ahead of one carrying nothing. Re-sorting
+ * would fight that and make the three shown bars swap places between refetches
+ * for no reason the reader could see.
+ */
+export function selectUnscheduledTasks(
+  tasks: TWorkloadTask[],
+  maxLanes: number = MAX_UNSCHEDULED_LANES
+): TUnscheduledSelection {
+  // `filter` returns a new array, so nothing in the store's response object is
+  // touched — the same reason `packTasksIntoLanes` filters before it sorts.
+  const unscheduled = tasks.filter((t) => !t.target_date);
+  const limit = Math.max(0, maxLanes);
+  return {
+    shown: unscheduled.slice(0, limit),
+    hiddenCount: Math.max(0, unscheduled.length - limit),
+  };
+}
+
+/**
+ * The date column an unscheduled bar is drawn in.
+ *
+ * A task with a `start_date` but no `target_date` is unscheduled by this
+ * codebase's definition — both `packTasksIntoLanes` and the footer key on
+ * `target_date` alone — but it already carries a date somebody chose. Drawing it
+ * at today would overwrite that choice visually, and once these bars are
+ * draggable a bar's position is a claim about a date. Only the genuinely
+ * dateless case falls back to today.
+ *
+ * `todayISO` is a parameter rather than a `new Date()` inside, so this stays
+ * pure and testable against a fixed day.
+ */
+export function unscheduledAnchorDate(task: TWorkloadTask, todayISO: string): string {
+  return task.start_date ?? todayISO;
+}
+
 export function packTasksIntoLanes(tasks: TWorkloadTask[]): TWorkloadTask[][] {
   // `filter` already returns a new array, so the subsequent in-place sort never
   // touches `tasks` — which matters, since that array belongs to the store's

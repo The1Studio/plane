@@ -7,7 +7,12 @@
 // `GanttChartRoot` needs. Kept dependency-free of React/MobX so it's testable
 // in isolation.
 
-import { packTasksIntoLanes, periodDateRange } from "@plane/workload-ext";
+import {
+  packTasksIntoLanes,
+  periodDateRange,
+  selectUnscheduledTasks,
+  unscheduledAnchorDate,
+} from "@plane/workload-ext";
 import type { TWorkloadGranularity, TWorkloadResponse } from "@plane/workload-ext";
 import { assigneeKey } from "./types";
 import type { TWorkloadTimelineBlockData } from "./types";
@@ -110,7 +115,13 @@ export type TWorkloadBlocksResult = {
 export function buildWorkloadBlocks(
   data: TWorkloadResponse,
   granularity: TWorkloadGranularity,
-  isCollapsed: (assigneeKey: string) => boolean
+  isCollapsed: (assigneeKey: string) => boolean,
+  /**
+   * Today as `YYYY-MM-DD`, in the reader's own timezone. Passed in rather than
+   * read from `new Date()` here for the same reason `granularity` is: a builder
+   * that reads the clock cannot be tested, and this one is pure by design.
+   */
+  todayISO: string
 ): TWorkloadBlocksResult {
   const blockIds: string[] = [];
   const dataById: Record<string, TWorkloadTimelineBlockData> = {};
@@ -144,6 +155,30 @@ export function buildWorkloadBlocks(
     };
 
     if (isCollapsed(key)) continue;
+
+    // Unscheduled work first, above the scheduled lanes. Each gets its OWN
+    // row: they all sit on the same column, so unlike scheduled tasks they
+    // cannot share one, and once these bars are draggable a bar's x-position
+    // is a claim about a date — two side by side would both claim a day only
+    // the leftmost actually occupies.
+    const unscheduled = selectUnscheduledTasks(row.tasks);
+    unscheduled.shown.forEach((task, index) => {
+      const unschedId = `wl-unsched:${key}:${index}`;
+      blockIds.push(unschedId);
+      dataById[unschedId] = {
+        kind: "unscheduled",
+        id: unschedId,
+        name: task.name,
+        assigneeId: row.assignee_id,
+        task,
+        anchorDate: unscheduledAnchorDate(task, todayISO),
+        sort_order: order++,
+        // Whole-window span, exactly as the header and footer use — the bar is
+        // placed inside this box by absolute date.
+        start_date: headerStart,
+        target_date: headerEnd,
+      };
+    });
 
     // Compact: several non-overlapping tasks share one row. A member with 49
     // scheduled tasks was 49 rows tall; packed, it is as many rows as they have
@@ -180,8 +215,11 @@ export function buildWorkloadBlocks(
     // Footer closes the swimlane. Emitted only when expanded (a collapsed
     // member is one line), and only when it has something to say — an empty
     // strip would just be 44px of blank chart.
-    const hasFooterContent =
-      row.tasks.some((t) => !t.target_date) || row.tasks.some((t) => t.overdue) || row.tasks_truncated;
+    // Only the OVERFLOW counts now. The unscheduled tasks the cap did draw are
+    // on screen a few rows up; repeating them in a number invites the reader to
+    // add the two together. When everything fits, this half of the strip has
+    // nothing to say and disappears.
+    const hasFooterContent = unscheduled.hiddenCount > 0 || row.tasks.some((t) => t.overdue) || row.tasks_truncated;
     if (hasFooterContent) {
       const footerId = `wl-footer:${key}`;
       blockIds.push(footerId);
@@ -191,6 +229,7 @@ export function buildWorkloadBlocks(
         name: row.assignee_name,
         assigneeId: row.assignee_id,
         row,
+        unscheduledHidden: unscheduled.hiddenCount,
         sort_order: order++,
         start_date: headerStart,
         target_date: headerEnd,

@@ -225,6 +225,18 @@ New backend code lives in **new Django apps**:
   OWN row in a restricted project: listing that project's roster would leak through the
   workload view a set of names the issue views refuse to show. The `assignee_ids` filter
   narrows empty rows too. Unconditional — there is no `include_empty_members` parameter.
+  **Unscheduled work items** (`target_date` null) are drawn as dashed, unfilled placeholder bars
+  at `start_date ?? today` — a start-only task is anchored at its own start rather than dragged to
+  today, because somebody chose that date. One bar per row, capped at three per swimlane
+  (`MAX_UNSCHEDULED_LANES`); the footer strip reports **only the overflow**
+  (`Unscheduled (27 more)`), never the total, so the count and the visible bars must not be added
+  together. Those bars' hours are in **no** capacity cell — the API routes an unscheduled estimate
+  to its own `unscheduled` bucket, never into `buckets` — so a bar reading `4h` sits above a heat
+  cell that excludes it, deliberately; the hover title says so. They are draggable and resizable:
+  the renderer hands `useTaskBarDrag` a SYNTHETIC one-day task at the anchor, so that hook still
+  only ever sees a dated task, and dropping one writes both dates and turns the bar solid.
+  Note the server-side 200-task cap sorts null dates **last**, so a member with more than 200
+  estimated items loses their unscheduled tasks from the payload before the client can draw any.
 - `apps/api/plane/github_ext/` — GitHub ↔ Plane dev-workflow links (`WorkItemGithubLink`) and
   PR-driven status automation (`StateTransitionConfig`, webhook ingest)
 - `apps/api/plane/project_ext/` — project visibility (`network`) over the public API (the core
