@@ -107,6 +107,8 @@ INSTALLED_APPS = [
     "plane.views_ext",
     # The1Studio fork (cascade_ext) — docs/FORK.md touch-point 1
     "plane.cascade_ext",
+    # The1Studio fork (issue_defaults_ext) — docs/FORK.md touch-point 1
+    "plane.issue_defaults_ext",
     # Third-party things
     "rest_framework",
     "corsheaders",

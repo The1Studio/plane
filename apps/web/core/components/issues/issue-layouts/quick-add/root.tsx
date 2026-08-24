@@ -16,7 +16,14 @@ import { PlusIcon } from "@plane/propel/icons";
 import { setPromiseToast } from "@plane/propel/toast";
 import type { IProject, TIssue, EIssueLayoutTypes } from "@plane/types";
 import { cn, createIssuePayload } from "@plane/utils";
+// The1Studio fork (work-item creation defaults) — inline add gets the same
+// prefill as the Add-work-item modal. createIssuePayload hardcodes
+// `assignee_ids: []` in the sealed @plane/utils package, and the backend reads
+// an explicit [] as a deliberate "nobody", so the value has to be supplied here.
+import { getWorkItemCreationDefaults } from "@plane/work-item-defaults-ext";
 // plane web imports
+// hooks
+import { useUser } from "@/hooks/store/user";
 import { QuickAddIssueFormRoot } from "@/plane-web/components/issues/quick-add";
 // local imports
 import { CreateIssueToastActionItems } from "../../create-issue-toast-action-items";
@@ -68,6 +75,8 @@ export const QuickAddIssueRoot = observer(function QuickAddIssueRoot(props: TQui
   const { t } = useTranslation();
   // router
   const { workspaceSlug, projectId } = useParams();
+  // The1Studio fork (work-item creation defaults)
+  const { data: currentUser } = useUser();
   // states
   const [isOpen, setIsOpen] = useState(isQuickAddOpen ?? false);
   // form info
@@ -103,6 +112,13 @@ export const QuickAddIssueRoot = observer(function QuickAddIssueRoot(props: TQui
     reset({ ...defaultValues });
 
     const payload = createIssuePayload(projectId.toString(), {
+      // The1Studio fork (work-item creation defaults) — FIRST on purpose. A
+      // later spread wins, and the group's own values must beat this: the
+      // calendar prepopulates target_date from the day the user clicked, and an
+      // assignee-grouped kanban column prepopulates assignee_ids. Putting the
+      // defaults after prePopulatedData would silently move every
+      // calendar-added item to today.
+      ...getWorkItemCreationDefaults(currentUser?.id),
       ...(prePopulatedData ?? {}),
       ...formData,
     });

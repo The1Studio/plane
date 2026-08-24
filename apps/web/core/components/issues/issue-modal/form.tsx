@@ -4,7 +4,7 @@
  * See the LICENSE file for details.
  */
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
 import { FormProvider, useForm } from "react-hook-form";
@@ -26,6 +26,10 @@ import {
   getChangedIssuefields,
   getTabIndex,
 } from "@plane/utils";
+// The1Studio fork (work-item creation defaults) — the create modal prefills the
+// creator and today's due date. DEFAULT_WORK_ITEM_FORM_VALUES lives in the
+// sealed @plane/constants package, so the override is spread here instead.
+import { getWorkItemCreationDefaults } from "@plane/work-item-defaults-ext";
 // components
 import {
   IssueDefaultProperties,
@@ -38,6 +42,7 @@ import {
 // hooks
 import { useIssueModal } from "@/hooks/context/use-issue-modal";
 import { useIssueDetail } from "@/hooks/store/use-issue-detail";
+import { useUser } from "@/hooks/store/user";
 import { useProject } from "@/hooks/store/use-project";
 import { useProjectState } from "@/hooks/store/use-project-state";
 import { useWorkspaceDraftIssues } from "@/hooks/store/workspace-draft";
@@ -130,6 +135,8 @@ export const IssueFormRoot = observer(function IssueFormRoot(props: IssueFormPro
     handleTemplateChange,
   } = useIssueModal();
   const { isMobile } = usePlatformOS();
+  // The1Studio fork (work-item creation defaults)
+  const { data: currentUser } = useUser();
   const { moveIssue } = useWorkspaceDraftIssues();
 
   const {
@@ -138,9 +145,19 @@ export const IssueFormRoot = observer(function IssueFormRoot(props: IssueFormPro
   const { fetchCycles } = useProjectIssueProperties();
   const { getStateById } = useProjectState();
 
+  // The1Studio fork (work-item creation defaults) — create mode only. An edit
+  // must never re-fill a field the user has just cleared, and `data?.id` is how
+  // this shared modal tells create from update. Spread AFTER the upstream
+  // defaults and BEFORE `data`, so a template, a duplicated work item, or any
+  // caller-supplied value still wins.
+  const creationDefaults = useMemo(
+    () => (data?.id ? {} : getWorkItemCreationDefaults(currentUser?.id)),
+    [data?.id, currentUser?.id]
+  );
+
   // form info
   const methods = useForm<TIssue>({
-    defaultValues: { ...DEFAULT_WORK_ITEM_FORM_VALUES, project_id: defaultProjectId, ...data },
+    defaultValues: { ...DEFAULT_WORK_ITEM_FORM_VALUES, ...creationDefaults, project_id: defaultProjectId, ...data },
     reValidateMode: "onChange",
   });
   const {
@@ -173,7 +190,8 @@ export const IssueFormRoot = observer(function IssueFormRoot(props: IssueFormPro
       if (workItemTemplateId) {
         // reset work item template id
         setWorkItemTemplateId(null);
-        reset({ ...DEFAULT_WORK_ITEM_FORM_VALUES, project_id: projectId });
+        // The1Studio fork (work-item creation defaults)
+        reset({ ...DEFAULT_WORK_ITEM_FORM_VALUES, ...creationDefaults, project_id: projectId });
         editorRef.current?.clearEditor();
       } else {
         reset(getUpdateFormDataForReset(projectId, getValues()));
@@ -187,7 +205,8 @@ export const IssueFormRoot = observer(function IssueFormRoot(props: IssueFormPro
   // Reset form when data prop changes
   useEffect(() => {
     if (data) {
-      reset({ ...DEFAULT_WORK_ITEM_FORM_VALUES, project_id: projectId, ...data });
+      // The1Studio fork (work-item creation defaults)
+      reset({ ...DEFAULT_WORK_ITEM_FORM_VALUES, ...creationDefaults, project_id: projectId, ...data });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...dataResetProperties]);
@@ -263,6 +282,10 @@ export const IssueFormRoot = observer(function IssueFormRoot(props: IssueFormPro
         } else {
           reset({
             ...DEFAULT_WORK_ITEM_FORM_VALUES,
+            // The1Studio fork (work-item creation defaults) — "Create more"
+            // clears the form for the NEXT new work item, so it prefills too;
+            // otherwise the second item comes out bare while the first did not.
+            ...creationDefaults,
             ...(isCreateMoreToggleEnabled ? { ...data } : {}),
             project_id: getValues<"project_id">("project_id"),
             type_id: getValues<"type_id">("type_id"),

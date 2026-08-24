@@ -232,6 +232,12 @@ New backend code lives in **new Django apps**:
   `plane.api.views.user` / `plane.api.urls.user` are not touch-points, so the endpoint lives
   here. Returns only workspaces the caller is an _active_ member of. Model-less (read-only over
   core models), so it ships no `migrations/`.
+- `apps/api/plane/issue_defaults_ext/` — creation defaults for work items: an absent assignee
+  field falls back to the creator, an absent `target_date` becomes today. Model-less (read-only
+  over core models), so it ships no `migrations/`, and endpoint-less, so it takes no touch-point 2
+  entry — registered via touch-point 1 alone. Holds every decision as pure functions so the two
+  core serializers that call in carry one fenced call each; see § "Work-item creation defaults"
+  below for the behaviour and the exception table.
 - `apps/api/plane/views_ext/` — grouped/paginated workspace-issues endpoint
   (`GET /api/views-ext/workspaces/<slug>/issues/`) powering the workspace Views tab's multi-layout
   switcher (see § "Views multi-layout switcher" above), plus a second endpoint on the same app
@@ -730,6 +736,60 @@ sealed-package edit.
 for everything else). On conflict, re-apply the fork block — each is fenced by a
 `The1Studio fork (cascade-confirm)` comment — and keep upstream's changes around it. Do NOT abort
 the rebase for a conflict confined to this set.
+
+### Work-item creation defaults — fenced `The1Studio fork (work-item creation defaults)`
+
+A work item created with a field left unset gets a default: the **assignee** becomes the creator,
+and the **due date** (`target_date`) becomes today. Backend: new `issue_defaults_ext` Django app
+(model-less, endpoint-less) holding the decision logic, plus the fenced serializer calls below.
+Frontend: new `packages/work-item-defaults-ext/` package prefilling the create modal and inline
+quick-add. Plan: `plans/260824-workitem-creation-defaults/plan.md`.
+
+**The behaviour, not just the file list** — a rebase conflict in any file below needs to know what
+the code was protecting:
+
+- **Absent is not the same as empty.** Only a payload with the key entirely missing gets a default.
+  An explicit `assignee_ids: []` / `assignees: []` means "deliberately nobody" and an explicit
+  `target_date: null` means "deliberately no due date"; both are honoured. This distinction is the
+  whole design, and it is why the logic cannot be a `post_save` signal — which would need no core
+  edit at all, but sees `None` for both cases.
+- **The project's own `default_assignee` still wins.** The creator is a fallback consulted only
+  when the project has no default assignee, or its default assignee is no longer an active member
+  at `role >= 15`. Upstream already assigned the project default on an empty list; that is
+  unchanged. Only the new creator fallback is gated on the field being absent.
+- **A creator who is not an assignable project member is skipped** — the item is created
+  unassigned rather than assigned to someone who cannot see it.
+- **Never today when that would 400.** With `target_date` unset and `start_date` in the future, the
+  default is `start_date`, not today, so the serializer's own "Start date cannot exceed target date"
+  check can never reject a payload that succeeds on upstream.
+- **"Today" is the CREATOR's day**, resolved through `User.user_timezone` (default `UTC`). The
+  browser prefills the viewer's local date; a UTC-only server would disagree by a day for every
+  user east of UTC creating an item before their local 07:00, which at UTC+7 is the common case.
+- **Update never defaults.** `validate()` runs on `PATCH` too, so every helper is gated on
+  `self.instance is None`. Clearing a due date makes it stay cleared.
+- **Excluded:** intake (via the context flag below) and every raw-ORM writer. The ClickUp loaders
+  write through `Issue.objects.create()` and never touch a serializer, so they are excluded
+  structurally, at no code cost — `issue_defaults_ext/tests/test_defaults.py` pins that. **Drafts,
+  sub-work-items and epics are IN scope** and inherit the defaults.
+
+| File | What | Why no seam |
+| ---- | ---- | ----------- |
+| `apps/api/plane/app/serializers/issue.py` | `IssueCreateSerializer.validate` gains the `target_date` resolution (at the END, after the existing start/target check); `.create`'s `else:` branch is replaced by one call that absorbs the existing project-default block and adds the creator fallback | Only a serializer can tell an absent field from an explicit null — it still has `self.initial_data`; the model layer cannot |
+| `apps/api/plane/api/serializers/issue.py` | The same two edits on the public-API serializer — the path the MCP server, both SDKs and every API-key client take. **The field is spelled `assignees` here, not `assignee_ids`**, and the existing default-assignee block nests its `try/except` around the `if` rather than inside it | Same as above; the two serializers are not copies of each other |
+| `apps/api/plane/app/views/intake/base.py` | One `"apply_creation_defaults": False` key on the CREATE serializer context | A context flag is the only way to opt one caller out. Intake submitters are frequently not project members, so assigning them their own submission would be wrong, and dating a triage queue misrepresents it. The intake UPDATE site needs no flag — it is a partial update, already excluded by the `is_create` guard |
+| `apps/web/core/components/issues/issue-modal/form.tsx` | `getWorkItemCreationDefaults(currentUser?.id)` spread into all four create-mode form resets, gated on `!data?.id` | `DEFAULT_WORK_ITEM_FORM_VALUES` lives in the sealed `@plane/constants` package. The prefill is not cosmetic: the modal always submits both keys, so without it the modal would permanently be saying "deliberately empty" and the backend default could never fire for the UI |
+| `apps/web/core/components/issues/issue-layouts/quick-add/root.tsx` | The same helper spread into `createIssuePayload`, **first**, before `prePopulatedData` | `createIssuePayload` hardcodes `assignee_ids: []` in the sealed `@plane/utils`. Ordering is load-bearing: a later spread wins, and the calendar's clicked day and an assignee-grouped kanban column must beat the defaults |
+| `apps/web/package.json` | `"@plane/work-item-defaults-ext": "workspace:*"` | Touch-point 6, the designed seam — listed for completeness, not an exception |
+
+**`plane-isolation-audit` / fork-ownership note:** `packages/work-item-defaults-ext` uses the
+`@plane/` npm scope but is **fork-owned**, same as `@plane/workload-ext` / `@plane/views-ext` /
+`@plane/cascade-ext` above. Allowlist it so it isn't false-flagged as a sealed-package edit.
+
+**Rebase handling:** these files ARE expected conflict points. On conflict, re-apply the fork block
+— each is fenced by a `The1Studio fork (work-item creation defaults)` comment — and keep upstream's
+changes around it. The one that needs care is `create()` in both serializers: the fork block
+REPLACED upstream's default-assignee block rather than sitting beside it, so taking "both sides"
+would assign twice. Do NOT abort the rebase for a conflict confined to this set.
 
 ### Fork bugfix exceptions (upstream bugs, fenced, upstream-PR candidates)
 
