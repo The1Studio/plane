@@ -62,7 +62,11 @@ export const WORKLOAD_STRINGS = {
   "toolbar.manage_settings": "Manage",
   // Timeline (The1Studio fork — Phase 8, replaces the matrix).
   "timeline.unassigned": "Unassigned",
-  "timeline.unscheduled_count": "Unscheduled ({count})",
+  // Only the OVERFLOW — the tasks the lane cap did not draw. The drawn ones
+  // are on screen, so a total here would invite the reader to add.
+  "timeline.unscheduled_more": "Unscheduled ({count} more)",
+  "timeline.unscheduled_bar_title":
+    "Unscheduled — these hours are not counted in any capacity cell until the work item has a target date.",
   "timeline.overdue_count": "Overdue ({count})",
   "timeline.showing_first_n": "Showing first {count} — narrow your filters to see the rest",
   "timeline.no_workload_data": "No workload data.",

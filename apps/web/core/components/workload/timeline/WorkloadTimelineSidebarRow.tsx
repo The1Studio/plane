@@ -187,14 +187,31 @@ export const WorkloadTimelineSidebarRow = observer(function WorkloadTimelineSide
           return <SidebarCell key={blockId} />;
         }
 
+        // ── unscheduled ─────────────────────────────────────────────────────
+        if (data.kind === "unscheduled") {
+          // Empty, exactly like the lane branch above, and for exactly the same
+          // reason — the chart body lays out one BlockRow per blockId at a fixed
+          // BLOCK_HEIGHT, so a block that renders no sidebar cell shortens this
+          // column by 44px and slides every row BELOW it out of alignment with
+          // its own bars, an error that accumulates down the page. This is a
+          // spacer with nothing in it, which is not the same thing as no cell.
+          // Do NOT return `null` or delete the branch because it "does nothing".
+          return <SidebarCell key={blockId} />;
+        }
+
         // ── footer ──────────────────────────────────────────────────────────
         if (data.kind === "footer") {
           const { row } = data;
-          const unscheduledCount = row.tasks.filter((t: TWorkloadTask) => !t.target_date).length;
+          // The OVERFLOW only — what the lane cap could not draw — read off the
+          // block rather than recomputed from `row.tasks`. Recomputing would
+          // restate the cap in a second place, and the two would drift the
+          // first time it moved; counting the total would double-count the
+          // bars already on screen a few rows up.
+          const unscheduledHidden = data.unscheduledHidden;
           const overdueCount = row.tasks.filter((t: TWorkloadTask) => t.overdue).length;
           return (
             <SidebarCell key={blockId} className="flex items-center gap-3 pr-2 pl-7 text-11 text-tertiary">
-              {unscheduledCount > 0 && <span>{wlt("timeline.unscheduled_count", { count: unscheduledCount })}</span>}
+              {unscheduledHidden > 0 && <span>{wlt("timeline.unscheduled_more", { count: unscheduledHidden })}</span>}
               {overdueCount > 0 && (
                 <span className="text-danger-primary">{wlt("timeline.overdue_count", { count: overdueCount })}</span>
               )}

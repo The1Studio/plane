@@ -189,11 +189,16 @@ export const WorkloadTimelineRoot = observer(function WorkloadTimelineRoot({ sto
     [defaultCollapsed]
   );
 
+  // Recomputed every render but STABLE BY VALUE for the whole day, which is
+  // what makes it safe as a memo dependency: the blocks rebuild when the date
+  // actually rolls over, and not once in between. `buildWorkloadBlocks` takes
+  // it as an argument rather than reading the clock itself so it stays pure.
+  const todayISO = toDateStr(new Date());
   const { blockIds, dataById } = useMemo(() => {
     if (!store.workloadData)
       return { blockIds: [] as string[], dataById: {} as Record<string, TWorkloadTimelineBlockData> };
-    return buildWorkloadBlocks(store.workloadData, store.granularity, isCollapsed);
-  }, [store.workloadData, store.granularity, isCollapsed]);
+    return buildWorkloadBlocks(store.workloadData, store.granularity, isCollapsed, todayISO);
+  }, [store.workloadData, store.granularity, isCollapsed, todayISO]);
 
   // `dataById` is a plain object, not a MobX observable — the autorun below
   // can't track it directly, so it's read through a ref updated every render.

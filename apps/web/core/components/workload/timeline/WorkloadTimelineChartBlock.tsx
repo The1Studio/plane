@@ -110,6 +110,16 @@ type WorkloadTaskBarProps = {
   laneMarginLeft: number;
   dayWidth: number;
   onCommitDates: (task: TWorkloadTask, dates: TDraggedDates) => void;
+  /**
+   * Render as an UNSCHEDULED placeholder: dashed outline, no fill.
+   *
+   * The caller passes a SYNTHETIC one-day task at the anchor column (see the
+   * `kind: "unscheduled"` branch below), which is what lets this component and
+   * `useTaskBarDrag` stay completely unaware that the real work item has no
+   * dates. Only the styling and the tooltip differ; the drag, the resize, the
+   * permission gate and the label ladder are the same code paths.
+   */
+  unscheduled?: boolean;
 };
 
 /**
@@ -125,6 +135,7 @@ const WorkloadTaskBar = observer(function WorkloadTaskBar({
   laneMarginLeft,
   dayWidth,
   onCommitDates,
+  unscheduled = false,
 }: WorkloadTaskBarProps) {
   const { allowPermissions } = useUserPermissions();
 
@@ -263,9 +274,17 @@ const WorkloadTaskBar = observer(function WorkloadTaskBar({
                 labelStep === "normal" && "px-2 text-11",
                 labelStep === "small" && "px-0 text-9"
               ),
-          task.overdue
-            ? "bg-danger-subtle text-danger-primary hover:bg-danger-subtle/80"
-            : "bg-accent-primary/15 text-accent-primary hover:bg-accent-primary/25"
+          // A dashed, unfilled outline is the whole signal that this bar is a
+          // PLACEHOLDER occupying a column rather than a span covering it. A
+          // solid bar sitting in today's column reads as "due today", which is
+          // a claim the data does not make. An unscheduled task is never
+          // `overdue` — the API requires a non-null target for that flag — so
+          // there is no red branch to reach here.
+          unscheduled
+            ? "border-tertiary hover:border-secondary hover:bg-tertiary/10 border border-dashed bg-transparent text-tertiary"
+            : task.overdue
+              ? "bg-danger-subtle text-danger-primary hover:bg-danger-subtle/80"
+              : "bg-accent-primary/15 text-accent-primary hover:bg-accent-primary/25"
         )}
         onPointerDown={handleBodyPointerDown}
         // The bar shows this member's SHARE. A work item can carry
@@ -274,9 +293,15 @@ const WorkloadTaskBar = observer(function WorkloadTaskBar({
         // is correct but looks wrong against the work item itself —
         // the tooltip spells the split out rather than leaving the
         // reader to think the estimate changed.
+        // The unscheduled disclaimer is the ONLY place a reader learns why this
+        // bar's `4h` is absent from the heat cell directly beneath it: the API
+        // routes an unscheduled estimate to its own `unscheduled` bucket and
+        // never into `buckets`, deliberately, so the two genuinely disagree.
         title={`${task.identifier} ${task.name} · ${task.hours}h${
           task.assignee_count > 1 ? ` of ${task.total_hours}h, split ${task.assignee_count} ways` : ""
-        }${task.overdue ? " · overdue" : ""}${canEdit ? ` · ${wlt("timeline.drag_to_reschedule")}` : ""}`}
+        }${unscheduled ? ` · ${wlt("timeline.unscheduled_bar_title")}` : ""}${
+          task.overdue ? " · overdue" : ""
+        }${canEdit ? ` · ${wlt("timeline.drag_to_reschedule")}` : ""}`}
       >
         {isWeek ? (
           <>
@@ -388,6 +413,43 @@ export const WorkloadTimelineChartBlock = observer(function WorkloadTimelineChar
             onCommitDates={onCommitDates}
           />
         ))}
+      </div>
+    );
+  }
+
+  if (data.kind === "unscheduled") {
+    if (!currentViewData) return null;
+    const block = getBlockById(data.id);
+    const marginLeft = block?.position?.marginLeft ?? 0;
+    const barHeightClass = currentViewData.key === "week" ? "h-10" : "h-8";
+
+    // A SYNTHETIC one-day task at the anchor column. The real work item has no
+    // `target_date` — that is what makes it unscheduled — and every consumer
+    // below (`WorkloadTaskBar`, `useTaskBarDrag`, the label ladder) is written
+    // against a task that HAS one. Handing them a dated stand-in is what lets
+    // the whole drag/resize/permission path be reused verbatim instead of
+    // growing a null-date branch through three layers.
+    //
+    // Only the DATES are synthetic. `id`, `project_id` and `hours` are the real
+    // ones, so the commit patches the right issue and the rollback snapshot —
+    // read from the store, not from this object — restores the true nulls.
+    const synthetic: TWorkloadTask = {
+      ...data.task,
+      start_date: data.anchorDate,
+      target_date: data.anchorDate,
+    };
+
+    return (
+      <div className={cn("relative w-full", barHeightClass)}>
+        <WorkloadTaskBar
+          task={synthetic}
+          workspaceSlug={workspaceSlug}
+          chart={currentViewData}
+          laneMarginLeft={marginLeft}
+          dayWidth={currentViewData.data.dayWidth}
+          onCommitDates={onCommitDates}
+          unscheduled
+        />
       </div>
     );
   }
