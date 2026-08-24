@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  * See the LICENSE file for details.
  *
- * The1Studio fork (SP2 workload / work-item modal estimated hours) —
+ * The1Studio fork (SP2 workload) — work-item modal estimated hours,
  * documented core-edit exception. Listed in docs/FORK.md "Frontend core-edit
  * exceptions".
  *
