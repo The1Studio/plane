@@ -623,6 +623,19 @@ under 500px and read as cramped.
 | ---------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `apps/web/core/components/gantt-chart/data/index.ts` | `VIEWS_LIST[].data.dayWidth` — ×3 on week/month, ×6 on quarter | Every consumer reads `currentViewData.data.dayWidth`, which originates only here, and the entries are shared singletons `ChartViewRoot` mutates in place — there is no per-timeline override. Overriding on the store instead desynchronises the container width (`scrollWidth`, computed inside `ChartViewRoot` from the original value) from the block positions. |
 
+**These three numbers are now load-bearing for the task bars' LABELS, not only their layout**
+(`plans/260824-workload-timeline-cell-density/`). `MIN_BAR_WIDTH` in `WorkloadTimelineChartBlock`
+went 60 → 30 and, more importantly, changed meaning: it was a **label-legibility** floor (60px was
+the width at which `10.75h` still rendered whole) and is now purely a **duration** floor — 30px is
+one day at Quarter zoom, so a 1-day task is drawn one day wide instead of two.
+
+The legibility guarantee moved to `packages/workload-ext/src/barLabel.ts`, whose `hoursLabelStep`
+steps a bar's estimate `text-11` → `text-9` → no label at all rather than ever clipping it (an
+`overflow-hidden`, `justify-center` bar clips BOTH ends, so `10.75h` would render as `0.75`). Its
+unit tests pin the fit boundaries against the three `dayWidth` values in the table above — so
+changing a `dayWidth` here is what tells you whether task-bar labels still render, and a red test
+in that file means this row moved, not that the test is wrong.
+
 **This is deliberately GLOBAL** — it widens the Timeline layout for issues, cycles and modules as
 well as the workload board. Scoping it to workload would have meant threading an override prop
 through `GanttChartRoot` AND `ChartViewRoot`: two core files instead of one. That trade was made
