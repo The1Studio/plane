@@ -8,9 +8,16 @@ from lxml import html
 from django.db import IntegrityError
 
 #  Third party imports
+from crum import get_current_user
 from rest_framework import serializers
 
 # Module imports
+# The1Studio fork (work-item creation defaults) — decision logic lives in the
+# fork app; see plane/issue_defaults_ext/defaults.py.
+from plane.issue_defaults_ext.defaults import (
+    resolve_creation_assignee_id,
+    resolve_creation_target_date,
+)
 from plane.db.models import (
     Issue,
     IssueType,
@@ -146,6 +153,19 @@ class IssueSerializer(BaseSerializer):
         ):
             raise serializers.ValidationError("Estimate point is not valid please pass a valid estimate_point_id")
 
+        # The1Studio fork (work-item creation defaults) — an ABSENT target_date
+        # becomes today, or start_date when that is later. An explicit null is a
+        # deliberate "no due date"; an update never defaults.
+        resolved_target_date = resolve_creation_target_date(
+            is_create=self.instance is None,
+            initial_data=self.initial_data,
+            context=self.context,
+            start_date=data.get("start_date"),
+            user=get_current_user(),
+        )
+        if resolved_target_date is not None:
+            data["target_date"] = resolved_target_date
+
         return data
 
     def create(self, validated_data):
@@ -189,18 +209,22 @@ class IssueSerializer(BaseSerializer):
                 pass
         else:
             try:
-                # Then assign it to default assignee, if it is a valid assignee
-                if (
-                    default_assignee_id is not None
-                    and ProjectMember.objects.filter(
-                        member_id=default_assignee_id,
-                        project_id=project_id,
-                        role__gte=15,
-                        is_active=True,
-                    ).exists()
-                ):
+                # The1Studio fork (work-item creation defaults) — the project's
+                # own default assignee first (unchanged), then the creator. The
+                # field is spelled "assignees" on this serializer, not
+                # "assignee_ids"; passing the wrong name would silently skip the
+                # creator fallback for every API and MCP client.
+                resolved_assignee_id = resolve_creation_assignee_id(
+                    initial_data=self.initial_data,
+                    context=self.context,
+                    project_id=project_id,
+                    default_assignee_id=default_assignee_id,
+                    created_by_id=created_by_id,
+                    assignee_field="assignees",
+                )
+                if resolved_assignee_id is not None:
                     IssueAssignee.objects.create(
-                        assignee_id=default_assignee_id,
+                        assignee_id=resolved_assignee_id,
                         issue=issue,
                         project_id=project_id,
                         workspace_id=workspace_id,
