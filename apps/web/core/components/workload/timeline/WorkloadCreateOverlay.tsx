@@ -89,6 +89,16 @@ export function WorkloadCreateOverlay({ chart, laneMarginLeft, assigneeId, canCr
     onRequestCreate({ day: hoveredDay, assigneeId });
   };
 
+  // `e.currentTarget` (this div, guaranteed by React regardless of which
+  // descendant the pointer is actually over) + `clientX` minus the div's own
+  // bounding-rect left, NOT `e.nativeEvent.offsetX`. `offsetX` is relative to
+  // `e.target` — the actual innermost element under the cursor — so the
+  // instant the pointer entered the "+" button's own box, `hoverX` would jump
+  // to being relative to the BUTTON's tiny 32px frame instead of this div,
+  // corrupting `hoveredDay` right where a user naturally rests the cursor to
+  // click it. This computation is immune to that: it is the same value no
+  // matter which child (if any) is under the pointer.
+
   return (
     <Tooltip
       tooltipContent={hoveredDay ? renderFormattedDate(hoveredDay) : ""}
@@ -108,7 +118,7 @@ export function WorkloadCreateOverlay({ chart, laneMarginLeft, assigneeId, canCr
     >
       <div
         className="absolute inset-0 z-0"
-        onMouseMove={(e) => setHoverX(e.nativeEvent.offsetX)}
+        onMouseMove={(e) => setHoverX(e.clientX - e.currentTarget.getBoundingClientRect().left)}
         onMouseLeave={() => setHoverX(null)}
       >
         {hoveredDay && (
@@ -116,16 +126,13 @@ export function WorkloadCreateOverlay({ chart, laneMarginLeft, assigneeId, canCr
             type="button"
             aria-label={wlt("timeline.create_work_item")}
             onClick={handleCreateClick}
-            // `pointer-events-none` stays load-bearing even though the button
-            // is now the click target: it keeps the button from ever becoming
-            // the target of a MOUSE-driven event (hover, click), which is
-            // what lets the div's `onMouseMove` `nativeEvent.offsetX` above
-            // stay resolved against the div rather than jumping to the
-            // button's own coordinate space when the cursor crosses it.
-            // Pointer-events:none does NOT block keyboard: a Tab-focused
-            // button still fires its `onClick` on Enter/Space, so the button
-            // stays keyboard-operable while remaining mouse-transparent.
-            className="pointer-events-none absolute top-1/2 grid h-8 w-8 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-sm border border-strong bg-layer-1 p-1.5 text-secondary"
+            // Mouse-clickable: `hoverX` above no longer depends on `e.target`,
+            // so the button no longer needs `pointer-events-none` to protect
+            // it — that class previously made the button impossible to
+            // MOUSE-click at all (pointer-events:none blocks hit-testing
+            // outright; only keyboard activation, which bypasses hit-testing,
+            // ever reached its onClick). Real, natively keyboard-operable too.
+            className="absolute top-1/2 grid h-8 w-8 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-sm border border-strong bg-layer-1 p-1.5 text-secondary"
             style={{ left: `${columnLeft + dayWidth / 2}px` }}
           >
             <PlusIcon className="h-3.5 w-3.5" />
