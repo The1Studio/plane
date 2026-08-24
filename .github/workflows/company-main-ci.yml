@@ -1,6 +1,6 @@
 # CI gate for The1Studio's company-main fork branch.
 # Purpose: fail fast on any rebase that silently breaks the fork — missing migrations,
-# Django system errors, or frontend type-check failures.
+# Django system errors, frontend type-check failures, or frontend unit-test failures.
 #
 # This workflow is REQUIRED on company-main and must never carry a `paths:` filter
 # (per ci-cd-trigger-design rule §3: path-filtered required-check workflows cause
@@ -141,6 +141,18 @@ jobs:
         # Runs TypeScript compiler across all workspace packages.
         # Catches type errors introduced by the rebase (e.g. upstream API shape changes).
         timeout-minutes: 5
+
+      - name: Unit tests (vitest, all packages)
+        run: pnpm turbo run test
+        # Every package/app with a `test` script (vitest) — currently
+        # packages/cascade-ext, packages/codemods, packages/workload-ext,
+        # apps/live. The `test` turbo task depends on `^build`, so this also
+        # builds each package's dependencies first (e.g. apps/live's tests
+        # need @plane/editor built, not just type-checked, to resolve).
+        # Was previously ungated: cascade-ext's and workload-ext's suites
+        # could go red on company-main and nothing here would notice.
+        # See The1Studio/plane#65.
+        timeout-minutes: 10
 
       - name: Web build (SSR prerender)
         run: pnpm turbo run build --filter=web
