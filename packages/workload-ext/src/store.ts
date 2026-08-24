@@ -232,6 +232,23 @@ export class WorkloadStore implements IWorkloadStore {
    * scroll settles in quick succession never request the same dates twice.
    */
   private readonly _inFlight = new Map<string, TDateRange>();
+  /**
+   * The workspace `ensureRange` was last called for — `null` until the first
+   * call, so a fresh store never self-invalidates against nothing. This
+   * store is a SINGLETON (`useWorkload`'s own doc comment), so it survives a
+   * workspace switch untouched; the React component that reads it can too,
+   * unmounting and remounting through an intermediate route rather than
+   * merely re-rendering with a new `workspaceSlug` prop — which makes ANY
+   * component-lifecycle-scoped "did the prop change" check (a `useRef`
+   * compared across renders) unreliable: a fresh mount's ref starts already
+   * equal to the current value, so the comparison never fires even though
+   * this store's `loadedRanges`/`workloadData` are still the PREVIOUS
+   * workspace's. Tracking the workspace HERE, checked on every `ensureRange`
+   * call regardless of how that call was triggered, is what makes the
+   * invalidation correct independent of whatever the caller's own React
+   * lifecycle happened to do.
+   */
+  private _lastWorkspaceSlug: string | null = null;
 
   constructor() {
     // No default window, and no picker to set one. The chart's viewport is the
@@ -415,6 +432,20 @@ export class WorkloadStore implements IWorkloadStore {
   }
 
   async ensureRange(workspaceSlug: string, range: TDateRange, weekStartDay: number): Promise<void> {
+    // Self-invalidate on a workspace change BEFORE anything else below reads
+    // `loadedRanges`/`selectedProjectIds`/`selectedAssigneeIds` — see
+    // `_lastWorkspaceSlug`'s own doc comment for why this lives here rather
+    // than in a caller's `useEffect`. Project/assignee ids are workspace-
+    // scoped UUIDs; carrying them over would silently filter the new
+    // workspace's request down to entities that don't exist there, which
+    // presents identically to "nothing reloaded" (an empty board, no error).
+    if (this._lastWorkspaceSlug !== null && this._lastWorkspaceSlug !== workspaceSlug) {
+      this.selectedProjectIds = [];
+      this.selectedAssigneeIds = [];
+      this.resetCoverage();
+    }
+    this._lastWorkspaceSlug = workspaceSlug;
+
     // Snap OUTWARD to whole periods before anything else. This is what lets the
     // merge be a key union instead of an addition: a period key can then only
     // ever be produced by one fetch, so re-requesting can never double-count
