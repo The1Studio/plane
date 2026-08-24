@@ -37,6 +37,13 @@ export const WORKLOAD_STRINGS = {
   "estimate.parent_has_children_toast_title": "Can't edit estimate",
   "estimate.parent_has_children_toast_message":
     "This work item now has sub-items — its estimate is calculated automatically from them.",
+  "estimate.placeholder": "Hours",
+  "estimate.draft_not_saved_toast_title": "Estimated hours not saved",
+  "estimate.draft_not_saved_toast_message":
+    "Drafts can't carry an estimate. Set it once the work item is in a project.",
+  "estimate.create_failed_toast_title": "Estimated hours not saved",
+  "estimate.create_failed_toast_message":
+    "The work item was created, but its estimate couldn't be saved. Set it from the work item.",
   "progress.label": "Progress",
   "matrix.assignee": "Assignee",
   "matrix.unscheduled": "Unscheduled",
