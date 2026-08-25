@@ -134,6 +134,16 @@ export type TWorkloadFooterBlockData = {
    * first time it changed.
    */
   unscheduledHidden: number;
+  /**
+   * How many of this swimlane's tasks carry no estimate — the TOTAL, unlike
+   * `unscheduledHidden` above.
+   *
+   * Unestimated bars are not capped as a group, so all of them are already on
+   * screen and there is no hidden remainder to report. The number is still
+   * worth showing: "how much of this swimlane is unestimated" is not something
+   * a reader can answer by counting dashed bars across a scrolled chart.
+   */
+  unestimatedCount: number;
   sort_order: number;
   start_date: string;
   target_date: string;

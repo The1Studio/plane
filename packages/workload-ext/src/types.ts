@@ -64,6 +64,19 @@ export type TWorkloadTask = {
   target_date: string | null;
   state_group: string;
   /**
+   * True when the work item has NO `WorkloadEstimate` row, or one whose
+   * `hours <= 0`. Such an item contributes nothing to `buckets`,
+   * `month_buckets`, `total`, `over`, `total_over` or the top-level
+   * `unscheduled[]` — it adds a task row and nothing else, so the timeline can
+   * draw a dashed placeholder without any capacity figure moving.
+   *
+   * **Do not infer this from `hours === 0`.** A stored zero-hour estimate makes
+   * that test ambiguous, which is the whole reason this flag exists. It is
+   * always present and never null — an estimated row carries `false`
+   * explicitly, so a missing key means a stale server, not "estimated".
+   */
+  unestimated: boolean;
+  /**
    * The state's display name, e.g. "In Review". Server-normalised to `""`,
    * never null. This is the timeline bar's only legend: the bar is painted
    * with `state_color`, and a colour with nothing to read it by is not
@@ -99,6 +112,13 @@ export type TWorkloadUnscheduled = {
 export type TWorkloadMeta = {
   issues_counted: number;
   issues_unscheduled: number;
+  /**
+   * Countable, in-scope work items with no usable estimate. A SUPERSET of
+   * `zero_estimate_count`: that counts stored rows with `hours <= 0`, this
+   * counts those plus items carrying no estimate row at all. Counted per work
+   * item, never per assignee, so a two-assignee item counts once.
+   */
+  issues_unestimated: number;
   unscheduled_ratio: number;
   dirty_date_count: number;
   zero_estimate_count: number;

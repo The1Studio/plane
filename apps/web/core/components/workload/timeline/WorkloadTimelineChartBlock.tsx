@@ -210,7 +210,17 @@ const WorkloadTaskBar = observer(function WorkloadTaskBar({
   // width.
   const committedWidth = Math.max(endPos - startPos, MIN_BAR_WIDTH);
 
-  const hoursLabel = `${task.hours}h`;
+  // `?` rather than `0h` for an item nobody has estimated: `0h` is a claim
+  // that the work is free, and it is also a REACHABLE real value (a stored
+  // zero-hour estimate), so the two states must not render identically.
+  // It also happens to be the narrowest label on the ladder, so it survives
+  // to the `small` step on bars where `10.75h` is already hidden.
+  const hoursLabel = task.unestimated ? wlt("timeline.unestimated_label") : `${task.hours}h`;
+  // The two reasons a bar is drawn as a dashed outline instead of a filled
+  // span. They are independent — an item can be either, or both at once — and
+  // every visual branch below treats them identically, so they collapse into
+  // one predicate rather than being tested separately in four places.
+  const isPlaceholder = unscheduled || task.unestimated;
   // Week bars are 180px at minimum and clear the ladder trivially, so they
   // are not run through it — otherwise a pathological label could shrink the
   // font on a bar with room to spare. Stepped against the LIVE width (preview
@@ -293,9 +303,19 @@ const WorkloadTaskBar = observer(function WorkloadTaskBar({
           // which is a claim the data does not make. Only its border colour
           // moved to the state; it stays unfilled, and takes no overlay
           // because it has no fill to lighten.
-          unscheduled ? "hover:bg-tertiary/10 border border-dashed bg-transparent text-tertiary" : "text-primary"
+          // An UNESTIMATED bar is dashed for the same reason an unscheduled one
+          // is, and takes the identical treatment: dashed says "this bar is
+          // incomplete information", and the state colour still says where the
+          // work item is. What separates the two on screen is the label (`?`
+          // versus hours) and the geometry — an unscheduled bar occupies one
+          // column, an unestimated one covers its real span.
+          //
+          // Note this branch also catches the both-at-once case, an undated
+          // unestimated item, which is drawn from the placeholder lanes with
+          // `unscheduled` already true.
+          isPlaceholder ? "hover:bg-tertiary/10 border border-dashed bg-transparent text-tertiary" : "text-primary"
         )}
-        style={unscheduled ? { borderColor: stateBarColor(task) } : { backgroundColor: stateBarColor(task) }}
+        style={isPlaceholder ? { borderColor: stateBarColor(task) } : { backgroundColor: stateBarColor(task) }}
         onPointerDown={handleBodyPointerDown}
         // The bar shows this member's SHARE. A work item can carry
         // several assignees (ClickUp parity) and its estimate is split
@@ -312,11 +332,19 @@ const WorkloadTaskBar = observer(function WorkloadTaskBar({
         // CharField), and an unguarded slot renders "PLANE-42 Fix login ·  ·
         // 4h" — a dangling separator that reads as a missing field rather
         // than an absent one.
-        title={`${task.identifier} ${task.name}${task.state_name ? ` · ${task.state_name}` : ""} · ${task.hours}h${
-          task.assignee_count > 1 ? ` of ${task.total_hours}h, split ${task.assignee_count} ways` : ""
+        // The hours segment is DROPPED entirely for an unestimated item rather
+        // than rendered as "0h": zero is a number somebody could have chosen,
+        // and the disclaimer that follows already says what is missing. The
+        // split clause goes with it — "0h split 2 ways" describes nothing.
+        title={`${task.identifier} ${task.name}${task.state_name ? ` · ${task.state_name}` : ""}${
+          task.unestimated
+            ? ""
+            : ` · ${task.hours}h${
+                task.assignee_count > 1 ? ` of ${task.total_hours}h, split ${task.assignee_count} ways` : ""
+              }`
         }${unscheduled ? ` · ${wlt("timeline.unscheduled_bar_title")}` : ""}${
-          task.overdue ? " · overdue" : ""
-        }${canEdit ? ` · ${wlt("timeline.drag_to_reschedule")}` : ""}`}
+          task.unestimated ? ` · ${wlt("timeline.unestimated_bar_title")}` : ""
+        }${task.overdue ? " · overdue" : ""}${canEdit ? ` · ${wlt("timeline.drag_to_reschedule")}` : ""}`}
       >
         {/* Contrast overlay — the reason an arbitrary state colour is safe to
             paint text on. `state_color` is author-chosen and unbounded, so a
@@ -334,7 +362,7 @@ const WorkloadTaskBar = observer(function WorkloadTaskBar({
             it. Hover lightens LESS (/40 vs /50), which reads as the bar's own
             colour coming forward — the old `hover:bg-accent-primary/25` had no
             equivalent once the fill stopped being a fixed accent. */}
-        {!unscheduled && (
+        {!isPlaceholder && (
           <div className="pointer-events-none absolute inset-0 bg-surface-1/50 transition-colors group-hover:bg-surface-1/40" />
         )}
         {isWeek ? (

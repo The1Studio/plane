@@ -202,6 +202,39 @@ export function mergeWorkloadResponses(base: TWorkloadResponse | null, add: TWor
  * a strict gap keeps them on separate rows rather than rendering them fused.
  */
 /**
+ * Split a row's tasks into the estimated ones and the unestimated ones.
+ *
+ * Two disjoint sets, each packed into its OWN lane group by the timeline, so
+ * unestimated work sits above estimated work the way unscheduled placeholders
+ * already sit above both. Server order is preserved — `_task_sort_key`
+ * (service.py) already put unestimated rows first and ordered each group by
+ * date; re-sorting here would fight that.
+ *
+ * Keyed on `task.unestimated`, NEVER on `hours === 0`: a stored zero-hour
+ * estimate is a real, reachable state that would be misclassified by the
+ * arithmetic test. See `TWorkloadTask.unestimated`.
+ *
+ * Both branches `filter` into new arrays, so nothing in the store's response
+ * object is mutated — the same reason `packTasksIntoLanes` and
+ * `selectUnscheduledTasks` filter before they do anything else.
+ *
+ * Note this cuts ACROSS the scheduled/unscheduled split rather than replacing
+ * it: an undated unestimated task appears in `unestimated` here AND in
+ * `selectUnscheduledTasks`' selection. The timeline draws it once, from the
+ * placeholder lanes, because `packTasksIntoLanes` drops every task with no
+ * `target_date` regardless of which group it was handed.
+ */
+export function splitByEstimate(tasks: TWorkloadTask[]): {
+  estimated: TWorkloadTask[];
+  unestimated: TWorkloadTask[];
+} {
+  return {
+    estimated: tasks.filter((t) => !t.unestimated),
+    unestimated: tasks.filter((t) => t.unestimated),
+  };
+}
+
+/**
  * How many unscheduled bars a swimlane draws before the footer takes over.
  *
  * A height budget, not a display preference. Every unscheduled task is drawn on

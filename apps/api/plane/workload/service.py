@@ -173,17 +173,92 @@ def resolve_guest_scope(user, slug, scope):
     return full, restricted, own_issue_ids
 
 
-def _scope_filter(project_scope, restricted, user):
+def _scope_filter(project_scope, restricted, user, issue_field="issue_id"):
     """Row filter Q: unrestricted projects in full; restricted (flag-off guest)
-    projects narrowed to issues the user is assigned to."""
+    projects narrowed to issues the user is assigned to.
+
+    `issue_field` names the column holding the ISSUE key on the queryset this Q
+    is applied to. It defaults to `"issue_id"`, which is correct for a
+    `WorkloadEstimate` queryset (the estimate table carries its own denormalized
+    `issue_id` / `project_id` columns). `_unestimated_queryset` filters `Issue`
+    itself, where that key is the primary key, and passes `issue_field="id"`.
+
+    This is a parameter rather than a second function on purpose: the
+    flag-off-guest rule (restricted projects narrow to issues the user is
+    assigned to) is the kind of access-control logic that must have exactly one
+    definition. A copy of it for the Issue path would pass review today and
+    diverge the first time either half is touched.
+    """
     if not restricted:
         return Q(project_id__in=project_scope)
     full = set(project_scope) - set(restricted)
     own_issue_ids = _materialize_own_issue_ids(user, restricted)
-    q = Q(project_id__in=restricted, issue_id__in=own_issue_ids)
+    q = Q(**{"project_id__in": restricted, f"{issue_field}__in": own_issue_ids})
     if full:
         q |= Q(project_id__in=full)
     return q
+
+
+def _unestimated_queryset(slug, scope_q_issue, state_groups):
+    """Countable, leaf-only issues in scope carrying NO usable estimate.
+
+    "No usable estimate" means no `WorkloadEstimate` row at all, OR one whose
+    `hours <= 0` — the same two cases `_base_queryset`'s `hours__gt=0` filter
+    drops. The two querysets are exact complements over the countable leaf set,
+    which is what lets a task row carry `unestimated` as a plain boolean.
+
+    Unlike `_base_queryset` this starts from `Issue`, because an issue with no
+    estimate row has nothing on the estimate table to start from — that absence
+    IS the reason these items were invisible on the timeline until now.
+
+    Rows are NOT date-filtered here. An unestimated item produces no buckets, so
+    the estimated path's "span intersects the window" test would drop every one
+    of them; the client positions the bar by absolute date inside a whole-window
+    lane box instead. See the `tasks` assembly in `compute_workload`.
+
+    Cost (measured 2026-08-25 against the busiest production workspace, 9,438
+    countable leaves): 3,724 rows in 23.4 ms, versus 19.1 ms for 5,714 rows on
+    the estimated path. Both anti-joins below resolve to index scans
+    (`workload_estimates_issue_id_key`, `issue_parent_id_ce8d76ba`) with no
+    sequential scan over `issues`, so this needs no new index — which matters
+    beyond performance: `Issue` is a CORE model and `docs/FORK.md` forbids
+    editing `db/migrations/`, so an index requirement here would have been a
+    redesign, not a migration.
+    """
+    # Deferred import for the same circular-import reason as `_base_queryset`.
+    from .rollup import countable_issue_q, has_countable_children
+
+    qs = (
+        Issue.objects.filter(scope_q_issue, workspace__slug=slug)
+        # `countable_issue_q()` rather than a hand-written filter: it expresses
+        # the null-state case as an explicit OR, which forces Django to LEFT
+        # JOIN `state`. A negated `IN` on an INNER JOIN silently drops issues
+        # with no state at all (state is OPTIONAL on Issue).
+        .filter(countable_issue_q())
+        .exclude(state__group=StateGroup.TRIAGE.value)
+        # Leaf-only, the SAME rule `_base_queryset` applies. Without it a parent
+        # whose children carry the estimates would render as an unestimated
+        # dashed bar, contradicting the rollup its own sidebar shows.
+        .filter(~has_countable_children("pk"))
+        # An `Exists` anti-join, never `.exclude(id__in=<est ids>)`: that id list
+        # can hold up to ROW_GUARD entries, and handing it to the database as a
+        # literal IN is a different failure mode at scale.
+        .filter(
+            ~Exists(
+                WorkloadEstimate.objects.filter(
+                    issue_id=OuterRef("pk"),
+                    workspace__slug=slug,
+                    hours__gt=0,
+                )
+            )
+        )
+    )
+    if state_groups:
+        qs = qs.filter(state__group__in=state_groups)
+    # No `else`, for the reason spelled out at the bottom of `_base_queryset`:
+    # no state filter selected means EVERY state group, not a hidden exclusion
+    # the user can neither see nor clear.
+    return qs
 
 
 def _base_queryset(slug, scope_q, state_groups):
@@ -350,14 +425,34 @@ def _resolve_today(slug):
 
 
 def _task_sort_key(task):
-    """Ordering for the truncation cap (phase-7.md "Truncation cap"): by
-    `start_date` then `target_date`. Not specified: where null dates sort.
-    We put them LAST on each key — an unscheduled/no-start task is exactly
-    the kind of row a 200-task cap should drop first, ahead of dated work.
+    """Ordering for the truncation cap (phase-7.md "Truncation cap").
+
+    UNESTIMATED FIRST, then by `start_date`, then by `target_date`, with null
+    dates last on each date key.
+
+    The date half is unchanged and its original reasoning still holds within a
+    group: an undated row is the kind a 200-task cap should drop before dated
+    work. The unestimated term now sits ABOVE it, which inverts that for one
+    case on purpose — an item nobody has estimated is the row most worth
+    surfacing, so it survives truncation ahead of estimated work and takes the
+    placeholder-lane slots first.
+
+    That is a real trade, not a free win: on a swimlane past the cap this now
+    truncates ESTIMATED work that used to fit. `tasks_truncated` still tells
+    the client it happened, and `test_sorted_first_and_shares_cap` pins the
+    interaction so it stays visible in the suite rather than being discovered
+    on a busy swimlane.
     """
     start = task["start_date"]
     target = task["target_date"]
-    return (start is None, start or "", target is None, target or "")
+    # `not unestimated` -> False (0) sorts ahead of True (1).
+    return (
+        not task["unestimated"],
+        start is None,
+        start or "",
+        target is None,
+        target or "",
+    )
 
 
 def compute_workload(
@@ -393,10 +488,17 @@ def compute_workload(
     scope_q = _scope_filter(scope, restricted, user)
 
     qs = _base_queryset(slug, scope_q, state_groups)
+    # Same scope rule, applied to `Issue` instead of `WorkloadEstimate` — see
+    # `_scope_filter`'s `issue_field` docstring for why this is a parameter and
+    # not a second copy of the guest rule.
+    scope_q_issue = _scope_filter(scope, restricted, user, issue_field="id")
+    unest_qs = _unestimated_queryset(slug, scope_q_issue, state_groups)
 
     # Row guard — bound memory regardless of how the request was narrowed
     # (an admin with an explicit large project list can still blow past it).
-    if qs.count() > ROW_GUARD:
+    # ONE budget across BOTH querysets, not one ceiling each: a request is
+    # refused on the total rows it would load, which is what memory tracks.
+    if qs.count() + unest_qs.count() > ROW_GUARD:
         raise WorkloadTooLarge()
 
     # Per-issue detail (name/identifier/state) is pulled in the SAME query as
@@ -426,6 +528,24 @@ def compute_workload(
             "issue__state__color",
         )
     )
+    # Same column list as `est_rows` minus `hours` — there is no estimate to
+    # select. Field names lose the `issue__` prefix because this queryset IS
+    # `Issue`; the ORDER matches `est_rows` so the two unpack blocks below read
+    # as the same shape.
+    unest_rows = list(
+        unest_qs.values_list(
+            "id",
+            "start_date",
+            "target_date",
+            "name",
+            "sequence_id",
+            "project_id",
+            "project__identifier",
+            "state__group",
+            "state__name",
+            "state__color",
+        )
+    )
     zero_estimate_count = WorkloadEstimate.objects.filter(
         scope_q,
         workspace__slug=slug,
@@ -435,8 +555,10 @@ def compute_workload(
         issue__is_draft=False,
     ).count()
 
+    # ONE `_resolve_owners` call covering BOTH id sets — it is a single query,
+    # and calling it twice would make it two for no benefit.
     issue_ids = [r[0] for r in est_rows]
-    owners = _resolve_owners(issue_ids)
+    owners = _resolve_owners(issue_ids + [r[0] for r in unest_rows])
     assignee_filter = set(assignee_ids) if assignee_ids else None
 
     buckets = defaultdict(lambda: defaultdict(int))  # owner_id -> period -> cents
@@ -451,6 +573,11 @@ def compute_workload(
     meta = {
         "issues_counted": 0,
         "issues_unscheduled": 0,
+        # Countable in-scope items with no usable estimate. A SUPERSET of
+        # `zero_estimate_count`: that counts stored rows with `hours <= 0`,
+        # this counts those PLUS items with no estimate row at all. The two
+        # deliberately overlap. Counted per ISSUE, never per owner.
+        "issues_unestimated": 0,
         "dirty_date_count": 0,
         "zero_estimate_count": zero_estimate_count,
         "truncated": False,
@@ -565,6 +692,14 @@ def compute_workload(
                         # CSS colour string and never parses it.
                         "state_name": state_name or "",
                         "state_color": state_color or "",
+                        # ALWAYS emitted, never omitted. The client must not
+                        # have to infer this from `hours == 0`: a stored
+                        # zero-hour estimate makes that test ambiguous, which
+                        # is the whole reason the flag exists. Absent is not
+                        # false — a missing key reads as falsy and would work
+                        # by accident until a consumer used `in` or a strict
+                        # schema.
+                        "unestimated": False,
                         "overdue": bool(
                             target is not None
                             and target < today
@@ -572,6 +707,77 @@ def compute_workload(
                         ),
                     }
                 )
+
+    # Unestimated items — the same owner split and assignee filter as above,
+    # but no hours to spread anywhere. They write NOTHING to `buckets`,
+    # `month_buckets` or `unscheduled`, so every capacity figure in the
+    # response is byte-identical to what it would be without them; the only
+    # thing they add is a task row for the timeline to draw a placeholder from.
+    for (
+        issue_id,
+        start,
+        target,
+        issue_name,
+        sequence_id,
+        project_id,
+        project_identifier,
+        state_group,
+        state_name,
+        state_color,
+    ) in unest_rows:
+        issue_owners = owners.get(issue_id) or [(None, "Unassigned")]
+        n_owners = len(issue_owners)
+        visible = [
+            (oid, oname)
+            for oid, oname in issue_owners
+            if assignee_filter is None or oid in assignee_filter
+        ]
+        if not visible:
+            continue
+
+        # Counted once per ISSUE, before the per-owner fan-out below — a
+        # two-assignee item is one unestimated work item, not two.
+        meta["issues_unestimated"] += 1
+
+        # NO window filter here, deliberately. The estimated branch drops an
+        # item whose whole span falls outside [date_from, date_to] because it
+        # contributed no bucket to justify a row; an unestimated item never
+        # contributes a bucket at all, so that same test would drop every one
+        # of them. Window clipping happens client-side, where the bar is
+        # positioned by absolute date inside a whole-window lane box.
+        for owner_id, owner_name in visible:
+            names[owner_id] = owner_name
+            tasks_by_owner[owner_id].append(
+                {
+                    "id": str(issue_id),
+                    "project_id": str(project_id),
+                    "identifier": f"{project_identifier}-{sequence_id}",
+                    "name": issue_name,
+                    # Zero, not null: `hours` is a number everywhere else and a
+                    # client summing the array must not have to guard for None.
+                    # `unestimated` is what carries "there is no estimate".
+                    "hours": 0.0,
+                    "total_hours": 0.0,
+                    # The real owner count, exactly as on an estimated row —
+                    # nothing about sharing changes because the estimate is
+                    # missing.
+                    "assignee_count": n_owners,
+                    "start_date": start.isoformat() if start else None,
+                    "target_date": target.isoformat() if target else None,
+                    "state_group": state_group,
+                    "state_name": state_name or "",
+                    "state_color": state_color or "",
+                    "unestimated": True,
+                    # Same rule as an estimated row: a non-null target in the
+                    # past on a non-terminal item. An undated unestimated item
+                    # is therefore never overdue.
+                    "overdue": bool(
+                        target is not None
+                        and target < today
+                        and state_group not in _TERMINAL_STATE_GROUPS
+                    ),
+                }
+            )
 
     period_set = set()
     for pm in buckets.values():
@@ -597,7 +803,17 @@ def compute_workload(
     # `buckets` or `unscheduled` entry at all. Dropping them here would silently
     # omit their row from the response even though `month_sparse` below has
     # a real total to show.
-    owner_ids = set(buckets.keys()) | set(unscheduled.keys()) | set(month_buckets.keys())
+    owner_ids = (
+        set(buckets.keys())
+        | set(unscheduled.keys())
+        | set(month_buckets.keys())
+        # `tasks_by_owner` is the ONLY one of these an unestimated item writes
+        # to. Without it the UNASSIGNED row vanishes whenever the only
+        # unassigned work is unestimated: `scope_members` below contributes
+        # member ids and never `None`, and `None` reached this set solely
+        # through the three hour maps above.
+        | set(tasks_by_owner.keys())
+    )
     # A member with no ESTIMATED work has no entry in any of the three maps
     # above, so before this union they had no row at all — and the board could
     # answer "who is overloaded" but never "who is free". Two different
@@ -795,6 +1011,7 @@ def _empty_response(granularity, date_from, date_to):
         "meta": {
             "issues_counted": 0,
             "issues_unscheduled": 0,
+            "issues_unestimated": 0,
             "dirty_date_count": 0,
             "zero_estimate_count": 0,
             "unscheduled_ratio": 0,

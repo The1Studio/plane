@@ -208,10 +208,15 @@ export const WorkloadTimelineSidebarRow = observer(function WorkloadTimelineSide
           // first time it moved; counting the total would double-count the
           // bars already on screen a few rows up.
           const unscheduledHidden = data.unscheduledHidden;
+          // Read off the block, like `unscheduledHidden` — the builder already
+          // computed it from the same split that decided which lanes to draw,
+          // and recomputing here could disagree with what is on screen.
+          const unestimatedCount = data.unestimatedCount;
           const overdueCount = row.tasks.filter((t: TWorkloadTask) => t.overdue).length;
           return (
             <SidebarCell key={blockId} className="flex items-center gap-3 pr-2 pl-7 text-11 text-tertiary">
               {unscheduledHidden > 0 && <span>{wlt("timeline.unscheduled_more", { count: unscheduledHidden })}</span>}
+              {unestimatedCount > 0 && <span>{wlt("timeline.unestimated_count", { count: unestimatedCount })}</span>}
               {overdueCount > 0 && (
                 <span className="text-danger-primary">{wlt("timeline.overdue_count", { count: overdueCount })}</span>
               )}

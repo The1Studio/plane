@@ -68,6 +68,14 @@ export const WORKLOAD_STRINGS = {
   "timeline.unscheduled_bar_title":
     "Unscheduled — these hours are not counted in any capacity cell until the work item has a target date.",
   "timeline.overdue_count": "Overdue ({count})",
+  // A string rather than a literal in JSX so the glyph is translatable — a
+  // locale that reads right-to-left, or one where "?" carries a different
+  // weight, can change it without touching the component.
+  "timeline.unestimated_label": "?",
+  "timeline.unestimated_bar_title": "No estimate — this work item adds nothing to the capacity row above.",
+  // The TOTAL for the swimlane, not an overflow: unestimated bars are not
+  // capped as a group, so there is no hidden remainder to report.
+  "timeline.unestimated_count": "Unestimated ({count})",
   "timeline.showing_first_n": "Showing first {count} — narrow your filters to see the rest",
   "timeline.no_workload_data": "No workload data.",
   "timeline.week_of": "Week of {date}",
