@@ -166,11 +166,13 @@ describe("splitByEstimate composes with the scheduled/unscheduled split", () => 
     expect(packTasksIntoLanes(split.estimated).length + packTasksIntoLanes(split.unestimated).length).toBe(2);
   });
 
-  it("still counts undated unestimated work for the footer, which no lane holds", () => {
-    // `unestimatedCount` in blocks.ts reads `splitByEstimate(row.tasks)`, not
-    // the packing result, precisely because of this row: an undated
-    // unestimated task is drawn as a placeholder and appears in NO lane, but
-    // the swimlane still owes it an estimate.
+  it("counts undated unestimated work that the one-argument packer holds no lane for", () => {
+    // The two functions answer different questions and the gap between them is
+    // the placeholder set. `splitByEstimate` sees every unestimated task;
+    // `packTasksIntoLanes` without a `todayISO` sees only the dated ones. The
+    // swimlane footer no longer bridges that gap with a total — it reports the
+    // placeholder cap's own overflow — but the asymmetry is still real, and a
+    // caller that confuses the two would silently lose the undated rows.
     const tasks = [
       task("dated", { start: "2026-09-01", target: "2026-09-02", unestimated: true }),
       task("undated", { unestimated: true }),

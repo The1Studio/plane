@@ -73,9 +73,11 @@ export const WORKLOAD_STRINGS = {
   // weight, can change it without touching the component.
   "timeline.unestimated_label": "?",
   "timeline.unestimated_bar_title": "No estimate — this work item adds nothing to the capacity row above.",
-  // The TOTAL for the swimlane, not an overflow: unestimated bars are not
-  // capped as a group, so there is no hidden remainder to report.
-  "timeline.unestimated_count": "Unestimated ({count})",
+  // The OVERFLOW, matching `unscheduled_more` above — the undated unestimated
+  // bars the placeholder cap did not draw. It read as a TOTAL until
+  // 2026-08-25, which made it overlap the unscheduled number beside it and
+  // invited the reader to add a count to bars already on screen.
+  "timeline.unestimated_more": "Unestimated ({count} more)",
   "timeline.showing_first_n": "Showing first {count} — narrow your filters to see the rest",
   "timeline.no_workload_data": "No workload data.",
   "timeline.week_of": "Week of {date}",

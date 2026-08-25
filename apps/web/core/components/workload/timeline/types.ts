@@ -109,7 +109,7 @@ export type TWorkloadFooterBlockData = {
    * total, and not including the unestimated group's own overflow. The two
    * footer numbers measure different sets and must not overlap; summing them
    * here double-counted every hidden unestimated item against
-   * `unestimatedCount` below.
+   * `unestimatedHidden` below.
    *
    * Passed down rather than recomputed from `row.tasks`, because the number
    * is a function of the cap the block builder applied. Recomputing it here
@@ -118,15 +118,15 @@ export type TWorkloadFooterBlockData = {
    */
   unscheduledHidden: number;
   /**
-   * How many of this swimlane's tasks carry no estimate — the TOTAL, unlike
-   * `unscheduledHidden` above.
+   * How many UNDATED unestimated tasks the placeholder cap hid — an overflow,
+   * exactly like `unscheduledHidden` above, and over a disjoint group.
    *
-   * Unestimated bars are not capped as a group, so all of them are already on
-   * screen and there is no hidden remainder to report. The number is still
-   * worth showing: "how much of this swimlane is unestimated" is not something
-   * a reader can answer by counting dashed bars across a scrolled chart.
+   * It was the swimlane TOTAL until 2026-08-25, which both overlapped the
+   * number beside it and restated bars already on screen. A DATED unestimated
+   * task can never be in here: those pack into the lanes uncapped, so the only
+   * unestimated work that can be hidden is undated work past the cap.
    */
-  unestimatedCount: number;
+  unestimatedHidden: number;
   sort_order: number;
   start_date: string;
   target_date: string;

@@ -7,7 +7,7 @@
 // `GanttChartRoot` needs. Kept dependency-free of React/MobX so it's testable
 // in isolation.
 
-import { packTasksIntoLanes, periodDateRange, selectPlaceholderTasks, splitByEstimate } from "@plane/workload-ext";
+import { packTasksIntoLanes, periodDateRange, selectPlaceholderTasks } from "@plane/workload-ext";
 import type { TWorkloadGranularity, TWorkloadResponse } from "@plane/workload-ext";
 import { assigneeKey } from "./types";
 import type { TWorkloadTimelineBlockData } from "./types";
@@ -256,20 +256,23 @@ export function buildWorkloadBlocks(
     // on screen a few rows up; repeating them in a number invites the reader to
     // add the two together. When everything fits, this half of the strip has
     // nothing to say and disappears.
-    // `unestimatedCount` is the TOTAL, not an overflow: it answers "how much of
-    // this swimlane still owes an estimate", which is not something a reader
-    // can get by counting dashed bars across a scrolled chart. Counted from the
-    // row's OWN tasks rather than from a packing result, since an undated
-    // unestimated task beyond the cap reaches no lane and would otherwise
-    // vanish from the number as well as from the board.
-    const unestimatedCount = splitByEstimate(row.tasks).unestimated.length;
+    // Both numbers are OVERFLOWS, and of disjoint groups. Each reports only
+    // what its own placeholder cap could not draw, so neither restates bars
+    // already on screen a few rows up and the two can never count the same
+    // item twice.
+    //
+    // `unestimatedHidden` was the swimlane TOTAL until 2026-08-25. Two things
+    // were wrong with that: it overlapped the unscheduled number beside it,
+    // and it counted bars the reader could already see. A dated unestimated
+    // task is never in it — those are packed into the lanes uncapped, so the
+    // only unestimated work that can be hidden is undated work past the cap.
+    const unestimatedHidden = placeholders.unestimated.hiddenCount;
     // The UNSCHEDULED group's overflow ALONE. It briefly summed both groups,
-    // which put every hidden unestimated item into this number AND into
-    // `unestimatedCount` — namph's strip read "Unscheduled (22 more)
-    // Unestimated (17)" with 14 items counted in both. The two labels measure
-    // different things and must not overlap: `Unscheduled` is the estimated-
-    // undated set, matching `meta.issues_unscheduled` server-side, while
-    // `Unestimated` is the no-estimate set regardless of dates.
+    // which put every hidden unestimated item into this number AND into the
+    // one beside it — namph's strip read "Unscheduled (22 more) Unestimated
+    // (17)" with 14 items counted in both. `Unscheduled` is the estimated-
+    // undated set, matching `meta.issues_unscheduled` server-side; an item
+    // that is both undated and unestimated belongs to the other group.
     //
     // The bug was invisible on the swimlane it shipped against: XuanCuong has
     // exactly one unestimated item and it fits, so the second term was 0 and
@@ -277,7 +280,7 @@ export function buildWorkloadBlocks(
     // kind that survives a spot check.
     const unscheduledHidden = placeholders.unscheduled.hiddenCount;
     const hasFooterContent =
-      unscheduledHidden > 0 || unestimatedCount > 0 || row.tasks.some((t) => t.overdue) || row.tasks_truncated;
+      unscheduledHidden > 0 || unestimatedHidden > 0 || row.tasks.some((t) => t.overdue) || row.tasks_truncated;
     if (hasFooterContent) {
       const footerId = `wl-footer:${key}`;
       blockIds.push(footerId);
@@ -288,7 +291,7 @@ export function buildWorkloadBlocks(
         assigneeId: row.assignee_id,
         row,
         unscheduledHidden,
-        unestimatedCount,
+        unestimatedHidden,
         sort_order: order++,
         start_date: headerStart,
         target_date: headerEnd,
