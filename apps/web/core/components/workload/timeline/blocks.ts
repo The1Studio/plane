@@ -11,6 +11,7 @@ import {
   packTasksIntoLanes,
   periodDateRange,
   selectUnscheduledTasks,
+  splitByEstimate,
   unscheduledAnchorDate,
 } from "@plane/workload-ext";
 import type { TWorkloadGranularity, TWorkloadResponse } from "@plane/workload-ext";
@@ -180,10 +181,41 @@ export function buildWorkloadBlocks(
       };
     });
 
+    // Unestimated work next, still above the estimated lanes — the same
+    // "what needs attention sits on top" ordering the placeholders above use,
+    // expressed the same way: by block order, not by a sort key.
+    //
+    // These are packed like any other dated bars rather than drawn as
+    // single-column placeholders, because they HAVE dates; only the estimate
+    // is missing. An undated unestimated task is not here — it has no
+    // `target_date`, so `packTasksIntoLanes` drops it and the placeholder
+    // block above already drew it.
+    const { estimated, unestimated } = splitByEstimate(row.tasks);
+    packTasksIntoLanes(unestimated).forEach((laneTasks, laneIndex) => {
+      const unestId = `wl-lane-unest:${key}:${laneIndex}`;
+      blockIds.push(unestId);
+      dataById[unestId] = {
+        kind: "lane",
+        id: unestId,
+        name: laneTasks[0]?.name ?? row.assignee_name,
+        assigneeId: row.assignee_id,
+        tasks: laneTasks,
+        sort_order: order++,
+        // Whole-window box, exactly as the estimated lanes below — bars are
+        // positioned inside it by absolute date.
+        start_date: headerStart,
+        target_date: headerEnd,
+      };
+    });
+
     // Compact: several non-overlapping tasks share one row. A member with 49
     // scheduled tasks was 49 rows tall; packed, it is as many rows as they have
     // genuinely concurrent work, which is usually a handful.
-    const lanes = packTasksIntoLanes(row.tasks);
+    //
+    // ESTIMATED only — the unestimated ones were packed into their own group
+    // just above. Splitting the two is what lets each render as its own band;
+    // packing them together would interleave dashed and solid bars on one row.
+    const lanes = packTasksIntoLanes(estimated);
     // A member with no scheduled tasks — zero tasks at all, or every task
     // unscheduled (no `target_date`, so `packTasksIntoLanes` places none of
     // them) — packs into zero lanes. Without this fallback that member would
@@ -219,7 +251,14 @@ export function buildWorkloadBlocks(
     // on screen a few rows up; repeating them in a number invites the reader to
     // add the two together. When everything fits, this half of the strip has
     // nothing to say and disappears.
-    const hasFooterContent = unscheduled.hiddenCount > 0 || row.tasks.some((t) => t.overdue) || row.tasks_truncated;
+    // `unestimatedCount` is the TOTAL, not an overflow like
+    // `unscheduled.hiddenCount`: unestimated bars are not capped as a group,
+    // so every one of them is already on screen. It is still worth a number —
+    // "how much of this swimlane is unestimated" is not answerable by counting
+    // dashes across a scrolled chart.
+    const unestimatedCount = unestimated.length;
+    const hasFooterContent =
+      unscheduled.hiddenCount > 0 || unestimatedCount > 0 || row.tasks.some((t) => t.overdue) || row.tasks_truncated;
     if (hasFooterContent) {
       const footerId = `wl-footer:${key}`;
       blockIds.push(footerId);
@@ -230,6 +269,7 @@ export function buildWorkloadBlocks(
         assigneeId: row.assignee_id,
         row,
         unscheduledHidden: unscheduled.hiddenCount,
+        unestimatedCount,
         sort_order: order++,
         start_date: headerStart,
         target_date: headerEnd,

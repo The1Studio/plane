@@ -392,6 +392,14 @@ export const WorkloadTimelineRoot = observer(function WorkloadTimelineRoot({ sto
   // is unscheduled, because the API routes an unestimated-date task to its own
   // `unscheduled` bucket and never into `buckets`; `tasks.length > 0` misses
   // hours whose task rows were cut by the 200-task cap.
+  //
+  // `tasks.length` is NO LONGER a proxy for "estimated work exists": an
+  // unestimated item contributes a task row and no hours at all, so a
+  // workspace whose work is entirely unestimated now renders bars here where
+  // it used to show the overlay. That is intended — an unestimated backlog IS
+  // something to look at — but it means the two halves are no longer
+  // redundant in the direction they used to be, and anyone tightening this
+  // predicate to "has hours" would make every such board look empty again.
   const hasWork = (store.workloadData?.rows ?? []).some((row) => row.tasks.length > 0 || row.total > 0);
   const counted = store.workloadData?.meta?.issues_counted ?? 0;
 
