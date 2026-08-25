@@ -203,7 +203,10 @@ jobs:
   backend-pytest:
     name: Backend — pytest (fork-owned apps)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Must stay ABOVE the pytest step's own timeout (25) plus the setup steps
+    # that precede it (~12 min of install/service budget), or the job ceiling
+    # fires first and the step's more specific message never appears.
+    timeout-minutes: 40
 
     services:
       postgres:
@@ -303,7 +306,19 @@ jobs:
       - name: Run backend test suite (fork-owned apps)
         working-directory: apps/api
         run: pytest ${{ steps.fork-test-paths.outputs.paths }}
-        timeout-minutes: 15
+        # 25, raised from 15 on 2026-08-25. The fork-owned suite is dominated by
+        # `TransactionTestCase`, which truncates every table between tests, so
+        # its runtime grows roughly linearly with test count and does not
+        # parallelise. At 219 tests a healthy runner finishes in ~9 min (#80),
+        # but a slow one crossed 15 and killed the step MID-SUITE on a
+        # docs-only PR (#81) — a red check that says nothing about the diff is
+        # worse than a slow one, because the next person's instinct is to
+        # re-run rather than read it.
+        #
+        # Raise this again rather than trimming coverage to fit, but if it
+        # reaches the job's own ceiling below, the real fix is to stop paying
+        # per-test truncation — not another bump.
+        timeout-minutes: 25
 
   # ---------------------------------------------------------------------------
   # Job 4 — Smoke placeholder (Phase 5)
