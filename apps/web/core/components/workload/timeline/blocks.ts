@@ -10,11 +10,11 @@
 import {
   packTasksIntoLanes,
   periodDateRange,
-  selectUnscheduledTasks,
+  selectPlaceholderTasks,
   splitByEstimate,
   unscheduledAnchorDate,
 } from "@plane/workload-ext";
-import type { TWorkloadGranularity, TWorkloadResponse } from "@plane/workload-ext";
+import type { TWorkloadGranularity, TWorkloadResponse, TWorkloadTask } from "@plane/workload-ext";
 import { assigneeKey } from "./types";
 import type { TWorkloadTimelineBlockData } from "./types";
 
@@ -122,7 +122,15 @@ export function buildWorkloadBlocks(
    * read from `new Date()` here for the same reason `granularity` is: a builder
    * that reads the clock cannot be tested, and this one is pure by design.
    */
-  todayISO: string
+  todayISO: string,
+  /**
+   * The week-aligned span lanes and placeholders are computed over — see
+   * `weekAlignedWindow`. `null` before the first viewport sync (and in any
+   * caller that has no viewport), which falls back to the response's own
+   * window: the pre-pack-window behaviour, and never narrower than what the
+   * data covers, so nothing can disappear on first paint.
+   */
+  packWindow: { from: string; to: string } | null
 ): TWorkloadBlocksResult {
   const blockIds: string[] = [];
   const dataById: Record<string, TWorkloadTimelineBlockData> = {};
@@ -137,6 +145,10 @@ export function buildWorkloadBlocks(
   // valid, non-empty date range to position itself with.
   const headerStart = firstPeriod ? periodDateRange(firstPeriod, granularity).start : data.date_from;
   const headerEnd = lastPeriod ? periodDateRange(lastPeriod, granularity).end : data.date_to;
+  // Falls back to the response's own window, which is never narrower than the
+  // data — so a caller with no viewport yet gets exactly the pre-pack-window
+  // behaviour rather than an empty board.
+  const packSpan = packWindow ?? { from: data.date_from, to: data.date_to };
 
   let order = 0;
   for (const row of data.rows) {
@@ -157,29 +169,37 @@ export function buildWorkloadBlocks(
 
     if (isCollapsed(key)) continue;
 
-    // Unscheduled work first, above the scheduled lanes. Each gets its OWN
-    // row: they all sit on the same column, so unlike scheduled tasks they
+    // Placeholder bars first, above the packed lanes. Each gets its OWN row:
+    // undated bars all sit on the same column, so unlike dated tasks they
     // cannot share one, and once these bars are draggable a bar's x-position
     // is a claim about a date — two side by side would both claim a day only
     // the leftmost actually occupies.
-    const unscheduled = selectUnscheduledTasks(row.tasks);
-    unscheduled.shown.forEach((task, index) => {
-      const unschedId = `wl-unsched:${key}:${index}`;
-      blockIds.push(unschedId);
-      dataById[unschedId] = {
-        kind: "unscheduled",
-        id: unschedId,
-        name: task.name,
-        assigneeId: row.assignee_id,
-        task,
-        anchorDate: unscheduledAnchorDate(task, todayISO),
-        sort_order: order++,
-        // Whole-window span, exactly as the header and footer use — the bar is
-        // placed inside this box by absolute date.
-        start_date: headerStart,
-        target_date: headerEnd,
-      };
-    });
+    //
+    // Two groups with SEPARATE budgets, unscheduled above unestimated. One
+    // shared budget let a single unestimated item take the top slot (
+    // `_task_sort_key` sorts unestimated first) and push a member's real
+    // unscheduled backlog further behind a counter.
+    const placeholders = selectPlaceholderTasks(row.tasks, todayISO, packSpan);
+    const emitPlaceholders = (group: TWorkloadTask[], prefix: string) =>
+      group.forEach((task, index) => {
+        const id = `${prefix}:${key}:${index}`;
+        blockIds.push(id);
+        dataById[id] = {
+          kind: "unscheduled",
+          id,
+          name: task.name,
+          assigneeId: row.assignee_id,
+          task,
+          anchorDate: unscheduledAnchorDate(task, todayISO),
+          sort_order: order++,
+          // Whole-window span, exactly as the header and footer use — the bar
+          // is placed inside this box by absolute date.
+          start_date: headerStart,
+          target_date: headerEnd,
+        };
+      });
+    emitPlaceholders(placeholders.unscheduled.shown, "wl-unsched");
+    emitPlaceholders(placeholders.unestimated.shown, "wl-unest-ph");
 
     // Compact: several non-overlapping tasks share one row. A member with 49
     // scheduled tasks was 49 rows tall; packed, it is as many rows as they have
@@ -197,7 +217,19 @@ export function buildWorkloadBlocks(
     // dates; only the estimate is missing. An UNDATED one is not in this set —
     // it has no `target_date`, so `packTasksIntoLanes` drops it and the
     // placeholder block above already drew it.
-    const lanes = packTasksIntoLanes(row.tasks);
+    //
+    // Packed over `packSpan`, NOT over every task the store holds. Lane count
+    // is peak concurrency, so packing the whole fetched set makes the swimlane
+    // as tall as its busiest day anywhere in that set — and the store
+    // accumulates tasks as the reader pans, so that height only grows, leaving
+    // rows whose bars are all off-screen. `packSpan` is snapped outward to
+    // whole weeks, so it always covers the visible columns and only changes
+    // when the reader crosses a week boundary.
+    const lanes = packTasksIntoLanes(
+      row.tasks.filter(
+        (t) => !t.target_date || ((t.start_date ?? t.target_date) <= packSpan.to && t.target_date >= packSpan.from)
+      )
+    );
     // A member with no scheduled tasks — zero tasks at all, or every task
     // unscheduled (no `target_date`, so `packTasksIntoLanes` places none of
     // them) — packs into zero lanes. Without this fallback that member would
@@ -245,8 +277,9 @@ export function buildWorkloadBlocks(
     // `lanes`, but they are still unestimated work this swimlane owes an
     // estimate for.
     const unestimatedCount = splitByEstimate(row.tasks).unestimated.length;
+    const unscheduledHidden = placeholders.unscheduled.hiddenCount + placeholders.unestimated.hiddenCount;
     const hasFooterContent =
-      unscheduled.hiddenCount > 0 || unestimatedCount > 0 || row.tasks.some((t) => t.overdue) || row.tasks_truncated;
+      unscheduledHidden > 0 || unestimatedCount > 0 || row.tasks.some((t) => t.overdue) || row.tasks_truncated;
     if (hasFooterContent) {
       const footerId = `wl-footer:${key}`;
       blockIds.push(footerId);
@@ -256,7 +289,7 @@ export function buildWorkloadBlocks(
         name: row.assignee_name,
         assigneeId: row.assignee_id,
         row,
-        unscheduledHidden: unscheduled.hiddenCount,
+        unscheduledHidden,
         unestimatedCount,
         sort_order: order++,
         start_date: headerStart,

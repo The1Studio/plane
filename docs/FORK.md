@@ -230,7 +230,17 @@ New backend code lives in **new Django apps**:
   today, because somebody chose that date. One bar per row, capped at three per swimlane
   (`MAX_UNSCHEDULED_LANES`); the footer strip reports **only the overflow**
   (`Unscheduled (27 more)`), never the total, so the count and the visible bars must not be added
-  together. Those bars' hours are in **no** capacity cell — the API routes an unscheduled estimate
+  together. The cap is **two independent budgets of three**, not one shared between them
+  (`selectPlaceholderTasks`): undated-and-estimated above, undated-and-unestimated below. They
+  competed until 2026-08-25, and since `_task_sort_key` sorts unestimated first, one unestimated
+  item took the top slot and pushed a member's real unscheduled backlog a place further behind a
+  counter; the two also prompt different actions — give this a date, versus give this an estimate.
+  A placeholder whose **anchor** falls outside the pack window is pushed into the overflow rather
+  than drawn: `start_date ?? today` means a start-only task dated months back paints off-screen,
+  so it spent a slot, rendered nothing, and — counting as _shown_ — was missing from the overflow
+  number too. `hiddenCount` is therefore measured against the whole group, never the drawable
+  subset, so the footer answers "how many am I not looking at" rather than "how many did the cap
+  drop". Those bars' hours are in **no** capacity cell — the API routes an unscheduled estimate
   to its own `unscheduled` bucket, never into `buckets` — so a bar reading `4h` sits above a heat
   cell that excludes it, deliberately; the hover title says so. They are draggable and resizable:
   the renderer hands `useTaskBarDrag` a SYNTHETIC one-day task at the anchor, so that hook still
@@ -261,7 +271,7 @@ New backend code lives in **new Django apps**:
   with nothing assigned and a member whose every item was unestimated render identically. On the
   busiest production workspace that hid 3,724 of 9,438 countable leaves. A dated one covers its
   real `[start_date, target_date]` span and is packed into the **same** lane set as estimated
-  work — one `packTasksIntoLanes(row.tasks)` pass, not two — so a dashed bar may share a row with
+  work — one `packTasksIntoLanes` pass, not two — so a dashed bar may share a row with
   a solid one; an undated one falls to the placeholder lanes above, since `!target_date` is the
   predicate that routes it there. The two-band shape that shipped in `company-main@6c2c8fb` was
   reverted on 2026-08-25: keeping dashed and solid on separate rows cost a row every time either
@@ -294,7 +304,22 @@ New backend code lives in **new Django apps**:
   are not really dated — the client anchors their placeholder at `start_date ?? today`, inside
   the window by construction — and the span's start is `start_date ?? target_date`, the same rule
   `packTasksIntoLanes` uses, because `start_date` is optional even on a dated item and a
-  predicate reading it alone would compare NULL and drop every start-less row. The query
+  predicate reading it alone would compare NULL and drop every start-less row.
+  **The client packs over a PACK WINDOW, not over everything it holds** (`columnAlignedWindow`,
+  `packWindow` in `WorkloadTimelineRoot`). Lane count is peak concurrency, so packing the whole
+  fetched set makes a swimlane as tall as its busiest day anywhere in that set — and since the
+  store accumulates tasks as the reader pans and `ensureRange` deliberately fetches a viewport
+  either side, that height only ever grew, leaving rows whose bars all sat off-screen. The window
+  is the visible span snapped **outward** to whole columns of the current zoom: day at Week, week
+  at Month, month at Quarter. Outward is what keeps a visible bar from vanishing — one inside the
+  viewport but outside the window would get no lane at all. A FIXED unit does not work and was
+  tried: week-aligned collapsed nothing on a real swimlane, because a viewport starting on a
+  Saturday snaps back to its Monday and re-admits the very off-screen work it was meant to
+  exclude, and a viewport straddling a week boundary is the normal case, not the corner. At `day`
+  the function is the identity, so at Week zoom the window IS the viewport. Two guards keep the
+  repacking cheap: the 250 ms scroll-settle debounce that already existed, and an equality check
+  rejecting a window that resolves to the same columns, so panning inside one column rebuilds no
+  blocks. The query
   lives in `_unestimated_queryset`, starts from `Issue`, and reuses `countable_issue_q` /
   `has_countable_children` so the countable and leaf-only rules cannot drift from the estimated
   path — without the leaf rule a parent would render as unestimated while its own sidebar showed
