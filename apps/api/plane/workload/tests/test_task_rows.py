@@ -84,12 +84,17 @@ def _pmember(ws, proj, user, role=15, is_active=True):
     )
 
 
-def _state(ws, proj, group):
+def _state(ws, proj, group, name=None, color="#fff"):
     from plane.db.models import State
 
+    # `name`/`color` are overridable so a test can pin what the timeline
+    # actually paints with. `State.color` is a plain CharField with no hex
+    # validation, so `color=""` is a REACHABLE production value, not a
+    # contrived one — see test_blank_state_colour_emits_empty_string.
     return State.objects.create(
-        workspace=ws, project=proj, name=f"{group}-{uuid.uuid4().hex[:4]}",
-        color="#fff", group=group,
+        workspace=ws, project=proj,
+        name=name if name is not None else f"{group}-{uuid.uuid4().hex[:4]}",
+        color=color, group=group,
     )
 
 
@@ -138,7 +143,9 @@ class TestTaskAppearsOnRightAssignee(TransactionTestCase):
     def test_task_row_fields_and_assignee_scoping(self):
         ws = _ws()
         proj = _project(ws, identifier="PLANE")
-        st = _state(ws, proj, "started")
+        # An explicit name + a NON-default colour: the default "#fff" would
+        # pass even if the value were hard-coded rather than read off the row.
+        st = _state(ws, proj, "started", name="In Review", color="#8b5cf6")
         u1 = _user()
         u2 = _user()
         _pmember(ws, proj, u1)
@@ -173,10 +180,46 @@ class TestTaskAppearsOnRightAssignee(TransactionTestCase):
         self.assertEqual(task["start_date"], "2026-06-15")
         self.assertEqual(task["target_date"], "2026-06-15")
         self.assertEqual(task["state_group"], "started")
+        # The timeline paints the bar with `state_color` and names it in the
+        # tooltip with `state_name`. Both ride the `state` JOIN that
+        # `state_group` above already forces.
+        self.assertEqual(task["state_name"], "In Review")
+        self.assertEqual(task["state_color"], "#8b5cf6")
         self.assertFalse(row1["tasks_truncated"])
 
         # u2's row carries only u2's task.
         self.assertEqual([t["id"] for t in row2["tasks"]], [str(issue2.id)])
+
+
+class TestStateColourFallbackShape(TransactionTestCase):
+    def test_blank_state_colour_emits_empty_string(self):
+        """A blank `State.color` must serialise as "", never None.
+
+        `State.color` is `CharField(max_length=255)` with no hex validation,
+        so a blank value is reachable in production. The client's fallback
+        chain (`stateBarColor`) tests one empty shape; emitting None here
+        would force it to test two, and a `null` reaching
+        `style={{ backgroundColor }}` renders a transparent — invisible — bar
+        rather than falling back to the state-group colour.
+        """
+        ws = _ws()
+        proj = _project(ws)
+        st = _state(ws, proj, "started", name="", color="")
+        u = _user()
+        _pmember(ws, proj, u)
+
+        monday = date(2026, 6, 15)
+        issue = _issue(ws, proj, st, u, start=monday, target=monday)
+        _assign(ws, proj, issue, u, created_at=_t(1))
+        _estimate(ws, proj, issue, 4.0)
+
+        data = compute_workload(u, ws.slug, "day", WIN_FROM, WIN_TO)
+        task = _rowfor(data, u)["tasks"][0]
+
+        self.assertEqual(task["state_color"], "")
+        self.assertEqual(task["state_name"], "")
+        self.assertIsNotNone(task["state_color"])
+        self.assertIsNotNone(task["state_name"])
 
 
 class TestUnscheduledTask(TransactionTestCase):

@@ -403,6 +403,14 @@ def compute_workload(
     # the aggregation already runs — no second, per-issue fetch (phase-7.md
     # "No N+1"). `issue__project__identifier` and `issue__state__group`
     # traverse via SQL JOIN, not a Python-side loop.
+    #
+    # `issue__state__name` / `issue__state__color` ride the SAME `state` JOIN
+    # `issue__state__group` already forces, so they add columns but no query —
+    # `test_task_detail_columns_add_no_extra_queries_per_issue` is the gate
+    # that proves it, not this comment. They exist so the timeline can paint a
+    # bar with its state's own colour without the client resolving state per
+    # project: the workload route is workspace-scoped and routinely mixes
+    # projects in one swimlane, and nothing there fetches project states.
     est_rows = list(
         qs.values_list(
             "issue_id",
@@ -414,6 +422,8 @@ def compute_workload(
             "issue__project_id",
             "issue__project__identifier",
             "issue__state__group",
+            "issue__state__name",
+            "issue__state__color",
         )
     )
     zero_estimate_count = WorkloadEstimate.objects.filter(
@@ -456,6 +466,8 @@ def compute_workload(
         project_id,
         project_identifier,
         state_group,
+        state_name,
+        state_color,
     ) in est_rows:
         # An issue may carry SEVERAL assignees (ClickUp parity). Its hours are
         # split evenly across them, so two people sharing an 8h task each carry
@@ -546,6 +558,13 @@ def compute_workload(
                         "start_date": start.isoformat() if start else None,
                         "target_date": target.isoformat() if target else None,
                         "state_group": state_group,
+                        # Normalised to "" rather than left as None so the
+                        # client's fallback has ONE empty shape to test, not
+                        # two. `State.color` is a free CharField, not a
+                        # validated hex — the client treats it as an opaque
+                        # CSS colour string and never parses it.
+                        "state_name": state_name or "",
+                        "state_color": state_color or "",
                         "overdue": bool(
                             target is not None
                             and target < today
