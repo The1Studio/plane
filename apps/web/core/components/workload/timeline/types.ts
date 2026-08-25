@@ -67,8 +67,22 @@ export type TWorkloadLaneBlockData = {
   id: string;
   name: string;
   assigneeId: string | null;
-  /** Non-overlapping, ordered by start date. */
+  /**
+   * Non-overlapping, ordered by start date.
+   *
+   * MAY include a task with no `target_date` — a placeholder, which occupies
+   * the single day `start_date ?? todayISO` and is packed alongside dated work
+   * rather than owning a row. The renderer resolves it against `todayISO`
+   * below; nothing here may dereference `target_date` without checking.
+   */
   tasks: TWorkloadTask[];
+  /**
+   * Today as `YYYY-MM-DD` in the reader's timezone, carried from
+   * `buildWorkloadBlocks` so the bar and its drag handler resolve a
+   * placeholder's anchor to the SAME day, and so neither reads the clock
+   * mid-render.
+   */
+  todayISO: string;
   sort_order: number;
   start_date: string;
   target_date: string;
@@ -84,41 +98,6 @@ export type TWorkloadLaneBlockData = {
  * Spans the same dates as its swimlane's header so `BlockRow`'s
  * "drop blocks with no dates" guard keeps it; its chart-side render is empty.
  */
-/**
- * ONE unscheduled task, drawn as a dashed placeholder bar at its anchor column.
- *
- * Its own kind rather than a single-task `kind: "lane"`, for two reasons that
- * are both about the lane RENDERER rather than about geometry. (An earlier
- * revision of this plan justified the split by lane boxes being one column
- * wide; that stopped being true when they were widened to span the whole
- * window to host the click-to-create surface, so the original reason is gone
- * and these are the ones that survive.)
- *
- *  1. The lane branch positions a bar's right edge with
- *     `getPositionFromDate(chart, task.target_date!, dayWidth)`. An unscheduled
- *     task has no target, so that call cannot produce a position — the `!` is
- *     load-bearing there and would be a lie here.
- *  2. A lane block IS the click-to-create surface (`WorkloadCreateOverlay`).
- *     Unscheduled bars living inside one would compete with a click target
- *     whose whole job is to be empty.
- *
- * Spans the WHOLE window like the header and footer, and its bar is positioned
- * inside that box against the block's own `marginLeft` — the header's heat-cell
- * technique, reused.
- */
-export type TWorkloadUnscheduledBlockData = {
-  kind: "unscheduled";
-  id: string;
-  name: string;
-  assigneeId: string | null;
-  task: TWorkloadTask;
-  /** `start_date ?? today`, resolved once in blocks.ts so every consumer agrees. */
-  anchorDate: string;
-  sort_order: number;
-  start_date: string;
-  target_date: string;
-};
-
 export type TWorkloadFooterBlockData = {
   kind: "footer";
   id: string;
@@ -149,8 +128,4 @@ export type TWorkloadFooterBlockData = {
   target_date: string;
 };
 
-export type TWorkloadTimelineBlockData =
-  | TWorkloadHeaderBlockData
-  | TWorkloadLaneBlockData
-  | TWorkloadUnscheduledBlockData
-  | TWorkloadFooterBlockData;
+export type TWorkloadTimelineBlockData = TWorkloadHeaderBlockData | TWorkloadLaneBlockData | TWorkloadFooterBlockData;

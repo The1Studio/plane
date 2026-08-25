@@ -227,7 +227,17 @@ New backend code lives in **new Django apps**:
   narrows empty rows too. Unconditional — there is no `include_empty_members` parameter.
   **Unscheduled work items** (`target_date` null) are drawn as dashed, unfilled placeholder bars
   at `start_date ?? today` — a start-only task is anchored at its own start rather than dragged to
-  today, because somebody chose that date. One bar per row, capped at three per swimlane
+  today, because somebody chose that date. They are **packed into the same lane set as dated
+  work**, each occupying the single day of its anchor: `packTasksIntoLanes` takes an optional
+  `todayISO` and places an undated task at `[anchor, anchor]` instead of dropping it. They owned a
+  row each until 2026-08-25, on the argument that undated bars "all sit on the same column and
+  cannot share one" — half true, and the packer already covers the true half, since two anchored on
+  the SAME day genuinely collide and land in separate lanes anyway. Two anchored on DIFFERENT days
+  never collided, and neither does a dated bar later in the week, so those rows were free. Measured:
+  namph 14 rows → 11, anhnmq 6 → 4. The `todayISO` argument is opt-in precisely because
+  `!target_date` is also the placeholder SELECTOR's predicate — passing a row's whole undated
+  backlog to the packer would lane all of it, so selection (and its cap) must run first. Capped at
+  three per swimlane
   (`MAX_UNSCHEDULED_LANES`); the footer strip reports **only the overflow**
   (`Unscheduled (27 more)`), never the total, so the count and the visible bars must not be added
   together. The cap is **two independent budgets of three**, not one shared between them

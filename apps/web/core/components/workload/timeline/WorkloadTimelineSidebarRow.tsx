@@ -187,18 +187,6 @@ export const WorkloadTimelineSidebarRow = observer(function WorkloadTimelineSide
           return <SidebarCell key={blockId} />;
         }
 
-        // ── unscheduled ─────────────────────────────────────────────────────
-        if (data.kind === "unscheduled") {
-          // Empty, exactly like the lane branch above, and for exactly the same
-          // reason — the chart body lays out one BlockRow per blockId at a fixed
-          // BLOCK_HEIGHT, so a block that renders no sidebar cell shortens this
-          // column by 44px and slides every row BELOW it out of alignment with
-          // its own bars, an error that accumulates down the page. This is a
-          // spacer with nothing in it, which is not the same thing as no cell.
-          // Do NOT return `null` or delete the branch because it "does nothing".
-          return <SidebarCell key={blockId} />;
-        }
-
         // ── footer ──────────────────────────────────────────────────────────
         if (data.kind === "footer") {
           const { row } = data;

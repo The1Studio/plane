@@ -24,7 +24,7 @@ import { observer } from "mobx-react";
 import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
 import type { ChartDataType } from "@plane/types";
 import { cn } from "@plane/utils";
-import { hoursLabelStep, periodDateRange, stateBarColor, wlt } from "@plane/workload-ext";
+import { hoursLabelStep, periodDateRange, stateBarColor, unscheduledAnchorDate, wlt } from "@plane/workload-ext";
 import type { TWorkloadGranularity, TWorkloadTask } from "@plane/workload-ext";
 import { getPositionFromDate } from "@/components/gantt-chart/views";
 import { useUserPermissions } from "@/hooks/store/user";
@@ -464,54 +464,32 @@ export const WorkloadTimelineChartBlock = observer(function WorkloadTimelineChar
           canCreate={canCreateAnywhere}
           onRequestCreate={onRequestCreate}
         />
-        {data.tasks.map((task: TWorkloadTask) => (
-          <WorkloadTaskBar
-            key={task.id}
-            task={task}
-            workspaceSlug={workspaceSlug}
-            chart={currentViewData}
-            laneMarginLeft={laneMarginLeft}
-            dayWidth={dayWidth}
-            onCommitDates={onCommitDates}
-          />
-        ))}
-      </div>
-    );
-  }
-
-  if (data.kind === "unscheduled") {
-    if (!currentViewData) return null;
-    const block = getBlockById(data.id);
-    const marginLeft = block?.position?.marginLeft ?? 0;
-    const barHeightClass = currentViewData.key === "week" ? "h-10" : "h-8";
-
-    // A SYNTHETIC one-day task at the anchor column. The real work item has no
-    // `target_date` — that is what makes it unscheduled — and every consumer
-    // below (`WorkloadTaskBar`, `useTaskBarDrag`, the label ladder) is written
-    // against a task that HAS one. Handing them a dated stand-in is what lets
-    // the whole drag/resize/permission path be reused verbatim instead of
-    // growing a null-date branch through three layers.
-    //
-    // Only the DATES are synthetic. `id`, `project_id` and `hours` are the real
-    // ones, so the commit patches the right issue and the rollback snapshot —
-    // read from the store, not from this object — restores the true nulls.
-    const synthetic: TWorkloadTask = {
-      ...data.task,
-      start_date: data.anchorDate,
-      target_date: data.anchorDate,
-    };
-
-    return (
-      <div className={cn("relative w-full", barHeightClass)}>
-        <WorkloadTaskBar
-          task={synthetic}
-          workspaceSlug={workspaceSlug}
-          chart={currentViewData}
-          laneMarginLeft={marginLeft}
-          dayWidth={currentViewData.data.dayWidth}
-          onCommitDates={onCommitDates}
-          unscheduled
-        />
+        {data.tasks.map((task: TWorkloadTask) => {
+          // A lane may hold a PLACEHOLDER — a task with no `target_date`,
+          // packed at the single day `start_date ?? today`. Everything below
+          // this point is written against a task that HAS a target (the label
+          // ladder, `useTaskBarDrag`, the position maths), so it is handed a
+          // dated stand-in rather than growing a null branch through three
+          // layers. Only the DATES are synthetic: `id`, `project_id` and
+          // `hours` stay real, so a drag commits to the right issue and the
+          // rollback snapshot — read from the store, not from this object —
+          // restores the true nulls.
+          const unscheduled = !task.target_date;
+          const anchor = unscheduledAnchorDate(task, data.todayISO);
+          const bar = unscheduled ? { ...task, start_date: anchor, target_date: anchor } : task;
+          return (
+            <WorkloadTaskBar
+              key={task.id}
+              task={bar}
+              unscheduled={unscheduled}
+              workspaceSlug={workspaceSlug}
+              chart={currentViewData}
+              laneMarginLeft={laneMarginLeft}
+              dayWidth={dayWidth}
+              onCommitDates={onCommitDates}
+            />
+          );
+        })}
       </div>
     );
   }
