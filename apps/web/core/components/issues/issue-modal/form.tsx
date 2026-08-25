@@ -282,11 +282,14 @@ export const IssueFormRoot = observer(function IssueFormRoot(props: IssueFormPro
     // unsaved-changes prompt on close.
     setValue("assignee_ids", resolved, { shouldDirty: false });
 
-    // Deps change only on a project switch or a roster arrival, so a pick the user
-    // makes afterwards cannot be undone by this: the member dropdown fetches the
-    // roster itself before it can be opened.
+    // Deps change only on a project switch, a roster arrival, or the user store
+    // hydrating — a pick the user makes afterwards cannot be undone by this,
+    // because the member dropdown fetches the roster itself before it can be
+    // opened. currentUser is in here for the cold-start case: without it, a modal
+    // opened before the user store resolves settles on an empty assignee and
+    // never re-resolves once the id arrives.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, assignableMemberKey]);
+  }, [projectId, assignableMemberKey, currentUser?.id]);
 
   // Reset form when data prop changes
   useEffect(() => {
