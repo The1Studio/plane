@@ -189,8 +189,8 @@ export const WorkloadTimelineRoot = observer(function WorkloadTimelineRoot({ sto
     [defaultCollapsed]
   );
 
-  // The span lanes and placeholders are packed over — the visible columns
-  // snapped OUTWARD to whole columns. Distinct from the range `ensureRange`
+  // The span lanes and placeholders are packed over — the visible span snapped
+  // OUTWARD to whole columns of the zoom. Distinct from the range `ensureRange`
   // fetches below, which is deliberately wider (a viewport either side) so
   // panning lands on data already held. Packing that wider range is what left
   // rows whose only bars sat off-screen, and it compounded: the store keeps
