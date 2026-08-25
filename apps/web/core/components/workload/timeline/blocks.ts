@@ -223,8 +223,12 @@ export function buildWorkloadBlocks(
     // as tall as its busiest day anywhere in that set — and the store
     // accumulates tasks as the reader pans, so that height only grows, leaving
     // rows whose bars are all off-screen. `packSpan` is snapped outward to
-    // whole weeks, so it always covers the visible columns and only changes
-    // when the reader crosses a week boundary.
+    // whole COLUMNS of the current zoom (day at Week, week at Month, month at
+    // Quarter — see `columnAlignedWindow`), so it always covers the visible
+    // columns and changes only when the reader scrolls a whole column past.
+    // Not weeks: a week-aligned window re-admits the off-screen work it was
+    // meant to exclude whenever the viewport starts mid-week, which is the
+    // normal case.
     const lanes = packTasksIntoLanes(
       row.tasks.filter(
         (t) => !t.target_date || ((t.start_date ?? t.target_date) <= packSpan.to && t.target_date >= packSpan.from)
