@@ -199,7 +199,36 @@ def _scope_filter(project_scope, restricted, user, issue_field="issue_id"):
     return q
 
 
-def _unestimated_queryset(slug, scope_q_issue, state_groups):
+def _span_intersects_window_q(date_from, date_to, prefix=""):
+    """Q matching an issue whose date span touches [date_from, date_to].
+
+    Undated items (`target_date` NULL) match unconditionally — they are not
+    really dated at all, and the client draws them as placeholder bars anchored
+    at `start_date ?? today`, inside the window by construction.
+
+    `start_date` is optional even when `target_date` is set, so the span's start
+    is `start_date` when present and the target day itself otherwise — the SAME
+    rule `packTasksIntoLanes` applies client-side (`start_date ?? target_date`).
+    A predicate that read `start_date` alone would compare NULL and silently
+    drop every start-less item.
+
+    `prefix` addresses the dates through a relation ("issue__"), which is what
+    lets `zero_estimate_count` apply the identical window to `WorkloadEstimate`
+    rows. Both meta counters must describe the SAME window or the documented
+    "issues_unestimated is a superset of zero_estimate_count" relation stops
+    holding — a filtered superset over an unfiltered subset is not a superset.
+    """
+    start = f"{prefix}start_date"
+    target = f"{prefix}target_date"
+    span_start_within = Q(**{f"{start}__isnull": False, f"{start}__lte": date_to}) | Q(
+        **{f"{start}__isnull": True, f"{target}__lte": date_to}
+    )
+    return Q(**{f"{target}__isnull": True}) | (
+        Q(**{f"{target}__gte": date_from}) & span_start_within
+    )
+
+
+def _unestimated_queryset(slug, scope_q_issue, state_groups, date_from, date_to):
     """Countable, leaf-only issues in scope carrying NO usable estimate.
 
     "No usable estimate" means no `WorkloadEstimate` row at all, OR one whose
@@ -211,10 +240,22 @@ def _unestimated_queryset(slug, scope_q_issue, state_groups):
     estimate row has nothing on the estimate table to start from — that absence
     IS the reason these items were invisible on the timeline until now.
 
-    Rows are NOT date-filtered here. An unestimated item produces no buckets, so
-    the estimated path's "span intersects the window" test would drop every one
-    of them; the client positions the bar by absolute date inside a whole-window
-    lane box instead. See the `tasks` assembly in `compute_workload`.
+    DATED rows ARE window-filtered; undated ones are not. The distinction is the
+    whole point. An unestimated item produces no buckets, so the estimated
+    path's BUCKET-based "did this contribute to the window" test would drop
+    every one of them — but a plain SPAN-intersects-window test on the dates
+    themselves works fine, and the two are not the same test. An item with no
+    `target_date` is exempt because it is not really dated at all: the client
+    draws it as a placeholder bar anchored at `start_date ?? today`, which is
+    inside the window by construction.
+
+    This filter was missing until 2026-08-25 and cost more than blank rows.
+    Measured on the busiest DEVOPS swimlane: the `Unassigned` row carried 200
+    unestimated items, ALL of them dated before `date_from`, which packed into
+    66 lanes in which not one bar could ever be visible. Worse, `_task_sort_key`
+    sorts unestimated first into the shared 200-task cap, so those 200 stale
+    items consumed the entire budget and truncated the in-window work they were
+    hiding — a starved cap presenting as an empty board.
 
     Cost (measured 2026-08-25 against the busiest production workspace, 9,438
     countable leaves): 3,724 rows in 23.4 ms, versus 19.1 ms for 5,714 rows on
@@ -253,6 +294,7 @@ def _unestimated_queryset(slug, scope_q_issue, state_groups):
             )
         )
     )
+    qs = qs.filter(_span_intersects_window_q(date_from, date_to))
     if state_groups:
         qs = qs.filter(state__group__in=state_groups)
     # No `else`, for the reason spelled out at the bottom of `_base_queryset`:
@@ -492,7 +534,7 @@ def compute_workload(
     # `_scope_filter`'s `issue_field` docstring for why this is a parameter and
     # not a second copy of the guest rule.
     scope_q_issue = _scope_filter(scope, restricted, user, issue_field="id")
-    unest_qs = _unestimated_queryset(slug, scope_q_issue, state_groups)
+    unest_qs = _unestimated_queryset(slug, scope_q_issue, state_groups, date_from, date_to)
 
     # Row guard — bound memory regardless of how the request was narrowed
     # (an admin with an explicit large project list can still blow past it).
@@ -546,14 +588,21 @@ def compute_workload(
             "state__color",
         )
     )
-    zero_estimate_count = WorkloadEstimate.objects.filter(
-        scope_q,
-        workspace__slug=slug,
-        hours__lte=0,
-        issue__deleted_at__isnull=True,
-        issue__archived_at__isnull=True,
-        issue__is_draft=False,
-    ).count()
+    zero_estimate_count = (
+        WorkloadEstimate.objects.filter(
+            scope_q,
+            workspace__slug=slug,
+            hours__lte=0,
+            issue__deleted_at__isnull=True,
+            issue__archived_at__isnull=True,
+            issue__is_draft=False,
+        )
+        # Same window as `_unestimated_queryset`, addressed through the issue
+        # relation — see `_span_intersects_window_q` for why the two counters
+        # cannot be allowed to disagree about which window they describe.
+        .filter(_span_intersects_window_q(date_from, date_to, prefix="issue__"))
+        .count()
+    )
 
     # ONE `_resolve_owners` call covering BOTH id sets — it is a single query,
     # and calling it twice would make it two for no benefit.
@@ -739,12 +788,12 @@ def compute_workload(
         # two-assignee item is one unestimated work item, not two.
         meta["issues_unestimated"] += 1
 
-        # NO window filter here, deliberately. The estimated branch drops an
-        # item whose whole span falls outside [date_from, date_to] because it
-        # contributed no bucket to justify a row; an unestimated item never
-        # contributes a bucket at all, so that same test would drop every one
-        # of them. Window clipping happens client-side, where the bar is
-        # positioned by absolute date inside a whole-window lane box.
+        # The window filter lives in `_unestimated_queryset`, not here, so the
+        # ROW_GUARD count and the 200-task cap below both see the filtered set.
+        # Applying it in this loop instead would leave the cap being spent on
+        # rows that are about to be discarded — which is the exact failure the
+        # filter was added to end. Undated items reach this point on purpose;
+        # the client draws them as placeholder bars.
         for owner_id, owner_name in visible:
             names[owner_id] = owner_name
             tasks_by_owner[owner_id].append(

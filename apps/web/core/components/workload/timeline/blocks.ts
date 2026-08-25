@@ -181,41 +181,23 @@ export function buildWorkloadBlocks(
       };
     });
 
-    // Unestimated work next, still above the estimated lanes — the same
-    // "what needs attention sits on top" ordering the placeholders above use,
-    // expressed the same way: by block order, not by a sort key.
-    //
-    // These are packed like any other dated bars rather than drawn as
-    // single-column placeholders, because they HAVE dates; only the estimate
-    // is missing. An undated unestimated task is not here — it has no
-    // `target_date`, so `packTasksIntoLanes` drops it and the placeholder
-    // block above already drew it.
-    const { estimated, unestimated } = splitByEstimate(row.tasks);
-    packTasksIntoLanes(unestimated).forEach((laneTasks, laneIndex) => {
-      const unestId = `wl-lane-unest:${key}:${laneIndex}`;
-      blockIds.push(unestId);
-      dataById[unestId] = {
-        kind: "lane",
-        id: unestId,
-        name: laneTasks[0]?.name ?? row.assignee_name,
-        assigneeId: row.assignee_id,
-        tasks: laneTasks,
-        sort_order: order++,
-        // Whole-window box, exactly as the estimated lanes below — bars are
-        // positioned inside it by absolute date.
-        start_date: headerStart,
-        target_date: headerEnd,
-      };
-    });
-
     // Compact: several non-overlapping tasks share one row. A member with 49
     // scheduled tasks was 49 rows tall; packed, it is as many rows as they have
     // genuinely concurrent work, which is usually a handful.
     //
-    // ESTIMATED only — the unestimated ones were packed into their own group
-    // just above. Splitting the two is what lets each render as its own band;
-    // packing them together would interleave dashed and solid bars on one row.
-    const lanes = packTasksIntoLanes(estimated);
+    // ESTIMATED AND UNESTIMATED TOGETHER, in ONE packing pass. They used to be
+    // split into two bands so that no row would interleave dashed and solid
+    // bars — a tidiness argument that cost a row every time either group had a
+    // free slot the other could have filled. Measured on the DEVOPS board it
+    // was 6 wasted rows on one swimlane, and the interleaving it prevented is
+    // not actually confusing: dashed-versus-solid and `?`-versus-`12h` already
+    // distinguish the two at a glance, on a row or across one.
+    //
+    // Unestimated items are packed like any other dated bars because they HAVE
+    // dates; only the estimate is missing. An UNDATED one is not in this set —
+    // it has no `target_date`, so `packTasksIntoLanes` drops it and the
+    // placeholder block above already drew it.
+    const lanes = packTasksIntoLanes(row.tasks);
     // A member with no scheduled tasks — zero tasks at all, or every task
     // unscheduled (no `target_date`, so `packTasksIntoLanes` places none of
     // them) — packs into zero lanes. Without this fallback that member would
@@ -255,8 +237,14 @@ export function buildWorkloadBlocks(
     // `unscheduled.hiddenCount`: unestimated bars are not capped as a group,
     // so every one of them is already on screen. It is still worth a number —
     // "how much of this swimlane is unestimated" is not answerable by counting
-    // dashes across a scrolled chart.
-    const unestimatedCount = unestimated.length;
+    // dashes across a scrolled chart, and less so now that they are mixed into
+    // the same lanes as estimated work rather than sitting in their own band.
+    //
+    // Counted from the row's OWN tasks rather than from a packing result: the
+    // undated ones are drawn by the placeholder block above and never reach
+    // `lanes`, but they are still unestimated work this swimlane owes an
+    // estimate for.
+    const unestimatedCount = splitByEstimate(row.tasks).unestimated.length;
     const hasFooterContent =
       unscheduled.hiddenCount > 0 || unestimatedCount > 0 || row.tasks.some((t) => t.overdue) || row.tasks_truncated;
     if (hasFooterContent) {
