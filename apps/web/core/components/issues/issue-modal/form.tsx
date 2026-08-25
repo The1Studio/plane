@@ -26,10 +26,16 @@ import {
   getChangedIssuefields,
   getTabIndex,
 } from "@plane/utils";
-// The1Studio fork (work-item creation defaults) — the create modal prefills the
-// creator and today's due date. DEFAULT_WORK_ITEM_FORM_VALUES lives in the
-// sealed @plane/constants package, so the override is spread here instead.
-import { getWorkItemCreationDefaults } from "@plane/work-item-defaults-ext";
+// The1Studio fork (work-item creation defaults) — the create modal prefills an
+// assignee and today's due date, and re-resolves the assignee when the project
+// changes. DEFAULT_WORK_ITEM_FORM_VALUES lives in the sealed @plane/constants
+// package and getUpdateFormDataForReset in the sealed @plane/utils, so the
+// overrides are applied here instead of inside either.
+import {
+  getProjectChangeFormReset,
+  getWorkItemCreationDefaults,
+  resolveCreationAssigneeIds,
+} from "@plane/work-item-defaults-ext";
 // components
 import {
   IssueDefaultProperties,
@@ -42,6 +48,7 @@ import {
 // hooks
 import { useIssueModal } from "@/hooks/context/use-issue-modal";
 import { useIssueDetail } from "@/hooks/store/use-issue-detail";
+import { useMember } from "@/hooks/store/use-member";
 import { useUser } from "@/hooks/store/user";
 import { useProject } from "@/hooks/store/use-project";
 import { useProjectState } from "@/hooks/store/use-project-state";
@@ -137,27 +144,50 @@ export const IssueFormRoot = observer(function IssueFormRoot(props: IssueFormPro
   const { isMobile } = usePlatformOS();
   // The1Studio fork (work-item creation defaults)
   const { data: currentUser } = useUser();
+  const {
+    project: { getProjectMemberIds },
+  } = useMember();
   const { moveIssue } = useWorkspaceDraftIssues();
 
   const {
     issue: { getIssueById },
   } = useIssueDetail();
-  const { fetchCycles } = useProjectIssueProperties();
+  const { fetchCycles, fetchMembers } = useProjectIssueProperties();
   const { getStateById } = useProjectState();
 
-  // The1Studio fork (work-item creation defaults) — create mode only. An edit
-  // must never re-fill a field the user has just cleared, and `data?.id` is how
-  // this shared modal tells create from update. Spread AFTER the upstream
-  // defaults and BEFORE `data`, so a template, a duplicated work item, or any
-  // caller-supplied value still wins.
-  const creationDefaults = useMemo(
-    () => (data?.id ? {} : getWorkItemCreationDefaults(currentUser?.id)),
-    [data?.id, currentUser?.id]
-  );
+  // The1Studio fork (work-item creation defaults) — everything the resolver in
+  // @plane/work-item-defaults-ext needs to pick an assignee for ONE project.
+  //
+  // `getProjectMemberIds(id, false)` drops GUEST (role 5), matching the server's
+  // `role >= 15` floor in plane/issue_defaults_ext/defaults.py. It returns null
+  // for a project whose roster has never been fetched — pass that null through
+  // untouched, because the resolver treats it as "unknown", not "nobody".
+  const getAssigneeContext = (forProjectId: string | null | undefined, currentAssigneeIds?: string[] | null) => {
+    const defaultAssignee = forProjectId ? getProjectById(forProjectId)?.default_assignee : null;
+    return {
+      currentAssigneeIds,
+      currentUserId: currentUser?.id,
+      // Typed `IUser | string | null` — a project fetched through different
+      // endpoints gives back either shape, so never assume the id form.
+      projectDefaultAssigneeId: typeof defaultAssignee === "string" ? defaultAssignee : (defaultAssignee?.id ?? null),
+      assignableMemberIds: forProjectId ? getProjectMemberIds(forProjectId, false) : null,
+    };
+  };
 
   // form info
   const methods = useForm<TIssue>({
-    defaultValues: { ...DEFAULT_WORK_ITEM_FORM_VALUES, ...creationDefaults, project_id: defaultProjectId, ...data },
+    // The1Studio fork (work-item creation defaults) — create mode only. An edit
+    // must never re-fill a field the user has just cleared, and `data?.id` is how
+    // this shared modal tells create from update. Spread AFTER the upstream
+    // defaults and BEFORE `data`, so a template, a duplicated work item, or any
+    // caller-supplied value still wins. Read once, on the first render, which is
+    // why it resolves against the prop rather than the watched project id.
+    defaultValues: {
+      ...DEFAULT_WORK_ITEM_FORM_VALUES,
+      ...(data?.id ? {} : getWorkItemCreationDefaults(getAssigneeContext(defaultProjectId))),
+      project_id: defaultProjectId,
+      ...data,
+    },
     reValidateMode: "onChange",
   });
   const {
@@ -172,6 +202,23 @@ export const IssueFormRoot = observer(function IssueFormRoot(props: IssueFormPro
   } = methods;
 
   const projectId = watch("project_id");
+
+  // The1Studio fork (work-item creation defaults) — the roster is read here so
+  // both the memo below and the correction effect share one subscription, and so
+  // the effect can depend on the JOINED ids. getProjectMemberIds is a computedFn
+  // returning a fresh array; depending on its identity re-runs the effect forever.
+  const assignableMemberIds = projectId ? getProjectMemberIds(projectId, false) : null;
+  const assignableMemberKey = assignableMemberIds?.join(",") ?? null;
+
+  // Create mode only, and resolved against whichever project is selected NOW —
+  // "Create more" clears the form for the next item, which must be prefilled for
+  // the project still on screen, not the one the modal opened on.
+  const creationDefaults = useMemo(
+    () => (data?.id ? {} : getWorkItemCreationDefaults(getAssigneeContext(projectId))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data?.id, currentUser?.id, projectId, assignableMemberKey]
+  );
+
   const activeAdditionalPropertiesLength = getActiveAdditionalPropertiesLength({
     projectId: projectId,
     workspaceSlug: workspaceSlug?.toString(),
@@ -194,13 +241,52 @@ export const IssueFormRoot = observer(function IssueFormRoot(props: IssueFormPro
         reset({ ...DEFAULT_WORK_ITEM_FORM_VALUES, ...creationDefaults, project_id: projectId });
         editorRef.current?.clearEditor();
       } else {
-        reset(getUpdateFormDataForReset(projectId, getValues()));
+        // The1Studio fork (work-item creation defaults) — getUpdateFormDataForReset
+        // rebuilds the form from DEFAULT_WORK_ITEM_FORM_VALUES and carries forward
+        // only name/description/priority/start_date/target_date, so assignee_ids
+        // fell back to []. On create, re-resolve it for the NEW project instead of
+        // emptying it. Edit mode keeps upstream's behaviour untouched.
+        //
+        // The branch above this one is dead on this fork — workItemTemplateId is
+        // hardcoded null in apps/web/ce/components/issues/issue-modal/provider.tsx
+        // — so this `else` is the only path a project change actually takes.
+        reset(
+          data?.id
+            ? getUpdateFormDataForReset(projectId, getValues())
+            : getProjectChangeFormReset(projectId, getValues(), getAssigneeContext(projectId))
+        );
       }
     }
-    if (projectId && routeProjectId !== projectId) fetchCycles(workspaceSlug?.toString(), projectId);
+    if (projectId && routeProjectId !== projectId) {
+      fetchCycles(workspaceSlug?.toString(), projectId);
+      // The1Studio fork (work-item creation defaults) — nothing else here fetches
+      // the new project's roster, and the correction effect below waits on it.
+      fetchMembers(workspaceSlug?.toString(), projectId);
+    }
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
+
+  // The1Studio fork (work-item creation defaults) — the roster for a newly chosen
+  // project usually arrives AFTER the switch, so the assignee resolved above was
+  // resolved optimistically, without knowing who is assignable. Re-check it once
+  // the list lands.
+  useEffect(() => {
+    if (data?.id || !projectId || assignableMemberIds === null) return;
+
+    const current = (getValues("assignee_ids") ?? []) as string[];
+    const resolved = resolveCreationAssigneeIds(getAssigneeContext(projectId, current));
+    if (resolved.length === current.length && resolved.every((id, index) => id === current[index])) return;
+
+    // shouldDirty:false — a correction the user did not make must not arm the
+    // unsaved-changes prompt on close.
+    setValue("assignee_ids", resolved, { shouldDirty: false });
+
+    // Deps change only on a project switch or a roster arrival, so a pick the user
+    // makes afterwards cannot be undone by this: the member dropdown fetches the
+    // roster itself before it can be opened.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, assignableMemberKey]);
 
   // Reset form when data prop changes
   useEffect(() => {
@@ -270,33 +356,34 @@ export const IssueFormRoot = observer(function IssueFormRoot(props: IssueFormPro
     // this condition helps to move the issues from draft to project issues
     if (formData.hasOwnProperty("is_draft")) submitData.is_draft = formData.is_draft;
 
-    await onSubmit(submitData, is_draft_issue)
-      .then(() => {
-        setGptAssistantModal(false);
-        if (isCreateMoreToggleEnabled && workItemTemplateId) {
-          handleTemplateChange({
-            workspaceSlug: workspaceSlug?.toString(),
-            reset,
-            editorRef,
-          });
-        } else {
-          reset({
-            ...DEFAULT_WORK_ITEM_FORM_VALUES,
-            // The1Studio fork (work-item creation defaults) — "Create more"
-            // clears the form for the NEXT new work item, so it prefills too;
-            // otherwise the second item comes out bare while the first did not.
-            ...creationDefaults,
-            ...(isCreateMoreToggleEnabled ? { ...data } : {}),
-            project_id: getValues<"project_id">("project_id"),
-            type_id: getValues<"type_id">("type_id"),
-            description_html: data?.description_html ?? "<p></p>",
-          });
-          editorRef?.current?.clearEditor();
-        }
-      })
-      .catch((error) => {
-        console.error(error);
-      });
+    try {
+      await onSubmit(submitData, is_draft_issue);
+      setGptAssistantModal(false);
+      if (isCreateMoreToggleEnabled && workItemTemplateId) {
+        handleTemplateChange({
+          workspaceSlug: workspaceSlug?.toString(),
+          reset,
+          editorRef,
+        });
+      } else {
+        reset({
+          ...DEFAULT_WORK_ITEM_FORM_VALUES,
+          // The1Studio fork (work-item creation defaults) — "Create more"
+          // clears the form for the NEXT new work item, so it prefills too;
+          // otherwise the second item comes out bare while the first did not.
+          // creationDefaults is resolved against the project still SELECTED,
+          // which is why it is keyed on the watched id rather than the prop.
+          ...creationDefaults,
+          ...(isCreateMoreToggleEnabled ? { ...data } : {}),
+          project_id: getValues<"project_id">("project_id"),
+          type_id: getValues<"type_id">("type_id"),
+          description_html: data?.description_html ?? "<p></p>",
+        });
+        editorRef?.current?.clearEditor();
+      }
+    } catch (error) {
+      console.error(error);
+    }
   };
 
   const handleMoveToProjects = async () => {
@@ -357,14 +444,15 @@ export const IssueFormRoot = observer(function IssueFormRoot(props: IssueFormPro
     const issue = getIssueById(parentId);
     if (!issue) return;
 
-    const projectDetails = getProjectById(issue.project_id);
-    if (!projectDetails) return;
+    const parentProjectDetails = getProjectById(issue.project_id);
+    if (!parentProjectDetails) return;
 
     const stateDetails = getStateById(issue.state_id);
 
     setSelectedParentIssue(
-      convertWorkItemDataToSearchResponse(workspaceSlug?.toString(), issue, projectDetails, stateDetails)
+      convertWorkItemDataToSearchResponse(workspaceSlug?.toString(), issue, parentProjectDetails, stateDetails)
     );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watch, getIssueById, getProjectById, selectedParentIssue, getStateById]);
 
   // executing this useEffect when isDirty changes
@@ -403,7 +491,7 @@ export const IssueFormRoot = observer(function IssueFormRoot(props: IssueFormPro
         <div className="w-full rounded-lg">
           <form
             ref={formRef}
-            onSubmit={handleSubmit((data) => handleFormSubmit(data))}
+            onSubmit={handleSubmit((formData) => handleFormSubmit(formData))}
             className="flex w-full flex-col"
           >
             <div className="rounded-t-lg bg-surface-1 p-5">
@@ -536,17 +624,14 @@ export const IssueFormRoot = observer(function IssueFormRoot(props: IssueFormPro
                   tabIndex={getIndex("create_more")}
                 >
                   {!data?.id && (
-                    <div
+                    <button
+                      type="button"
                       className="inline-flex cursor-pointer items-center gap-1.5"
                       onClick={() => onCreateMoreToggleChange(!isCreateMoreToggleEnabled)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") onCreateMoreToggleChange(!isCreateMoreToggleEnabled);
-                      }}
-                      role="button"
                     >
                       <ToggleSwitch value={isCreateMoreToggleEnabled} onChange={() => {}} size="sm" />
                       <span className="text-caption-sm-regular">{t("create_more")}</span>
-                    </div>
+                    </button>
                   )}
                   <div className="flex items-center gap-2">
                     <div tabIndex={getIndex("discard_button")}>
