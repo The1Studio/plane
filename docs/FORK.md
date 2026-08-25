@@ -254,6 +254,35 @@ New backend code lives in **new Django apps**:
   a red ring over the state fill is the intended escalation if the tooltip proves too weak.
   Unscheduled bars keep the dashed unfilled outline and take the state colour on their
   border only.
+  **Unestimated work items** — no `WorkloadEstimate` row at all, or one with `hours <= 0` — are
+  drawn the same dashed, unfilled, state-tinted way, labelled `?` where a solid bar shows its
+  hours. They were invisible before `company-main@6c2c8fb`: `_base_queryset` starts from
+  `WorkloadEstimate`, so an item with no estimate row never joined the query, which made a member
+  with nothing assigned and a member whose every item was unestimated render identically. On the
+  busiest production workspace that hid 3,724 of 9,438 countable leaves. A dated one covers its
+  real `[start_date, target_date]` span in its own lane group above the estimated lanes; an
+  undated one falls to the placeholder lanes above, since `!target_date` is the predicate that
+  routes it there. `tasks[]` carries `unestimated: boolean` — **always emitted, never inferable
+  from `hours === 0`**, because a stored zero-hour estimate is a real, reachable state that would
+  be misclassified by the arithmetic test — and `meta` gains `issues_unestimated`, a superset of
+  the existing `zero_estimate_count`. Such an item contributes to **no** capacity figure at all
+  (`buckets`, `month_buckets`, `capacity_buckets`, `over`, `total_over` and the top-level
+  `unscheduled[]` are byte-identical to a response without it), so the capacity badge reads the
+  same number as before; `test_unestimated_contributes_no_hours` asserts that by diffing whole
+  responses rather than spot-checking fields. Two consequences to expect rather than treat as
+  bugs: `_task_sort_key` now sorts unestimated **first** and the 200-task cap is **shared**, so a
+  large unestimated backlog can truncate estimated work that previously fit (`tasks_truncated`
+  still reports it); and `rows[].tasks.length` is no longer a proxy for "estimated work exists",
+  which is why the timeline's empty-state overlay keeps both halves of its predicate. The query
+  lives in `_unestimated_queryset`, starts from `Issue`, and reuses `countable_issue_q` /
+  `has_countable_children` so the countable and leaf-only rules cannot drift from the estimated
+  path — without the leaf rule a parent would render as unestimated while its own sidebar showed
+  a rollup. It excludes estimated items with an `Exists` anti-join rather than an id list, which
+  can hold up to `ROW_GUARD` entries, and `ROW_GUARD` became one budget across both querysets.
+  `_scope_filter` gained an `issue_field` parameter rather than a second copy of the
+  flag-off-guest rule. Measured before implementing: 3,724 rows in 23.4 ms against 19.1 ms for
+  the estimated path's 5,714, both anti-joins on existing indexes — **no new index, therefore no
+  core migration**, which was the stop condition since `Issue` is a core model.
 - `apps/api/plane/github_ext/` — GitHub ↔ Plane dev-workflow links (`WorkItemGithubLink`) and
   PR-driven status automation (`StateTransitionConfig`, webhook ingest)
 - `apps/api/plane/project_ext/` — project visibility (`network`) over the public API (the core
