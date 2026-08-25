@@ -237,6 +237,23 @@ New backend code lives in **new Django apps**:
   only ever sees a dated task, and dropping one writes both dates and turns the bar solid.
   Note the server-side 200-task cap sorts null dates **last**, so a member with more than 200
   estimated items loses their unscheduled tasks from the payload before the client can draw any.
+  **A bar's fill is its work item's STATE**, painted from the state's own colour — the same
+  thing core's Timeline (gantt) layout does. `tasks[]` therefore carries `state_name` and
+  `state_color` alongside the existing `state_group`; both ride the `state` JOIN
+  `state_group` already forces, so they cost no extra query
+  (`test_task_detail_columns_add_no_extra_queries_per_issue` is the gate). The colour is
+  resolved **server-side on purpose**: this route is workspace-scoped and routinely mixes
+  projects in one swimlane, and `useProjectState().getProjectStates(project_id)` returns
+  `undefined` for any project the store has not fetched — nothing on this route fetches them.
+  `state_color` is a **free-form CSS colour string, not a guaranteed hex** (`State.color` is
+  an unvalidated `CharField`), so consumers must not parse it; `stateBarColor`
+  (`@plane/workload-ext`) owns the fallback chain (own colour → state-group colour → accent),
+  and contrast comes from a translucent overlay rather than a computed tint. **`overdue` no
+  longer has a colour of its own** — it was `bg-danger-subtle`, indistinguishable from a
+  cancelled item, and now survives only in the bar's hover title. Do not re-add a red fill;
+  a red ring over the state fill is the intended escalation if the tooltip proves too weak.
+  Unscheduled bars keep the dashed unfilled outline and take the state colour on their
+  border only.
 - `apps/api/plane/github_ext/` — GitHub ↔ Plane dev-workflow links (`WorkItemGithubLink`) and
   PR-driven status automation (`StateTransitionConfig`, webhook ingest)
 - `apps/api/plane/project_ext/` — project visibility (`network`) over the public API (the core
