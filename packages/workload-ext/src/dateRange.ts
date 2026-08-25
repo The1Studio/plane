@@ -68,8 +68,22 @@ function isoDate(d: Date): string {
  * Snapping OUTWARD (never inward) is what guarantees the window still covers
  * every visible column — a bar inside the viewport but outside the pack window
  * would get no lane at all and vanish, which is a worse bug than the blank row
- * this fixes. At `day` that makes it the identity: the inputs are already whole
- * days, so there is nothing to snap and the window IS the viewport.
+ * this fixes.
+ *
+ * ONE DAY OF SLACK is added on each side first, and it is not defensive
+ * padding — it is the exact size of the caller's rounding error.
+ * `getDateFromPositionOnGantt` resolves a pixel with
+ * `Math.round(position / dayWidth)`, so a viewport edge sitting more than
+ * halfway through a column reports the NEXT day: `from` and `to` can each land
+ * one column INSIDE the visible span. Since the leftmost and rightmost columns
+ * are normally part-scrolled, that is the common case, not the corner — it
+ * deleted a bar on a real board (XGAME-15, dated 08-22, in a 60%-scrolled
+ * column) while its hours stayed in the heat cell above it. The helper converts
+ * pixels to DAYS at every zoom, so the error is ±0.5 day regardless of the
+ * view and one day covers it everywhere.
+ *
+ * At `day` the result is therefore the viewport plus that one day, not the
+ * viewport exactly.
  */
 export function columnAlignedWindow(
   from: string,
@@ -80,8 +94,12 @@ export function columnAlignedWindow(
   // `T00:00:00` for the same reason `shiftDate` needs it — see its docstring.
   const start = new Date(`${from}T00:00:00`);
   const end = new Date(`${to}T00:00:00`);
+  // The caller's rounding slack, applied BEFORE aligning so a snapped boundary
+  // is computed from the widened span rather than the reported one.
+  start.setDate(start.getDate() - 1);
+  end.setDate(end.getDate() + 1);
 
-  if (granularity === "day") return { from, to };
+  if (granularity === "day") return { from: isoDate(start), to: isoDate(end) };
 
   if (granularity === "week") {
     start.setDate(start.getDate() - ((start.getDay() - weekStartDay + 7) % 7));
