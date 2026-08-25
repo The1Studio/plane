@@ -23,6 +23,8 @@ import { cn, createIssuePayload } from "@plane/utils";
 import { getWorkItemCreationDefaults } from "@plane/work-item-defaults-ext";
 // plane web imports
 // hooks
+import { useMember } from "@/hooks/store/use-member";
+import { useProject } from "@/hooks/store/use-project";
 import { useUser } from "@/hooks/store/user";
 import { QuickAddIssueFormRoot } from "@/plane-web/components/issues/quick-add";
 // local imports
@@ -77,6 +79,10 @@ export const QuickAddIssueRoot = observer(function QuickAddIssueRoot(props: TQui
   const { workspaceSlug, projectId } = useParams();
   // The1Studio fork (work-item creation defaults)
   const { data: currentUser } = useUser();
+  const { getProjectById } = useProject();
+  const {
+    project: { getProjectMemberIds },
+  } = useMember();
   // states
   const [isOpen, setIsOpen] = useState(isQuickAddOpen ?? false);
   // form info
@@ -98,11 +104,14 @@ export const QuickAddIssueRoot = observer(function QuickAddIssueRoot(props: TQui
     if (!isOpen) reset({ ...defaultValues });
   }, [isOpen, reset]);
 
-  const handleIsOpen = (isOpen: boolean) => {
+  // `nextIsOpen`, not `isOpen`: the outer state variable of that name is in
+  // scope here and oxlint --deny-warnings flags the shadow across the whole
+  // file, not just the diff. Pre-existing; unrelated to the creation defaults.
+  const handleIsOpen = (nextIsOpen: boolean) => {
     if (isQuickAddOpen !== undefined && setIsQuickAddOpen) {
-      setIsQuickAddOpen(isOpen);
+      setIsQuickAddOpen(nextIsOpen);
     } else {
-      setIsOpen(isOpen);
+      setIsOpen(nextIsOpen);
     }
   };
 
@@ -111,15 +120,27 @@ export const QuickAddIssueRoot = observer(function QuickAddIssueRoot(props: TQui
 
     reset({ ...defaultValues });
 
+    // The1Studio fork (work-item creation defaults) — resolved against the route
+    // project: a workspace-level layout can reach one the viewer is not an
+    // assignable member of, and prefilling them there produces a create the core
+    // serializer rejects. The project wrapper has already fetched this project's
+    // roster (apps/web/core/layouts/auth-layout/project-wrapper.tsx), so the
+    // resolver is not guessing by the time a payload can be submitted.
+    const defaultAssignee = getProjectById(projectId.toString())?.default_assignee;
+    const creationDefaults = getWorkItemCreationDefaults({
+      currentUserId: currentUser?.id,
+      projectDefaultAssigneeId: typeof defaultAssignee === "string" ? defaultAssignee : (defaultAssignee?.id ?? null),
+      assignableMemberIds: getProjectMemberIds(projectId.toString(), false),
+    });
+
     const payload = createIssuePayload(projectId.toString(), {
-      // The1Studio fork (work-item creation defaults) — FIRST on purpose. A
-      // later spread wins, and the group's own values must beat this: the
-      // calendar prepopulates target_date from the day the user clicked, and an
-      // assignee-grouped kanban column prepopulates assignee_ids. Putting the
-      // defaults after prePopulatedData would silently move every
-      // calendar-added item to today.
-      ...getWorkItemCreationDefaults(currentUser?.id),
-      ...(prePopulatedData ?? {}),
+      // FIRST on purpose. A later spread wins, and the group's own values must
+      // beat this: the calendar prepopulates target_date from the day the user
+      // clicked, and an assignee-grouped kanban column prepopulates
+      // assignee_ids. Putting the defaults after prePopulatedData would silently
+      // move every calendar-added item to today.
+      ...creationDefaults,
+      ...prePopulatedData,
       ...formData,
     });
 
@@ -165,7 +186,7 @@ export const QuickAddIssueRoot = observer(function QuickAddIssueRoot(props: TQui
           layout={layout}
           prePopulatedData={prePopulatedData}
           projectId={projectId?.toString()}
-          hasError={errors && errors?.name && errors?.name?.message ? true : false}
+          hasError={!!errors?.name?.message}
           setFocus={setFocus}
           register={register}
           onSubmit={handleSubmit(onSubmitHandler)}
