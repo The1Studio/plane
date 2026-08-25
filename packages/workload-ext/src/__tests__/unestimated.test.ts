@@ -116,16 +116,17 @@ describe("splitByEstimate composes with the scheduled/unscheduled split", () => 
 
   it("a dated unestimated task is lane-packed, not placed in the placeholder lanes", () => {
     const dated = task("d", { start: "2026-09-01", target: "2026-09-03", unestimated: true });
-    const { unestimated } = splitByEstimate([dated]);
 
     expect(selectUnscheduledTasks([dated]).shown).toEqual([]);
-    expect(packTasksIntoLanes(unestimated)).toEqual([[dated]]);
+    expect(packTasksIntoLanes([dated])).toEqual([[dated]]);
   });
 
-  it("every task is drawn exactly once across the three groups", () => {
-    // The board's completeness invariant, asserted directly: placeholder
-    // lanes + unestimated lanes + estimated lanes must cover the row's tasks
-    // with no overlap and no gap.
+  it("every task is drawn exactly once across the two groups", () => {
+    // The board's completeness invariant, asserted directly: placeholder lanes
+    // + the single packed lane set must cover the row's tasks with no overlap
+    // and no gap. There were THREE groups until unestimated work was merged
+    // into the same packing pass as estimated work; the invariant is unchanged,
+    // only the number of buckets it sums over.
     const tasks = [
       task("est-dated", { start: "2026-09-01", target: "2026-09-02" }),
       task("est-undated"),
@@ -134,10 +135,42 @@ describe("splitByEstimate composes with the scheduled/unscheduled split", () => 
     ];
 
     const placeholders = selectUnscheduledTasks(tasks, 10).shown;
-    const { estimated, unestimated } = splitByEstimate(tasks);
-    const drawn = [...placeholders, ...packTasksIntoLanes(unestimated).flat(), ...packTasksIntoLanes(estimated).flat()];
+    const drawn = [...placeholders, ...packTasksIntoLanes(tasks).flat()];
 
     expect(drawn).toHaveLength(tasks.length);
     expect(new Set(drawn.map((t) => t.id))).toEqual(new Set(tasks.map((t) => t.id)));
+  });
+
+  it("shares a lane between estimated and unestimated work instead of banding them", () => {
+    // The regression this merge exists to prevent. Two tasks that do not
+    // overlap in time belong on ONE row; splitting by estimate forced two,
+    // and did so for every free slot on every swimlane. Asserted on lane
+    // COUNT and membership, not just count, so a future change that packs
+    // them into one lane each still fails here.
+    const estimated = task("e", { start: "2026-09-01", target: "2026-09-02" });
+    const unestimated = task("u", { start: "2026-09-04", target: "2026-09-05", unestimated: true });
+
+    const merged = packTasksIntoLanes([estimated, unestimated]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].map((t) => t.id)).toEqual(["e", "u"]);
+
+    // What the old two-pass shape produced, kept alongside as the contrast:
+    // the same two tasks, two rows, one of them half empty.
+    const split = splitByEstimate([estimated, unestimated]);
+    expect(packTasksIntoLanes(split.estimated).length + packTasksIntoLanes(split.unestimated).length).toBe(2);
+  });
+
+  it("still counts undated unestimated work for the footer, which no lane holds", () => {
+    // `unestimatedCount` in blocks.ts reads `splitByEstimate(row.tasks)`, not
+    // the packing result, precisely because of this row: an undated
+    // unestimated task is drawn as a placeholder and appears in NO lane, but
+    // the swimlane still owes it an estimate.
+    const tasks = [
+      task("dated", { start: "2026-09-01", target: "2026-09-02", unestimated: true }),
+      task("undated", { unestimated: true }),
+    ];
+
+    expect(splitByEstimate(tasks).unestimated).toHaveLength(2);
+    expect(packTasksIntoLanes(tasks).flat()).toHaveLength(1);
   });
 });

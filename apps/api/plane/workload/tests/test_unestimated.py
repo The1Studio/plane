@@ -253,18 +253,87 @@ class TestUnestimatedTaskRows(TransactionTestCase):
         self.assertIsNone(tasks[0]["start_date"])
         self.assertTrue(tasks[0]["unestimated"])
 
-    def test_out_of_window_unestimated_still_appears(self):
-        """The estimated path drops an item whose span misses the window
-        because it contributed no bucket. An unestimated item never
-        contributes one, so that test would drop EVERY one of them."""
+    def test_out_of_window_unestimated_is_dropped(self):
+        """INVERTED 2026-08-25. This test used to assert the opposite — that a
+        DATED unestimated item outside the window still appeared — on the
+        reasoning that the estimated path's BUCKET-based window test would drop
+        every unestimated item, since none of them produce buckets. True, and
+        beside the point: a SPAN-based test on the dates works fine, and those
+        are two different tests.
+
+        What the old behaviour cost, measured on the DEVOPS board: an
+        `Unassigned` row holding 200 unestimated items, every one dated before
+        `date_from`, packed into 66 lanes in which no bar could ever be drawn —
+        and, because `_task_sort_key` puts unestimated first into the shared
+        200-task cap, those 200 invisible rows consumed the whole budget and
+        truncated the in-window work they were standing in front of.
+        """
         ws, proj, st, user = _fixture()
-        far = date(2030, 3, 3)
-        issue = _issue(ws, proj, st, user, start=far, target=far)
-        _assign(ws, proj, issue, user, created_at=_t(1))
+        before = date(2025, 3, 3)
+        after = date(2030, 3, 3)
+        for d in (before, after):
+            issue = _issue(ws, proj, st, user, start=d, target=d)
+            _assign(ws, proj, issue, user, created_at=_t(1))
 
         tasks = _tasks(compute_workload(user, ws.slug, "day", WIN_FROM, WIN_TO), user)
-        self.assertEqual(len(tasks), 1)
-        self.assertEqual(tasks[0]["target_date"], "2030-03-03")
+        self.assertEqual(tasks, [], "a dated unestimated item outside the window draws nothing")
+
+    def test_window_filter_keeps_anything_that_touches_the_window(self):
+        """The complement of the test above, asserted on the EDGES rather than
+        on a comfortable interior date — an off-by-one in either bound is
+        invisible to a midpoint fixture, and both bounds are inclusive.
+
+        The straddling case is the load-bearing one: an item that starts before
+        `date_from` and ends inside it is exactly the long-running work a
+        capacity board must not hide.
+        """
+        ws, proj, st, user = _fixture()
+        cases = {
+            "ends-on-first-day": (date(2025, 12, 1), WIN_FROM),
+            "starts-on-last-day": (WIN_TO, date(2027, 2, 1)),
+            "straddles-the-whole-window": (date(2025, 1, 1), date(2027, 1, 1)),
+            "interior": (MONDAY, MONDAY),
+        }
+        expected = set()
+        for start, target in cases.values():
+            issue = _issue(ws, proj, st, user, start=start, target=target)
+            _assign(ws, proj, issue, user, created_at=_t(1))
+            expected.add(str(issue.id))
+
+        tasks = _tasks(compute_workload(user, ws.slug, "day", WIN_FROM, WIN_TO), user)
+        self.assertEqual({t["id"] for t in tasks}, expected)
+
+    def test_window_filter_reads_target_when_there_is_no_start(self):
+        """`start_date` is optional even on a dated item, so the span's start is
+        `start_date ?? target_date` — the same rule `packTasksIntoLanes` uses
+        client-side. A filter that read `start_date` alone would compare NULL
+        and silently drop every start-less item, in-window or not.
+        """
+        ws, proj, st, user = _fixture()
+        keep = _issue(ws, proj, st, user, start=None, target=MONDAY)
+        _assign(ws, proj, keep, user, created_at=_t(1))
+        drop = _issue(ws, proj, st, user, start=None, target=date(2030, 3, 3))
+        _assign(ws, proj, drop, user, created_at=_t(2))
+
+        tasks = _tasks(compute_workload(user, ws.slug, "day", WIN_FROM, WIN_TO), user)
+        self.assertEqual([t["id"] for t in tasks], [str(keep.id)])
+
+    def test_undated_unestimated_survives_the_window_filter(self):
+        """The one exemption. An item with no `target_date` is not really dated
+        at all — the client anchors its placeholder bar at `start_date ??
+        today`, inside the window by construction — so the span test must not
+        reach it. A `start_date` far outside the window does not change that;
+        it is still the placeholder predicate `!target_date` that decides.
+        """
+        ws, proj, st, user = _fixture()
+        bare = _issue(ws, proj, st, user, start=None, target=None)
+        _assign(ws, proj, bare, user, created_at=_t(1))
+        far_start = _issue(ws, proj, st, user, start=date(2030, 3, 3), target=None)
+        _assign(ws, proj, far_start, user, created_at=_t(2))
+
+        tasks = _tasks(compute_workload(user, ws.slug, "day", WIN_FROM, WIN_TO), user)
+        self.assertEqual({t["id"] for t in tasks}, {str(bare.id), str(far_start.id)})
+        self.assertTrue(all(t["target_date"] is None for t in tasks))
 
     def test_overdue_flag_follows_the_same_rule(self):
         ws, proj, st, user = _fixture()
@@ -456,6 +525,30 @@ class TestUnestimatedScope(TransactionTestCase):
         self.assertEqual(len(_tasks(data, second)), 1)
         self.assertEqual(_tasks(data, user)[0]["assignee_count"], 2)
 
+    def test_both_meta_counters_describe_the_same_window(self):
+        """`issues_unestimated` is documented as a SUPERSET of
+        `zero_estimate_count`. That only holds while both describe the same
+        window: filtering the superset and leaving the subset unfiltered makes
+        the subset the larger number, which is not a smaller bug than a wrong
+        count — it is a documented relation quietly becoming false.
+
+        Both stale items below are zero-hour estimates, so they land in both
+        counters before the window is applied and in neither after it.
+        """
+        ws, proj, st, user = _fixture()
+        for _ in range(2):
+            stale = _issue(ws, proj, st, user, start=date(2020, 3, 3), target=date(2020, 3, 4))
+            _assign(ws, proj, stale, user, created_at=_t(1))
+            _estimate(ws, proj, stale, 0.0)
+        fresh = _issue(ws, proj, st, user, start=MONDAY, target=MONDAY)
+        _assign(ws, proj, fresh, user, created_at=_t(2))
+        _estimate(ws, proj, fresh, 0.0)
+
+        meta = compute_workload(user, ws.slug, "day", WIN_FROM, WIN_TO)["meta"]
+        self.assertEqual(meta["zero_estimate_count"], 1)
+        self.assertEqual(meta["issues_unestimated"], 1)
+        self.assertGreaterEqual(meta["issues_unestimated"], meta["zero_estimate_count"])
+
 
 # ---------------------------------------------------------------------------
 # Ordering and the shared cap
@@ -490,6 +583,34 @@ class TestSortAndCap(TransactionTestCase):
             [True, True, False, False, False],
             "unestimated rows must lead the array despite sorting later by date",
         )
+
+    def test_out_of_window_backlog_does_not_starve_the_cap(self):
+        """The regression that made the missing window filter more than a
+        cosmetic bug, reproduced at cap scale.
+
+        Order matters here: `_task_sort_key` puts unestimated FIRST, so before
+        the filter a large enough out-of-window unestimated backlog claimed
+        every one of the 200 slots and pushed the in-window work — the only
+        work that could actually be drawn — off the end of the array. The
+        board then rendered as empty while truthfully reporting
+        `tasks_truncated`, which reads as "too much work to show" rather than
+        "the wrong work was shown".
+
+        Asserted on the in-window item being PRESENT rather than on the count
+        alone: a cap that merely returned 200 different invisible rows would
+        satisfy a length check.
+        """
+        ws, proj, st, user = _fixture()
+        for _ in range(WORKLOAD_MAX_TASKS_PER_ASSIGNEE + 5):
+            stale = _issue(ws, proj, st, user, start=date(2020, 3, 3), target=date(2020, 3, 4))
+            _assign(ws, proj, stale, user, created_at=_t(1))
+        visible = _issue(ws, proj, st, user, start=MONDAY, target=MONDAY)
+        _assign(ws, proj, visible, user, created_at=_t(2))
+        _estimate(ws, proj, visible, 3.0)
+
+        row = _rowfor(compute_workload(user, ws.slug, "day", WIN_FROM, WIN_TO), user)
+        self.assertEqual([t["id"] for t in row["tasks"]], [str(visible.id)])
+        self.assertFalse(row["tasks_truncated"])
 
     def test_cap_is_shared_not_per_group(self):
         """One budget of WORKLOAD_MAX_TASKS_PER_ASSIGNEE across both kinds."""

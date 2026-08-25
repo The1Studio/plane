@@ -260,9 +260,14 @@ New backend code lives in **new Django apps**:
   `WorkloadEstimate`, so an item with no estimate row never joined the query, which made a member
   with nothing assigned and a member whose every item was unestimated render identically. On the
   busiest production workspace that hid 3,724 of 9,438 countable leaves. A dated one covers its
-  real `[start_date, target_date]` span in its own lane group above the estimated lanes; an
-  undated one falls to the placeholder lanes above, since `!target_date` is the predicate that
-  routes it there. `tasks[]` carries `unestimated: boolean` — **always emitted, never inferable
+  real `[start_date, target_date]` span and is packed into the **same** lane set as estimated
+  work — one `packTasksIntoLanes(row.tasks)` pass, not two — so a dashed bar may share a row with
+  a solid one; an undated one falls to the placeholder lanes above, since `!target_date` is the
+  predicate that routes it there. The two-band shape that shipped in `company-main@6c2c8fb` was
+  reverted on 2026-08-25: keeping dashed and solid on separate rows cost a row every time either
+  group had a free slot the other could have filled (6 wasted rows on one measured DEVOPS
+  swimlane), and dashed-versus-solid plus `?`-versus-`12h` already tell the two apart within a
+  row as well as across one. `tasks[]` carries `unestimated: boolean` — **always emitted, never inferable
   from `hours === 0`**, because a stored zero-hour estimate is a real, reachable state that would
   be misclassified by the arithmetic test — and `meta` gains `issues_unestimated`, a superset of
   the existing `zero_estimate_count`. Such an item contributes to **no** capacity figure at all
@@ -270,10 +275,26 @@ New backend code lives in **new Django apps**:
   `unscheduled[]` are byte-identical to a response without it), so the capacity badge reads the
   same number as before; `test_unestimated_contributes_no_hours` asserts that by diffing whole
   responses rather than spot-checking fields. Two consequences to expect rather than treat as
-  bugs: `_task_sort_key` now sorts unestimated **first** and the 200-task cap is **shared**, so a
+  bugs: `_task_sort_key` sorts unestimated **first** and the 200-task cap is **shared**, so a
   large unestimated backlog can truncate estimated work that previously fit (`tasks_truncated`
   still reports it); and `rows[].tasks.length` is no longer a proxy for "estimated work exists",
-  which is why the timeline's empty-state overlay keeps both halves of its predicate. The query
+  which is why the timeline's empty-state overlay keeps both halves of its predicate.
+  **Dated unestimated items are window-filtered; undated ones are not.** This was missing until
+  2026-08-25, on the reasoning that the estimated path's _bucket_-based window test would drop
+  every unestimated item since none produce buckets — true, but a _span_-based test on the dates
+  themselves is a different test and works fine. The cost was not only cosmetic: on the DEVOPS
+  board the `Unassigned` row carried 200 unestimated items, every one dated before `date_from`,
+  which packed into 66 lanes in which no bar could ever be drawn — and because unestimated sorts
+  first into the shared cap, those 200 invisible rows consumed the entire 200-task budget and
+  truncated the in-window work they were standing in front of, so the board rendered empty while
+  truthfully reporting `tasks_truncated`. `_span_intersects_window_q` is the single predicate,
+  applied to `_unestimated_queryset` **and**, through a `prefix="issue__"`, to
+  `zero_estimate_count`: filtering the superset while leaving the subset unfiltered would quietly
+  make `issues_unestimated >= zero_estimate_count` false. Undated items are exempt because they
+  are not really dated — the client anchors their placeholder at `start_date ?? today`, inside
+  the window by construction — and the span's start is `start_date ?? target_date`, the same rule
+  `packTasksIntoLanes` uses, because `start_date` is optional even on a dated item and a
+  predicate reading it alone would compare NULL and drop every start-less row. The query
   lives in `_unestimated_queryset`, starts from `Issue`, and reuses `countable_issue_q` /
   `has_countable_children` so the countable and leaf-only rules cannot drift from the estimated
   path — without the leaf rule a parent would render as unestimated while its own sidebar showed
