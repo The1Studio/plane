@@ -27,6 +27,8 @@ function task(id: string, start: string | null, target: string | null): TWorkloa
     start_date: start,
     target_date: target,
     state_group: "started",
+    state_name: "In Progress",
+    state_color: "#f59e0b",
     overdue: false,
   };
 }

@@ -24,7 +24,7 @@ import { observer } from "mobx-react";
 import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
 import type { ChartDataType } from "@plane/types";
 import { cn } from "@plane/utils";
-import { hoursLabelStep, periodDateRange, wlt } from "@plane/workload-ext";
+import { hoursLabelStep, periodDateRange, stateBarColor, wlt } from "@plane/workload-ext";
 import type { TWorkloadGranularity, TWorkloadTask } from "@plane/workload-ext";
 import { getPositionFromDate } from "@/components/gantt-chart/views";
 import { useUserPermissions } from "@/hooks/store/user";
@@ -250,7 +250,7 @@ const WorkloadTaskBar = observer(function WorkloadTaskBar({
     >
       <div
         className={cn(
-          "w-full overflow-hidden rounded-sm font-medium transition-colors",
+          "relative w-full overflow-hidden rounded-sm font-medium transition-colors",
           barHeightClass,
           // Without this, a horizontal pointerdown-drag on a touchscreen or
           // trackpad can be claimed by the browser's own pan/scroll gesture
@@ -274,18 +274,28 @@ const WorkloadTaskBar = observer(function WorkloadTaskBar({
                 labelStep === "normal" && "px-2 text-11",
                 labelStep === "small" && "px-0 text-9"
               ),
-          // A dashed, unfilled outline is the whole signal that this bar is a
-          // PLACEHOLDER occupying a column rather than a span covering it. A
-          // solid bar sitting in today's column reads as "due today", which is
-          // a claim the data does not make. An unscheduled task is never
-          // `overdue` — the API requires a non-null target for that flag — so
-          // there is no red branch to reach here.
-          unscheduled
-            ? "border-tertiary hover:border-secondary hover:bg-tertiary/10 border border-dashed bg-transparent text-tertiary"
-            : task.overdue
-              ? "bg-danger-subtle text-danger-primary hover:bg-danger-subtle/80"
-              : "bg-accent-primary/15 text-accent-primary hover:bg-accent-primary/25"
+          // The fill is the work item's STATE, and nothing else — the colour
+          // comes from `style` below, because a per-state colour cannot be a
+          // Tailwind class (there is no finite set of them to compile).
+          //
+          // There is deliberately NO overdue branch here, and its absence is
+          // the decision, not a rebase casualty: overdue and cancelled were
+          // both flat `bg-danger-subtle`, so the board could not distinguish
+          // "late" from "abandoned" — which is the exact ambiguity colouring
+          // by state exists to remove. Overdue now lives in the `title`
+          // below, which still appends "· overdue". Do not re-add a red fill;
+          // if the tooltip proves too weak, the answer is a red RING over the
+          // state fill, which costs nothing the state colour already spends.
+          //
+          // A dashed, unfilled outline remains the whole signal that this bar
+          // is a PLACEHOLDER occupying a column rather than a span covering
+          // it. A solid bar sitting in today's column reads as "due today",
+          // which is a claim the data does not make. Only its border colour
+          // moved to the state; it stays unfilled, and takes no overlay
+          // because it has no fill to lighten.
+          unscheduled ? "hover:bg-tertiary/10 border border-dashed bg-transparent text-tertiary" : "text-primary"
         )}
+        style={unscheduled ? { borderColor: stateBarColor(task) } : { backgroundColor: stateBarColor(task) }}
         onPointerDown={handleBodyPointerDown}
         // The bar shows this member's SHARE. A work item can carry
         // several assignees (ClickUp parity) and its estimate is split
@@ -297,12 +307,36 @@ const WorkloadTaskBar = observer(function WorkloadTaskBar({
         // bar's `4h` is absent from the heat cell directly beneath it: the API
         // routes an unscheduled estimate to its own `unscheduled` bucket and
         // never into `buckets`, deliberately, so the two genuinely disagree.
-        title={`${task.identifier} ${task.name} · ${task.hours}h${
+        // `state_name` is conditional, not interpolated raw: the API
+        // normalises a blank `State.name` to "" (it is an unvalidated
+        // CharField), and an unguarded slot renders "PLANE-42 Fix login ·  ·
+        // 4h" — a dangling separator that reads as a missing field rather
+        // than an absent one.
+        title={`${task.identifier} ${task.name}${task.state_name ? ` · ${task.state_name}` : ""} · ${task.hours}h${
           task.assignee_count > 1 ? ` of ${task.total_hours}h, split ${task.assignee_count} ways` : ""
         }${unscheduled ? ` · ${wlt("timeline.unscheduled_bar_title")}` : ""}${
           task.overdue ? " · overdue" : ""
         }${canEdit ? ` · ${wlt("timeline.drag_to_reschedule")}` : ""}`}
       >
+        {/* Contrast overlay — the reason an arbitrary state colour is safe to
+            paint text on. `state_color` is author-chosen and unbounded, so a
+            near-white and a near-black state can both occur; picking a text
+            colour would mean computing luminance, and picking a fill tint
+            would mean parsing the colour (which `stateColor.ts` documents as
+            forbidden — the value may be `#fa0`, `rgb(...)` or a named colour).
+            Laying a translucent surface over a full-opacity background sidesteps
+            both: it pulls every hue toward the page surface, so `text-primary`
+            reads on all of them, and it needs no knowledge of the colour's
+            format. This is exactly what core's `IssueGanttBlock` does.
+
+            It must stay FIRST in DOM order and the labels below must stay
+            `relative`, or the overlay paints over the text instead of under
+            it. Hover lightens LESS (/40 vs /50), which reads as the bar's own
+            colour coming forward — the old `hover:bg-accent-primary/25` had no
+            equivalent once the fill stopped being a fixed accent. */}
+        {!unscheduled && (
+          <div className="pointer-events-none absolute inset-0 bg-surface-1/50 transition-colors group-hover:bg-surface-1/40" />
+        )}
         {isWeek ? (
           <>
             {/* The identifier is a lookup key, not the label, so it is
@@ -310,8 +344,8 @@ const WorkloadTaskBar = observer(function WorkloadTaskBar({
                 gets its OWN truncation; sharing a text node with the name
                 would let one eat the other's ellipsis, which is the same
                 mistake the row below already documents. */}
-            <span className="truncate text-9 leading-tight tabular-nums opacity-70">{task.identifier}</span>
-            <span className="flex items-center gap-1.5 leading-tight">
+            <span className="relative truncate text-9 leading-tight tabular-nums opacity-70">{task.identifier}</span>
+            <span className="relative flex items-center gap-1.5 leading-tight">
               {/* These are two nodes on purpose — do NOT collapse them back
                   into one truncating span. Sharing a single text node made
                   the name and the hours compete for the same ellipsis, and
@@ -332,7 +366,7 @@ const WorkloadTaskBar = observer(function WorkloadTaskBar({
           // bar rather than a partial number; the `title` above still carries
           // the value, and a rounded or abbreviated stand-in would be the
           // same lie in fewer characters.
-          labelStep !== "hidden" && <span className="tabular-nums">{hoursLabel}</span>
+          labelStep !== "hidden" && <span className="relative tabular-nums">{hoursLabel}</span>
         )}
       </div>
       {/* Handles sit above the ControlLink's own hit area (z-10 vs. the
