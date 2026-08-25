@@ -225,7 +225,8 @@ export function buildWorkloadBlocks(
     // rows whose bars are all off-screen. `packSpan` is snapped outward to
     // whole COLUMNS of the current zoom (day at Week, week at Month, month at
     // Quarter — see `columnAlignedWindow`), so it always covers the visible
-    // columns and changes only when the reader scrolls a whole column past.
+    // columns (plus a day of slack for the caller's pixel rounding) and
+    // changes only when the reader scrolls a whole column past.
     // Not weeks: a week-aligned window re-admits the off-screen work it was
     // meant to exclude whenever the viewport starts mid-week, which is the
     // normal case.

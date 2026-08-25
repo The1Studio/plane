@@ -312,11 +312,17 @@ New backend code lives in **new Django apps**:
   either side, that height only ever grew, leaving rows whose bars all sat off-screen. The window
   is the visible span snapped **outward** to whole columns of the current zoom: day at Week, week
   at Month, month at Quarter. Outward is what keeps a visible bar from vanishing — one inside the
-  viewport but outside the window would get no lane at all. A FIXED unit does not work and was
-  tried: week-aligned collapsed nothing on a real swimlane, because a viewport starting on a
-  Saturday snaps back to its Monday and re-admits the very off-screen work it was meant to
-  exclude, and a viewport straddling a week boundary is the normal case, not the corner. At `day`
-  the function is the identity, so at Week zoom the window IS the viewport. Two guards keep the
+  viewport but outside the window would get no lane at all — which happened: `getDateFromPositionOnGantt`
+  resolves a pixel with `Math.round(position / dayWidth)`, so a part-scrolled edge column reports
+  the day BEYOND it and the reported span lands one column inside the visible one. A bar there
+  (XGAME-15, dated 08-22, in a ~60%-scrolled column) lost its lane and vanished while its hours
+  stayed in the heat cell above it. `columnAlignedWindow` therefore adds **one day of slack on
+  each side before aligning** — not defensive padding but the exact size of that rounding error,
+  which is ±0.5 day at every zoom because the helper converts pixels to days regardless of the
+  view. A FIXED unit does not work and was tried: week-aligned collapsed nothing on a real
+  swimlane, because a viewport starting on a Saturday snaps back to its Monday and re-admits the
+  very off-screen work it was meant to exclude, and a viewport straddling a week boundary is the
+  normal case, not the corner. At `day` the result is the viewport plus that one day. Two guards keep the
   repacking cheap: the 250 ms scroll-settle debounce that already existed, and an equality check
   rejecting a window that resolves to the same columns, so panning inside one column rebuilds no
   blocks. The query
