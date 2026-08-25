@@ -256,19 +256,26 @@ export function buildWorkloadBlocks(
     // on screen a few rows up; repeating them in a number invites the reader to
     // add the two together. When everything fits, this half of the strip has
     // nothing to say and disappears.
-    // `unestimatedCount` is the TOTAL, not an overflow like
-    // `unscheduled.hiddenCount`: unestimated bars are not capped as a group,
-    // so every one of them is already on screen. It is still worth a number —
-    // "how much of this swimlane is unestimated" is not answerable by counting
-    // dashes across a scrolled chart, and less so now that they are mixed into
-    // the same lanes as estimated work rather than sitting in their own band.
-    //
-    // Counted from the row's OWN tasks rather than from a packing result: the
-    // undated ones are drawn by the placeholder block above and never reach
-    // `lanes`, but they are still unestimated work this swimlane owes an
-    // estimate for.
+    // `unestimatedCount` is the TOTAL, not an overflow: it answers "how much of
+    // this swimlane still owes an estimate", which is not something a reader
+    // can get by counting dashed bars across a scrolled chart. Counted from the
+    // row's OWN tasks rather than from a packing result, since an undated
+    // unestimated task beyond the cap reaches no lane and would otherwise
+    // vanish from the number as well as from the board.
     const unestimatedCount = splitByEstimate(row.tasks).unestimated.length;
-    const unscheduledHidden = placeholders.unscheduled.hiddenCount + placeholders.unestimated.hiddenCount;
+    // The UNSCHEDULED group's overflow ALONE. It briefly summed both groups,
+    // which put every hidden unestimated item into this number AND into
+    // `unestimatedCount` — namph's strip read "Unscheduled (22 more)
+    // Unestimated (17)" with 14 items counted in both. The two labels measure
+    // different things and must not overlap: `Unscheduled` is the estimated-
+    // undated set, matching `meta.issues_unscheduled` server-side, while
+    // `Unestimated` is the no-estimate set regardless of dates.
+    //
+    // The bug was invisible on the swimlane it shipped against: XuanCuong has
+    // exactly one unestimated item and it fits, so the second term was 0 and
+    // the sum happened to be right. A term that is usually zero is exactly the
+    // kind that survives a spot check.
+    const unscheduledHidden = placeholders.unscheduled.hiddenCount;
     const hasFooterContent =
       unscheduledHidden > 0 || unestimatedCount > 0 || row.tasks.some((t) => t.overdue) || row.tasks_truncated;
     if (hasFooterContent) {

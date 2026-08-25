@@ -261,3 +261,38 @@ describe("packTasksIntoLanes with placeholder anchors", () => {
     expect(tasks.map((t) => t.id)).toEqual(["b", "a"]);
   });
 });
+
+describe("the two footer numbers describe different sets", () => {
+  const unest = (id: string): TWorkloadTask => ({ ...task(id, null, null), unestimated: true });
+
+  it("unscheduled.hiddenCount never counts an unestimated item", () => {
+    // What the swimlane footer relies on. `Unscheduled (N more)` is the
+    // estimated-undated overflow — the same population as the server's
+    // `meta.issues_unscheduled` — while `Unestimated (M)` is the no-estimate
+    // set regardless of dates. Summing the two groups' hidden counts into the
+    // first label put every hidden unestimated item into BOTH numbers:
+    // namph's strip read "Unscheduled (22 more)  Unestimated (17)" with 14
+    // items double-counted.
+    const tasks = [
+      ...[1, 2, 3, 4, 5].map((n) => task(`sched-${n}`, null, null)),
+      ...[1, 2, 3, 4, 5, 6].map((n) => unest(`unest-${n}`)),
+    ];
+
+    const { unscheduled, unestimated } = selectPlaceholderTasks(tasks, TODAY, null, 3);
+    expect(unscheduled.hiddenCount).toBe(2); // 5 estimated - 3 drawn
+    expect(unestimated.hiddenCount).toBe(3); // 6 unestimated - 3 drawn
+    // The bug, stated as the thing NOT to do:
+    expect(unscheduled.hiddenCount + unestimated.hiddenCount).not.toBe(unscheduled.hiddenCount);
+  });
+
+  it("stays correct when the unestimated group does not overflow, which is how the bug hid", () => {
+    // XuanCuong's row: one unestimated item, comfortably inside the cap, so
+    // the bogus second term was 0 and the sum happened to be right. A term
+    // that is usually zero is exactly the kind a spot check misses.
+    const tasks = [...[1, 2, 3, 4].map((n) => task(`sched-${n}`, null, null)), unest("only-one")];
+
+    const { unscheduled, unestimated } = selectPlaceholderTasks(tasks, TODAY, null, 3);
+    expect(unestimated.hiddenCount).toBe(0);
+    expect(unscheduled.hiddenCount).toBe(1);
+  });
+});

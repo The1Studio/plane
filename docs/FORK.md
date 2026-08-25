@@ -240,7 +240,13 @@ New backend code lives in **new Django apps**:
   three per swimlane
   (`MAX_UNSCHEDULED_LANES`); the footer strip reports **only the overflow**
   (`Unscheduled (27 more)`), never the total, so the count and the visible bars must not be added
-  together. The cap is **two independent budgets of three**, not one shared between them
+  together — and only the UNSCHEDULED group's overflow, never the unestimated group's as well.
+  Summing the two put every hidden unestimated item into that number AND into `Unestimated (N)`
+  beside it; namph's strip read `Unscheduled (22 more)  Unestimated (17)` with 14 items counted
+  twice. The two labels measure different populations — `Unscheduled` is the estimated-undated set
+  (`meta.issues_unscheduled` server-side), `Unestimated` the no-estimate set regardless of dates —
+  and the bug was invisible on the swimlane it shipped against, whose single unestimated item fit
+  inside the cap and made the spurious term zero. The cap is **two independent budgets of three**, not one shared between them
   (`selectPlaceholderTasks`): undated-and-estimated above, undated-and-unestimated below. They
   competed until 2026-08-25, and since `_task_sort_key` sorts unestimated first, one unestimated
   item took the top slot and pushed a member's real unscheduled backlog a place further behind a

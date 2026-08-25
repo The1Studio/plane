@@ -105,7 +105,11 @@ export type TWorkloadFooterBlockData = {
   assigneeId: string | null;
   row: TWorkloadRow;
   /**
-   * How many unscheduled tasks the lane cap hid — NOT the total.
+   * How many tasks in the UNSCHEDULED placeholder group the cap hid — not the
+   * total, and not including the unestimated group's own overflow. The two
+   * footer numbers measure different sets and must not overlap; summing them
+   * here double-counted every hidden unestimated item against
+   * `unestimatedCount` below.
    *
    * Passed down rather than recomputed from `row.tasks`, because the number
    * is a function of the cap the block builder applied. Recomputing it here
