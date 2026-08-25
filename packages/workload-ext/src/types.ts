@@ -63,6 +63,30 @@ export type TWorkloadTask = {
   start_date: string | null;
   target_date: string | null;
   state_group: string;
+  /**
+   * The state's display name, e.g. "In Review". Server-normalised to `""`,
+   * never null. This is the timeline bar's only legend: the bar is painted
+   * with `state_color`, and a colour with nothing to read it by is not
+   * information — the tooltip is where the reader learns which state that
+   * hue means.
+   */
+  state_name: string;
+  /**
+   * The state's own colour, as a **free-form CSS colour string** — NOT a
+   * guaranteed `#rrggbb`. Server-side this is `CharField(max_length=255)`
+   * with no hex validation, so `""`, `#fa0`, `rgb(...)` and a named colour
+   * are all reachable values.
+   *
+   * Two consequences, both load-bearing:
+   *
+   * - **Never parse it.** Do not slice an alpha suffix onto it to tint a
+   *   fill (`state_color + "26"`); that breaks on every form above except
+   *   6-digit hex. The bar tints by laying a translucent overlay over a
+   *   full-opacity background, which needs no format assumption.
+   * - **Never assume it is non-empty.** Route it through `stateBarColor`,
+   *   which owns the fallback chain.
+   */
+  state_color: string;
   /** True when `target_date` is in the past and the issue isn't done/cancelled. */
   overdue: boolean;
 };
