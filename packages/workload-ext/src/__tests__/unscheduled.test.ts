@@ -197,3 +197,67 @@ describe("selectPlaceholderTasks — the two budgets", () => {
     expect(unscheduled.hiddenCount).toBe(2);
   });
 });
+
+describe("packTasksIntoLanes with placeholder anchors", () => {
+  it("drops undated tasks when no todayISO is given, as it always has", () => {
+    // The two-argument form is opt-in on purpose: `!target_date` is also the
+    // placeholder SELECTOR's predicate, so a caller that has not capped its
+    // placeholders must not accidentally lane a whole undated backlog.
+    const tasks = [task("undated", null, null), task("dated", "2026-08-26", "2026-08-26")];
+    expect(
+      packTasksIntoLanes(tasks)
+        .flat()
+        .map((t) => t.id)
+    ).toEqual(["dated"]);
+  });
+
+  it("shares one lane between placeholders whose anchors do not collide", () => {
+    // namph's swimlane, reduced: CRAZYLAB-134 carries its own start of the
+    // 23rd, LIHUHU-115 and ONDI-5 have no dates at all and anchor at today.
+    // The first two do not overlap and belong on ONE row; only the third
+    // needs a second, because it collides with LIHUHU-115 at today.
+    const own = task("crazylab-134", "2026-08-23", null);
+    const a = task("lihuhu-115", null, null);
+    const b = task("ondi-5", null, null);
+
+    const lanes = packTasksIntoLanes([own, a, b], TODAY);
+    expect(lanes).toHaveLength(2);
+    expect(lanes[0].map((t) => t.id)).toEqual(["crazylab-134", "lihuhu-115"]);
+    expect(lanes[1].map((t) => t.id)).toEqual(["ondi-5"]);
+  });
+
+  it("keeps same-anchor placeholders apart, which is what the old one-per-row rule was for", () => {
+    // The half of the old rule that was correct. Two bars drawn on the same
+    // column DO collide, and packing must not stack them — a bar's x-position
+    // is a claim about a date, and the second would be hidden behind the first.
+    const lanes = packTasksIntoLanes([task("a", null, null), task("b", null, null)], TODAY);
+    expect(lanes).toHaveLength(2);
+  });
+
+  it("lets a dated bar join a placeholder's lane once the anchor has passed", () => {
+    // anhnmq's case: DEVOPS-488 anchors at today and left the 26th onward
+    // empty on its row, while DEVOPS-580 started a new one underneath.
+    const placeholder = task("devops-488", null, null);
+    const dated = task("devops-580", "2026-08-26", "2026-08-26");
+
+    const lanes = packTasksIntoLanes([placeholder, dated], TODAY);
+    expect(lanes).toHaveLength(1);
+    expect(lanes[0].map((t) => t.id)).toEqual(["devops-488", "devops-580"]);
+  });
+
+  it("does not let a dated bar overlap the placeholder's own day", () => {
+    // The anchor occupies a real day, not a zero-width point: a bar spanning
+    // today must go to the next lane, or the two would be drawn on top of
+    // each other.
+    const placeholder = task("ph", null, null);
+    const spanning = task("spanning", "2026-08-23", "2026-08-26");
+
+    expect(packTasksIntoLanes([placeholder, spanning], TODAY)).toHaveLength(2);
+  });
+
+  it("does not mutate the array it is given", () => {
+    const tasks = [task("b", null, null), task("a", "2026-08-20", "2026-08-20")];
+    packTasksIntoLanes(tasks, TODAY);
+    expect(tasks.map((t) => t.id)).toEqual(["b", "a"]);
+  });
+});

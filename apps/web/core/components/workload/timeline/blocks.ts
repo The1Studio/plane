@@ -7,14 +7,8 @@
 // `GanttChartRoot` needs. Kept dependency-free of React/MobX so it's testable
 // in isolation.
 
-import {
-  packTasksIntoLanes,
-  periodDateRange,
-  selectPlaceholderTasks,
-  splitByEstimate,
-  unscheduledAnchorDate,
-} from "@plane/workload-ext";
-import type { TWorkloadGranularity, TWorkloadResponse, TWorkloadTask } from "@plane/workload-ext";
+import { packTasksIntoLanes, periodDateRange, selectPlaceholderTasks, splitByEstimate } from "@plane/workload-ext";
+import type { TWorkloadGranularity, TWorkloadResponse } from "@plane/workload-ext";
 import { assigneeKey } from "./types";
 import type { TWorkloadTimelineBlockData } from "./types";
 
@@ -169,54 +163,35 @@ export function buildWorkloadBlocks(
 
     if (isCollapsed(key)) continue;
 
-    // Placeholder bars first, above the packed lanes. Each gets its OWN row:
-    // undated bars all sit on the same column, so unlike dated tasks they
-    // cannot share one, and once these bars are draggable a bar's x-position
-    // is a claim about a date — two side by side would both claim a day only
-    // the leftmost actually occupies.
+    // Placeholders and dated work go through ONE packing pass.
     //
-    // Two groups with SEPARATE budgets, unscheduled above unestimated. One
-    // shared budget let a single unestimated item take the top slot (
-    // `_task_sort_key` sorts unestimated first) and push a member's real
-    // unscheduled backlog further behind a counter.
+    // A placeholder occupies exactly one day — its anchor (`start_date ??
+    // today`) — so there is no reason it should own a whole row. It did until
+    // now, on the argument that undated bars "all sit on the same column and
+    // cannot share one". Half true: two anchored on the SAME day do collide,
+    // and the packer already keeps those apart because their spans overlap.
+    // But one anchored at its own start date and one at today do not collide
+    // at all, and neither does a dated bar three days later — each of those
+    // was costing a row for nothing. Observed on namph's swimlane: CRAZYLAB-134
+    // anchored on the 23rd sat alone while LIHUHU-115 and ONDI-5, both at
+    // today, took the two rows under it.
+    //
+    // Selection still runs first and still caps each group at three, so the
+    // number of placeholder bars is unchanged — only where they land is. The
+    // cap has to be applied BEFORE packing: handing `packTasksIntoLanes` a
+    // row's whole undated backlog would lane all twenty of them.
     const placeholders = selectPlaceholderTasks(row.tasks, todayISO, packSpan);
-    const emitPlaceholders = (group: TWorkloadTask[], prefix: string) =>
-      group.forEach((task, index) => {
-        const id = `${prefix}:${key}:${index}`;
-        blockIds.push(id);
-        dataById[id] = {
-          kind: "unscheduled",
-          id,
-          name: task.name,
-          assigneeId: row.assignee_id,
-          task,
-          anchorDate: unscheduledAnchorDate(task, todayISO),
-          sort_order: order++,
-          // Whole-window span, exactly as the header and footer use — the bar
-          // is placed inside this box by absolute date.
-          start_date: headerStart,
-          target_date: headerEnd,
-        };
-      });
-    emitPlaceholders(placeholders.unscheduled.shown, "wl-unsched");
-    emitPlaceholders(placeholders.unestimated.shown, "wl-unest-ph");
 
     // Compact: several non-overlapping tasks share one row. A member with 49
     // scheduled tasks was 49 rows tall; packed, it is as many rows as they have
     // genuinely concurrent work, which is usually a handful.
     //
-    // ESTIMATED AND UNESTIMATED TOGETHER, in ONE packing pass. They used to be
-    // split into two bands so that no row would interleave dashed and solid
-    // bars — a tidiness argument that cost a row every time either group had a
-    // free slot the other could have filled. Measured on the DEVOPS board it
-    // was 6 wasted rows on one swimlane, and the interleaving it prevented is
-    // not actually confusing: dashed-versus-solid and `?`-versus-`12h` already
-    // distinguish the two at a glance, on a row or across one.
-    //
-    // Unestimated items are packed like any other dated bars because they HAVE
-    // dates; only the estimate is missing. An UNDATED one is not in this set —
-    // it has no `target_date`, so `packTasksIntoLanes` drops it and the
-    // placeholder block above already drew it.
+    // ESTIMATED AND UNESTIMATED TOGETHER. They used to be split into two bands
+    // so that no row would interleave dashed and solid bars — a tidiness
+    // argument that cost a row every time either group had a free slot the
+    // other could have filled. The interleaving it prevented is not actually
+    // confusing: dashed-versus-solid and `?`-versus-`12h` already distinguish
+    // the two at a glance, on a row or across one.
     //
     // Packed over `packSpan`, NOT over every task the store holds. Lane count
     // is peak concurrency, so packing the whole fetched set makes the swimlane
@@ -230,16 +205,22 @@ export function buildWorkloadBlocks(
     // Not weeks: a week-aligned window re-admits the off-screen work it was
     // meant to exclude whenever the viewport starts mid-week, which is the
     // normal case.
-    const lanes = packTasksIntoLanes(
-      row.tasks.filter(
-        (t) => !t.target_date || ((t.start_date ?? t.target_date) <= packSpan.to && t.target_date >= packSpan.from)
-      )
+    //
+    // The window test is applied to DATED tasks only; a placeholder was
+    // already filtered by ANCHOR inside `selectPlaceholderTasks`, and testing
+    // it again here on a null `target_date` would drop every one of them.
+    const dated = row.tasks.filter(
+      (t) => t.target_date && (t.start_date ?? t.target_date) <= packSpan.to && t.target_date >= packSpan.from
     );
-    // A member with no scheduled tasks — zero tasks at all, or every task
-    // unscheduled (no `target_date`, so `packTasksIntoLanes` places none of
-    // them) — packs into zero lanes. Without this fallback that member would
-    // get no lane block at all, and therefore no click-to-create surface
-    // (I1): render one empty lane so the row still exists to click on.
+    const lanes = packTasksIntoLanes(
+      [...placeholders.unscheduled.shown, ...placeholders.unestimated.shown, ...dated],
+      todayISO
+    );
+    // A member with nothing to draw in this window — no tasks at all, or none
+    // whose span or anchor lands inside `packSpan` — packs into zero lanes.
+    // Without this fallback that member would get no lane block at all, and
+    // therefore no click-to-create surface (I1): render one empty lane so the
+    // row still exists to click on.
     const lanesToRender = lanes.length > 0 ? lanes : [[]];
     lanesToRender.forEach((laneTasks, laneIndex) => {
       const laneId = `wl-lane:${key}:${laneIndex}`;
@@ -250,6 +231,11 @@ export function buildWorkloadBlocks(
         name: laneTasks[0]?.name ?? row.assignee_name,
         assigneeId: row.assignee_id,
         tasks: laneTasks,
+        // A lane can now hold a task with no `target_date`, which the renderer
+        // has to place at `start_date ?? todayISO`. Carried on the block rather
+        // than resolved here so the bar and its drag handler agree on one date,
+        // and so this builder stays pure of the clock.
+        todayISO,
         sort_order: order++,
         // The lane's box spans the WHOLE response window (same as the header
         // block above), not the bars' own bounding range — this is what gives

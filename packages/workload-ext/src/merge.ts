@@ -340,34 +340,48 @@ export function unscheduledAnchorDate(task: TWorkloadTask, todayISO: string): st
   return task.start_date ?? todayISO;
 }
 
-export function packTasksIntoLanes(tasks: TWorkloadTask[]): TWorkloadTask[][] {
-  // `filter` already returns a new array, so the subsequent in-place sort never
+export function packTasksIntoLanes(tasks: TWorkloadTask[], todayISO?: string): TWorkloadTask[][] {
+  // An UNDATED task occupies exactly one day — its placeholder anchor — when
+  // `todayISO` is supplied, and is dropped entirely when it is not. Passing it
+  // is what lets placeholder bars share rows with dated work instead of each
+  // taking a row of its own: two placeholders anchored on the same day still
+  // land in separate lanes (their spans collide, so `laneEnd < start` is
+  // false), while one anchored on the 23rd and one at today pack together, and
+  // a dated bar three days later joins them rather than starting a new row.
+  //
+  // The omitted form is kept because the predicate `!target_date` is also the
+  // placeholder selector's, and a caller that has NOT capped its placeholders
+  // must not accidentally lane every undated task in the row.
+  const spanOf = (task: TWorkloadTask): { start: string; end: string } | null => {
+    if (task.target_date) return { start: task.start_date ?? task.target_date, end: task.target_date };
+    if (!todayISO) return null;
+    const anchor = unscheduledAnchorDate(task, todayISO);
+    return { start: anchor, end: anchor };
+  };
+
+  // `map`/`filter` build new arrays, so the subsequent in-place sort never
   // touches `tasks` — which matters, since that array belongs to the store's
   // response object and sorting it during a render would mutate observable state.
-  const scheduled = tasks.filter((t) => t.target_date);
-  scheduled.sort((a, b) => {
-    const aStart = a.start_date ?? a.target_date ?? "";
-    const bStart = b.start_date ?? b.target_date ?? "";
-    return aStart < bStart ? -1 : aStart > bStart ? 1 : 0;
-  });
+  const placed = tasks
+    .map((task) => ({ task, span: spanOf(task) }))
+    .filter((entry): entry is { task: TWorkloadTask; span: { start: string; end: string } } => entry.span !== null);
+  placed.sort((a, b) => (a.span.start < b.span.start ? -1 : a.span.start > b.span.start ? 1 : 0));
 
   const lanes: TWorkloadTask[][] = [];
   const laneEnds: string[] = [];
 
-  for (const task of scheduled) {
-    // A task with only a target date occupies that single day.
-    const start = task.start_date ?? task.target_date!;
-    const end = task.target_date!;
-    const lane = laneEnds.findIndex((laneEnd) => laneEnd < start);
+  for (const { task, span } of placed) {
+    const lane = laneEnds.findIndex((laneEnd) => laneEnd < span.start);
     if (lane === -1) {
       lanes.push([task]);
-      laneEnds.push(end);
+      laneEnds.push(span.end);
     } else {
       lanes[lane].push(task);
       // Never move the end backwards: a long bar placed earlier still occupies
       // this lane past a shorter one appended after it.
-      if (end > laneEnds[lane]) laneEnds[lane] = end;
+      if (span.end > laneEnds[lane]) laneEnds[lane] = span.end;
     }
   }
+
   return lanes;
 }
