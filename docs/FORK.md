@@ -240,7 +240,20 @@ New backend code lives in **new Django apps**:
   three per swimlane
   (`MAX_UNSCHEDULED_LANES`); the footer strip reports **only the overflow**
   (`Unscheduled (27 more)`), never the total, so the count and the visible bars must not be added
-  together. The cap is **two independent budgets of three**, not one shared between them
+  together. **Both footer numbers are overflows of disjoint groups** —
+  `Unscheduled (N more)` from the estimated-undated group, `Unestimated (N more)` from the
+  unestimated one. Two fixes landed together on 2026-08-25: the first number briefly SUMMED both
+  groups, and the second was a swimlane TOTAL rather than an overflow, so namph's strip read
+  `Unscheduled (22 more)  Unestimated (17)` with 14 items in both numbers and 3 more already drawn
+  on screen. `Unscheduled` is the estimated-undated set (`meta.issues_unscheduled` server-side) and
+  `Unestimated` the no-estimate set regardless of dates, so an item that is both belongs to the
+  second. A DATED unestimated task is never in either count — those pack into the lanes uncapped,
+  which is why the only unestimated work that can be hidden is undated work past the cap. The
+  double-count was invisible on the swimlane it shipped against, whose single unestimated item fit
+  inside the cap and made the spurious term zero. Consequence to expect: a swimlane whose
+  placeholders all fit now shows NO footer chip, and "how much of this row still needs an estimate"
+  is no longer answerable from the strip — the previous total answered it at the cost of
+  restating bars the reader could already see. The cap is **two independent budgets of three**, not one shared between them
   (`selectPlaceholderTasks`): undated-and-estimated above, undated-and-unestimated below. They
   competed until 2026-08-25, and since `_task_sort_key` sorts unestimated first, one unestimated
   item took the top slot and pushed a member's real unscheduled backlog a place further behind a
