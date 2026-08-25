@@ -9,8 +9,10 @@
 // instead of competing with it.
 
 import { describe, expect, it } from "vitest";
-import { packTasksIntoLanes, selectUnscheduledTasks, splitByEstimate } from "../merge";
+import { packTasksIntoLanes, selectPlaceholderTasks, splitByEstimate } from "../merge";
 import type { TWorkloadTask } from "../types";
+
+const TODAY = "2026-08-24";
 
 function task(
   id: string,
@@ -109,15 +111,18 @@ describe("splitByEstimate composes with the scheduled/unscheduled split", () => 
     // seeing unestimated rows, an undated unestimated item would be drawn by
     // nobody: `packTasksIntoLanes` drops it for having no target.
     const undatedUnestimated = task("u", { unestimated: true });
-    const { shown } = selectUnscheduledTasks([undatedUnestimated]);
+    const { unestimated } = selectPlaceholderTasks([undatedUnestimated], TODAY, null);
 
-    expect(shown.map((t) => t.id)).toEqual(["u"]);
+    // The UNESTIMATED group, not the unscheduled one: an undated task belongs
+    // to exactly one of the two budgets, and this one has no estimate.
+    expect(unestimated.shown.map((t) => t.id)).toEqual(["u"]);
   });
 
   it("a dated unestimated task is lane-packed, not placed in the placeholder lanes", () => {
     const dated = task("d", { start: "2026-09-01", target: "2026-09-03", unestimated: true });
 
-    expect(selectUnscheduledTasks([dated]).shown).toEqual([]);
+    const groups = selectPlaceholderTasks([dated], TODAY, null);
+    expect([...groups.unscheduled.shown, ...groups.unestimated.shown]).toEqual([]);
     expect(packTasksIntoLanes([dated])).toEqual([[dated]]);
   });
 
@@ -134,7 +139,8 @@ describe("splitByEstimate composes with the scheduled/unscheduled split", () => 
       task("unest-undated", { unestimated: true }),
     ];
 
-    const placeholders = selectUnscheduledTasks(tasks, 10).shown;
+    const groups = selectPlaceholderTasks(tasks, TODAY, null, 10);
+    const placeholders = [...groups.unscheduled.shown, ...groups.unestimated.shown];
     const drawn = [...placeholders, ...packTasksIntoLanes(tasks).flat()];
 
     expect(drawn).toHaveLength(tasks.length);

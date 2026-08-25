@@ -40,6 +40,64 @@ export function shiftDate(dateStr: string, days: number): string {
   return `${y}-${m}-${day}`;
 }
 
+/** `YYYY-MM-DD` from a Date's LOCAL calendar fields — see `shiftDate` on why local. */
+function isoDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/**
+ * Snap a visible span OUTWARD to whole COLUMNS of the current zoom.
+ *
+ * This is the timeline's PACK WINDOW: the range lane packing and placeholder
+ * selection are computed over, as distinct from the wider range the store has
+ * fetched. Lanes are sized by peak concurrency, so packing the whole fetched
+ * set makes a swimlane as tall as its busiest day anywhere in that set — and
+ * since the store accumulates tasks as the reader pans, that height only ever
+ * grows, leaving rows whose only bars sit off-screen.
+ *
+ * The unit is the zoom's own column — day at Week, week at Month, month at
+ * Quarter — which is the smallest step at which the view visibly changes. That
+ * is what makes recomputing on scroll tolerable: at Week zoom the window moves
+ * only when a whole day column scrolls past, and at Quarter it holds for a
+ * whole month of panning. Quantising to a FIXED unit instead does not work.
+ * A week-aligned window was tried first and collapsed nothing on a real
+ * swimlane: a viewport starting on a Saturday snaps back to the Monday and
+ * re-admits five days of work sitting off-screen to the left — and a viewport
+ * straddling a week boundary is the normal case, not the corner.
+ *
+ * Snapping OUTWARD (never inward) is what guarantees the window still covers
+ * every visible column — a bar inside the viewport but outside the pack window
+ * would get no lane at all and vanish, which is a worse bug than the blank row
+ * this fixes. At `day` that makes it the identity: the inputs are already whole
+ * days, so there is nothing to snap and the window IS the viewport.
+ */
+export function columnAlignedWindow(
+  from: string,
+  to: string,
+  granularity: TWorkloadGranularity,
+  weekStartDay: number
+): { from: string; to: string } {
+  // `T00:00:00` for the same reason `shiftDate` needs it — see its docstring.
+  const start = new Date(`${from}T00:00:00`);
+  const end = new Date(`${to}T00:00:00`);
+
+  if (granularity === "day") return { from, to };
+
+  if (granularity === "week") {
+    start.setDate(start.getDate() - ((start.getDay() - weekStartDay + 7) % 7));
+    end.setDate(end.getDate() + (6 - ((end.getDay() - weekStartDay + 7) % 7)));
+    return { from: isoDate(start), to: isoDate(end) };
+  }
+
+  // month — the 1st of the start's month through the last day of the end's.
+  // Day 0 of the FOLLOWING month is that month's last day, which avoids a
+  // leap-year table.
+  return {
+    from: isoDate(new Date(start.getFullYear(), start.getMonth(), 1)),
+    to: isoDate(new Date(end.getFullYear(), end.getMonth() + 1, 0)),
+  };
+}
+
 /**
  * Compute day difference between two YYYY-MM-DD strings.
  *

@@ -253,31 +253,73 @@ export type TUnscheduledSelection = {
 };
 
 /**
- * Split a row's unscheduled tasks into the ones to draw and a count of the rest.
+ * `undated` means `!task.target_date` — the exact predicate `packTasksIntoLanes`
+ * filters OUT. The two must stay complements: any task the packer drops is a
+ * task the selector below has to see, or that work disappears from the board
+ * entirely.
+ */
+export type TPlaceholderGroups = {
+  /** Undated work that HAS an estimate — the classic "unscheduled" bar. */
+  unscheduled: TUnscheduledSelection;
+  /** Undated work that has NO estimate. Its own budget, not a share of one. */
+  unestimated: TUnscheduledSelection;
+};
+
+/**
+ * Split a row's UNDATED tasks into the placeholder bars to draw and the counts
+ * of what was left out.
  *
- * `unscheduled` means `!task.target_date` — the exact predicate
- * `packTasksIntoLanes` filters OUT, and the one the footer has always counted.
- * The two must stay complements: any task the packer drops is a task this
- * selector has to see, or that work disappears from the board entirely.
+ * Two independent budgets of `maxLanes`, not one shared between them. They used
+ * to compete, and `_task_sort_key` puts unestimated first, so a single
+ * unestimated item took the top slot and pushed a member's real unscheduled
+ * backlog one place further behind a counter. Measured on XuanCuong's row: one
+ * unestimated bar plus one off-window bar left exactly ONE of twenty
+ * unscheduled items visible. The two states also prompt different actions —
+ * "give this a date" versus "give this an estimate" — so a reader looking for
+ * one should not have it crowded out by the other.
+ *
+ * `window` filters by ANCHOR, which is the load-bearing part. An undated task
+ * is drawn at `start_date ?? today` (`unscheduledAnchorDate`), so a task
+ * carrying a start date far outside the view is painted off-screen: it consumes
+ * a slot, renders nothing, and — because it counted as *shown* — is missing
+ * from the overflow number too, which then understates what is hidden. Such a
+ * task is pushed into `hiddenCount` instead, where the reader can at least see
+ * that it exists. Pass `null` to skip the filter entirely.
+ *
+ * `hiddenCount` is therefore measured against the WHOLE group, not against the
+ * drawable subset — "how many of these am I not looking at", which is the only
+ * reading of the footer that stays true once anchors can be filtered out.
  *
  * Server order is preserved deliberately — no sort here. `service.py`'s
- * `_task_sort_key` already ordered `tasks` by
- * `(start is None, start, target is None, target)`, so within the unscheduled
- * group a task carrying a start sorts ahead of one carrying nothing. Re-sorting
- * would fight that and make the three shown bars swap places between refetches
- * for no reason the reader could see.
+ * `_task_sort_key` already ordered `tasks`, so within a group a task carrying a
+ * start sorts ahead of one carrying nothing. Re-sorting would fight that and
+ * make the shown bars swap places between refetches for no visible reason.
  */
-export function selectUnscheduledTasks(
+export function selectPlaceholderTasks(
   tasks: TWorkloadTask[],
+  todayISO: string,
+  window: { from: string; to: string } | null,
   maxLanes: number = MAX_UNSCHEDULED_LANES
-): TUnscheduledSelection {
+): TPlaceholderGroups {
   // `filter` returns a new array, so nothing in the store's response object is
   // touched — the same reason `packTasksIntoLanes` filters before it sorts.
-  const unscheduled = tasks.filter((t) => !t.target_date);
+  const undated = tasks.filter((t) => !t.target_date);
   const limit = Math.max(0, maxLanes);
+
+  const pick = (group: TWorkloadTask[]): TUnscheduledSelection => {
+    const drawable = window
+      ? group.filter((t) => {
+          const anchor = unscheduledAnchorDate(t, todayISO);
+          return anchor >= window.from && anchor <= window.to;
+        })
+      : group;
+    const shown = drawable.slice(0, limit);
+    return { shown, hiddenCount: Math.max(0, group.length - shown.length) };
+  };
+
   return {
-    shown: unscheduled.slice(0, limit),
-    hiddenCount: Math.max(0, unscheduled.length - limit),
+    unscheduled: pick(undated.filter((t) => !t.unestimated)),
+    unestimated: pick(undated.filter((t) => t.unestimated)),
   };
 }
 

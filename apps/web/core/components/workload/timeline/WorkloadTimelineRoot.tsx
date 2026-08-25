@@ -40,7 +40,7 @@ import { EIssuesStoreType, GANTT_TIMELINE_TYPE } from "@plane/types";
 import type { IBlockUpdateData, TGanttViews, TIssue } from "@plane/types";
 import { renderFormattedPayloadDate } from "@plane/utils";
 import type { IWorkloadStore, TWorkloadGranularity, TWorkloadTask } from "@plane/workload-ext";
-import { wlt } from "@plane/workload-ext";
+import { columnAlignedWindow, wlt } from "@plane/workload-ext";
 import { TimeLineTypeContext } from "@/components/gantt-chart/contexts";
 import { GanttChartRoot } from "@/components/gantt-chart/root";
 import { CreateUpdateIssueModal } from "@/components/issues/issue-modal/modal";
@@ -189,6 +189,15 @@ export const WorkloadTimelineRoot = observer(function WorkloadTimelineRoot({ sto
     [defaultCollapsed]
   );
 
+  // The span lanes and placeholders are packed over — the visible columns
+  // snapped OUTWARD to whole columns. Distinct from the range `ensureRange`
+  // fetches below, which is deliberately wider (a viewport either side) so
+  // panning lands on data already held. Packing that wider range is what left
+  // rows whose only bars sat off-screen, and it compounded: the store keeps
+  // every task it has ever loaded, so lane count grew with every pan and never
+  // shrank.
+  const [packWindow, setPackWindow] = useState<{ from: string; to: string } | null>(null);
+
   // Recomputed every render but STABLE BY VALUE for the whole day, which is
   // what makes it safe as a memo dependency: the blocks rebuild when the date
   // actually rolls over, and not once in between. `buildWorkloadBlocks` takes
@@ -197,8 +206,8 @@ export const WorkloadTimelineRoot = observer(function WorkloadTimelineRoot({ sto
   const { blockIds, dataById } = useMemo(() => {
     if (!store.workloadData)
       return { blockIds: [] as string[], dataById: {} as Record<string, TWorkloadTimelineBlockData> };
-    return buildWorkloadBlocks(store.workloadData, store.granularity, isCollapsed, todayISO);
-  }, [store.workloadData, store.granularity, isCollapsed, todayISO]);
+    return buildWorkloadBlocks(store.workloadData, store.granularity, isCollapsed, todayISO, packWindow);
+  }, [store.workloadData, store.granularity, isCollapsed, todayISO, packWindow]);
 
   // `dataById` is a plain object, not a MobX observable — the autorun below
   // can't track it directly, so it's read through a ref updated every render.
@@ -250,6 +259,14 @@ export const WorkloadTimelineRoot = observer(function WorkloadTimelineRoot({ sto
     if (!from || !to || !centre) return;
 
     setFocus(focusPeriodFor(centre, store.granularity, weekStartDay));
+
+    // Column-quantised, and set only when it actually MOVES. Both halves
+    // matter: the snap means panning within one column changes nothing, and
+    // the equality guard means even a re-sync resolving to the same columns
+    // does not re-render every block. Without them the board would repack on
+    // every scroll settle and bars would jump rows under the cursor.
+    const nextPack = columnAlignedWindow(toDateStr(from), toDateStr(to), store.granularity, weekStartDay);
+    setPackWindow((prev) => (prev && prev.from === nextPack.from && prev.to === nextPack.to ? prev : nextPack));
 
     // Load a viewport's width either side too, so ordinary panning lands on
     // data already held rather than on empty columns that fill in a moment
