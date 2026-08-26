@@ -95,6 +95,16 @@ case "$PROD_DB_URL" in
     exit 1 ;;
 esac
 
+# Staging's bundled postgres requires a password for the `plane` role, so every
+# psql below runs with PGPASSWORD. Omitting it fails with
+# "fe_sendauth: no password supplied" — which aborts the script under `set -e`
+# BEFORE the DROP DATABASE, leaving staging intact but the clone unfinished.
+STAGING_PW="$(grep -E "^POSTGRES_PASSWORD=" "$STAGING_DIR/plane.env" | head -1 | cut -d= -f2-)"
+if [ -z "$STAGING_PW" ]; then
+  echo "ABORT: staging plane.env has no POSTGRES_PASSWORD."
+  exit 1
+fi
+
 # --- guard 4: the staging database must be up ------------------------------
 stag_db="$(docker compose -p "$STAGING_PROJECT" ps -q plane-db 2>/dev/null || true)"
 if [ -z "$stag_db" ]; then
@@ -127,7 +137,7 @@ docker compose -p "$STAGING_PROJECT" -f "$STAGING_DIR/docker-compose.yaml" \
 # Streamed, not spooled to a temp file: the production database is multi-GB and
 # the server's disk is shared with two sets of Docker images.
 echo "==> dropping and recreating the staging schema"
-docker exec -i "$stag_db" psql -U plane -d postgres \
+docker exec -i -e PGPASSWORD="$STAGING_PW" "$stag_db" psql -U plane -d postgres \
   -c "DROP DATABASE IF EXISTS plane WITH (FORCE);" \
   -c "CREATE DATABASE plane OWNER plane;"
 
@@ -136,10 +146,10 @@ echo "==> streaming production dump into staging (this takes a while)"
 # lives; it connects OUT to Neon. Production has no local postgres to exec into.
 docker exec -i -e PGURL="$PROD_DB_URL" "$stag_db" \
   sh -c 'pg_dump --no-owner --no-acl "$PGURL"' \
-  | docker exec -i "$stag_db" psql -U plane -d plane -v ON_ERROR_STOP=1 -q
+  | docker exec -i -e PGPASSWORD="$STAGING_PW" "$stag_db" psql -U plane -d plane -v ON_ERROR_STOP=1 -q
 
 echo "==> ensuring pgvector is present (ai_ext needs it)"
-docker exec -i "$stag_db" psql -U plane -d plane -c "CREATE EXTENSION IF NOT EXISTS vector;"
+docker exec -i -e PGPASSWORD="$STAGING_PW" "$stag_db" psql -U plane -d plane -c "CREATE EXTENSION IF NOT EXISTS vector;"
 
 # --- bring the restored schema up to this checkout's migration state -------
 # This is the whole point of the rehearsal: real rows, this branch's migrations.
