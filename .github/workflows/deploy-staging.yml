@@ -73,6 +73,58 @@ jobs:
           PG_IMAGE: pgvector/pgvector:pg17
         run: bash deployments/selfhost/deploy.sh
 
+      # Post-deploy smoke. Lives HERE, not in master-ci, because staging only
+      # reflects a commit AFTER this deploy finishes — a smoke job in master-ci
+      # runs at PR/push time and would test whatever was previously deployed.
+      #
+      # deploy.sh already gates on localhost web+api returning 200. These are the
+      # things it cannot see:
+      #   1. the public path through the Cloudflare tunnel (it only probes localhost)
+      #   2. whether the running containers are actually THIS commit's images,
+      #      which is what catches a silently no-op deploy
+      #   3. whether the API can really answer, rather than just terminate a TCP
+      #      connection with a 200
+      - name: Smoke — staging
+        id: smoke
+        env:
+          PUBLIC_URL: https://plane-staging.the1studio.org
+          LOCAL_URL: http://localhost:81
+          COMPOSE_PROJECT: plane-staging-app
+        run: |
+          set -euo pipefail
+          fail=0
+          SHORT_SHA="$(git rev-parse --short HEAD)"
+
+          echo "== 1. public URL through the tunnel =="
+          code="$(curl -s -o /tmp/smoke_public -w '%{http_code}' -L --max-time 30 "$PUBLIC_URL/" || echo 000)"
+          if [ "$code" = "200" ]; then echo "   ok   $PUBLIC_URL -> 200"
+          else echo "   FAIL $PUBLIC_URL -> $code (tunnel/ingress, not the stack — localhost passed)"; fail=1; fi
+
+          echo "== 2. API answers with real JSON =="
+          code="$(curl -s -o /tmp/smoke_api -w '%{http_code}' --max-time 30 "$LOCAL_URL/api/instances/" || echo 000)"
+          if [ "$code" = "200" ] && python3 -c 'import json,sys; json.load(open("/tmp/smoke_api"))' 2>/dev/null; then
+            echo "   ok   /api/instances/ -> 200, parseable JSON"
+          else
+            echo "   FAIL /api/instances/ -> $code, body not valid JSON"; head -c 300 /tmp/smoke_api || true; fail=1
+          fi
+
+          echo "== 3. running containers are THIS commit ($SHORT_SHA) =="
+          for svc in api web; do
+            cid="$(docker ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" \
+                                --filter "label=com.docker.compose.service=$svc")"
+            if [ -z "$cid" ]; then echo "   FAIL $svc not running"; fail=1; continue; fi
+            img="$(docker inspect "$cid" --format '{{.Config.Image}}')"
+            repo="${img%%:*}"
+            if docker image inspect "${repo}:git-${SHORT_SHA}" >/dev/null 2>&1 &&
+               [ "$(docker image inspect "$img" --format '{{.Id}}')" = "$(docker image inspect "${repo}:git-${SHORT_SHA}" --format '{{.Id}}')" ]; then
+              echo "   ok   $svc running $img == ${repo}:git-${SHORT_SHA}"
+            else
+              echo "   FAIL $svc running $img, which is NOT this commit's build (git-${SHORT_SHA}) — deploy was a no-op"; fail=1
+            fi
+          done
+
+          [ "$fail" = "0" ] && echo "== smoke PASSED ==" || { echo "== smoke FAILED =="; exit 1; }
+
       - name: Notify Discord
         if: always()
         env:
@@ -81,7 +133,8 @@ jobs:
           DISCORD_THREAD_ID: '1524317964160204800'
           ENV_LABEL: staging
           SITE_URL: https://plane-staging.the1studio.org
-          DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
+          # Both must pass, or the embed would report success on a failed smoke.
+          DEPLOY_OUTCOME: ${{ (steps.deploy.outcome == 'success' && steps.smoke.outcome == 'success') && 'success' || 'failure' }}
           GH_REPO: ${{ github.repository }}
           GH_REF: ${{ github.event.inputs.ref || github.ref_name }}
           GH_SHA: ${{ github.sha }}

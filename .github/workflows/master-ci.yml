@@ -330,20 +330,16 @@ jobs:
         timeout-minutes: 35
 
   # ---------------------------------------------------------------------------
-  # Job 4 — Smoke placeholder (Phase 5)
-  # This job is a stub. Wire it to the staging VM and the Phase-5 smoke checklist
-  # documented in plans/SP0-fork-selfhost-plane.md §Phase 5 once the VM is live.
+  # The staging smoke used to live here as a placeholder job that always passed.
+  # It has been REMOVED rather than wired up, because master-ci is structurally
+  # the wrong place for it: this workflow runs at PR/push time, whereas staging
+  # only reflects a commit AFTER deploy-staging.yml finishes deploying it. A
+  # smoke job here would test whatever happened to be deployed already — green
+  # for reasons unrelated to the change under test, which is exactly what the
+  # placeholder was.
+  #
+  # The real smoke now runs in .github/workflows/deploy-staging.yml, in the same
+  # job as the deploy, on the server itself: public URL through the Cloudflare
+  # tunnel, an API response that parses as JSON, and a check that the running
+  # containers carry THIS commit's images. See deployments/selfhost/README.md.
   # ---------------------------------------------------------------------------
-  smoke-placeholder:
-    name: Smoke — staging (placeholder, wire to VM)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    # TODO(Phase 5): replace this job with a real smoke trigger against the staging VM.
-    # The smoke checklist lives in plans/SP0-fork-selfhost-plane.md §Phase 5 and will be
-    # documented in docs/SMOKE.md once the stack is deployed.
-    steps:
-      - name: Placeholder — staging smoke not yet wired
-        run: |
-          echo "Staging smoke gate placeholder."
-          echo "Wire this job to the staging VM and Phase-5 smoke checklist before go-live."
-          echo "See: plans/SP0-fork-selfhost-plane.md §Phase 5 / docs/SMOKE.md"

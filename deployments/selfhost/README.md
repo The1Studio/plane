@@ -115,6 +115,27 @@ staging migrator so the real rows meet the current checkout's migrations.
 Note that cloning discards the from-zero migration state, so re-verify that separately afterwards
 if you still need it (`docker compose -p plane-staging-app exec -T api python manage.py showmigrations`).
 
+## Post-deploy smoke
+
+`deploy-staging.yml` runs a smoke step immediately after the deploy, in the same job on the
+server. It exists to cover the three things `deploy.sh`'s own health gate structurally cannot see:
+
+| Check                                                           | Why `deploy.sh` misses it                                                                 |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Public URL through the Cloudflare tunnel                        | The health gate probes `localhost` only, so a broken ingress rule is invisible to it      |
+| `/api/instances/` returns **parseable JSON**                    | A 200 proves something answered, not that the app can serve                               |
+| Running containers carry **this commit's** images (`git-<sha>`) | Catches a silently no-op deploy, where the old stack keeps serving and every probe passes |
+
+A failed smoke fails the job, and the Discord embed reports failure — it reads both
+`steps.deploy.outcome` and `steps.smoke.outcome`, so a green deploy with a red smoke cannot be
+announced as success.
+
+**The smoke deliberately does NOT live in `master-ci.yml`.** That workflow runs at PR/push time,
+while staging only reflects a commit _after_ `deploy-staging.yml` has deployed it — so a smoke job
+there would test whatever was previously deployed and pass for reasons unrelated to the change
+under test. A placeholder job of exactly that shape lived in `master-ci.yml` until 2026-08-26 and
+always passed; it was removed rather than wired up.
+
 ## When a deploy fails
 
 The health check reports the base URL it probed:
