@@ -8,19 +8,29 @@ This document is the single source of truth for how The1Studio governs its priva
 
 ## Branch model
 
-| Branch                | Purpose                                              | Derived from                      |
-| --------------------- | ---------------------------------------------------- | --------------------------------- |
-| `master`              | Production branch — the only branch deployed         | upstream **tags** (e.g. `v1.3.1`) |
-| `sp1/clickup-migrate` | One-time ClickUp → Plane ETL                         | branches from `master`            |
-| `sp2/ai-ext`          | AI feature suite (BGE-M3 embeddings, Claude tooling) | branches from `master`            |
+| Branch                | Purpose                                                                                    | Derived from                        |
+| --------------------- | ------------------------------------------------------------------------------------------ | ----------------------------------- |
+| `master`              | Production branch — deploys to `plane.the1studio.org`                                      | upstream **tags** (e.g. `v1.3.1`)   |
+| `staging`             | Integration branch — deploys to `plane-staging.the1studio.org`. **History is disposable.** | reset from `master` (never rebased) |
+| `sp1/clickup-migrate` | One-time ClickUp → Plane ETL                                                               | branches from `master`              |
+| `sp2/ai-ext`          | AI feature suite (BGE-M3 embeddings, Claude tooling)                                       | branches from `master`              |
 
 **Rules:**
 
 - `master` is derived from an upstream **tag**, never from `upstream/preview` or
   `upstream/master`. Production deploys from a tag-derived SHA on `master`; no deploy pulls
   from an untagged tip.
-- Feature branches (`sp1/clickup-migrate`, `sp2/ai-ext`) branch FROM `master`. They are
-  never merged directly to `master` — instead, changes ride the rebase cycle below.
+- **A merge to `master` is a production deployment. A push to `staging` is a staging
+  deployment.** Promotion from `staging` to `master` is therefore the release action; there
+  is no separate release step.
+- Feature branches merge into `staging` first, then promote to `master` by PR. The long-lived
+  SP branches (`sp1/clickup-migrate`, `sp2/ai-ext`) are the exception — they branch FROM
+  `master` and ride the rebase cycle below rather than being merged.
+- **`staging` is never rebased.** After every upstream rebase on `master` it is hard-reset to
+  `master` and open features are re-merged — see step 9 of the recipe below. Its merge history
+  carries no value, because every feature's commits reach `master` through its own promotion
+  PR; discarding it is cheaper than reconciling it, and reconciling it re-fights the same
+  upstream conflicts every month.
 - When upstream ships a new tag, the monthly rebase is performed on `master` (see
   "Rebase-on-tags workflow" below). The result is tagged `company-vX.Y.Z-N` before
   any deploy.
@@ -65,14 +75,38 @@ git rebase v1.4.0
 pnpm install
 pnpm check
 
-# 7. Staging: migrate + smoke
-#    docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm migrator
-#    Run the Phase-5 smoke checklist against the staging stack.
+# 7. Staging: deploy the rebase candidate and smoke it
+#    The workflow_dispatch `ref` input exists for exactly this — it deploys any ref to the
+#    staging stack WITHOUT force-pushing `staging` first.
+gh workflow run deploy-staging.yml -f ref=master
+#    Then smoke https://plane-staging.the1studio.org
+#    Runbook: deployments/selfhost/README.md
 
 # 8. Tag the result
 git tag company-v1.4.0-1   # increment N for re-rebases on the same upstream tag
 git push origin master --tags
+
+# 9. MANDATORY — resync staging to the rebased master.
+#    The rebase REWROTE master's history. `staging` was branched from the OLD history and is
+#    now divergent by the entire rebased range. Reset it; do not try to merge or rebase it.
+git checkout staging
+git reset --hard master
+git merge feature/<each-branch-still-awaiting-promotion>   # repeat per open feature
+git push --force-with-lease origin staging
 ```
+
+**Why step 9 is a reset and not a merge.** `staging`'s merge commits carry no information:
+every feature that merged there reaches `master` through its own promotion PR, so nothing is
+lost by discarding them. Attempting to reconcile instead means resolving the whole upstream
+rebase a second time, on a branch, every month.
+
+**Skipping step 9 is not neutral.** `staging` drifts permanently, every subsequent promotion
+PR shows the entire upstream rebase as its diff, and the staging deployment stops representing
+anything `master` will ever become — so it keeps reporting green while testing the wrong tree.
+
+`staging` deliberately carries no branch protection, so the force-push in step 9 just works. If
+protection is ever added, force-push must stay permitted for administrators or this step is
+blocked.
 
 **Cadence recommendation:** rebase monthly or when a tag fixes a security issue. Do not skip
 more than two upstream tags in a row — the conflict surface grows quickly beyond two monthly
@@ -1056,12 +1090,12 @@ treats them the same as `custom-app` / `custom-package`, not as core leaks.
 The complete list (verified by `git log --diff-filter=A` — do not extend it without an explicit
 ownership decision):
 
-| Path                                        | Creating commit            | What it is                                                                                                                    |
-| ------------------------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `.claude/`                                  | upstream dir, fork content | Fork maintenance tooling: `scripts/`, `rules/`, `plans/`, `skills/_shared/`, every `skills/plane-*/`. See the carve-out below |
-| `deployments/selfhost/`                     | fork                       | The1Studio self-host deploy stack (compose, scripts); the only `deployments/` subtree we own                                  |
-| `plans/`                                    | fork                       | Per-feature planning artefacts (phase docs, plan trees)                                                                       |
-| `docs/FORK.md`                              | fork                       | This document — the convention's own SSOT                                                                                     |
+| Path                                  | Creating commit            | What it is                                                                                                                    |
+| ------------------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `.claude/`                            | upstream dir, fork content | Fork maintenance tooling: `scripts/`, `rules/`, `plans/`, `skills/_shared/`, every `skills/plane-*/`. See the carve-out below |
+| `deployments/selfhost/`               | fork                       | The1Studio self-host deploy stack (compose, scripts); the only `deployments/` subtree we own                                  |
+| `plans/`                              | fork                       | Per-feature planning artefacts (phase docs, plan trees)                                                                       |
+| `docs/FORK.md`                        | fork                       | This document — the convention's own SSOT                                                                                     |
 | `.github/workflows/master-ci.yml`     | fork                       | Fork CI gate (makemigrations --check, Django check, pnpm check)                                                               |
 | `.github/workflows/deploy-master.yml` | fork                       | Fork production deploy workflow                                                                                               |
 
@@ -1098,17 +1132,30 @@ Every workflow in this repo targets **`master` and nothing else**. There is no `
 `canary` branch here, so any workflow still naming one is dormant by accident rather than by
 decision — as of 2026-08-26 none are.
 
-- `.github/workflows/master-ci.yml` — fork-owned. Runs on every push/PR to `master`:
+- `.github/workflows/master-ci.yml` — fork-owned. Runs on every push/PR to `master` **and
+  `staging`**. It carries no `paths:` filter, deliberately: a path-filtered required check
+  reports `Expected — Waiting` forever on a PR that skips it, deadlocking the merge.
   - `python manage.py makemigrations --check` — fails if any migration is missing after rebase.
   - `python manage.py check` — fails if Django's system check fails (import errors, url errors).
   - `pnpm install --frozen-lockfile` + `pnpm check` — fails if frontend type-check breaks.
   - `pytest` over the fork-owned apps resolved from the `forkApps` registry.
 - `.github/workflows/deploy-master.yml` — fork-owned. Push to `master` builds and deploys on the
   self-hosted `sv-0` runner. **A merge to `master` is a production deployment.**
+- `.github/workflows/deploy-staging.yml` — fork-owned. Push to `staging` builds and deploys the
+  **staging** stack on the same `sv-0` runner, through the same `deployments/selfhost/deploy.sh`;
+  only four environment variables differ. Its `workflow_dispatch` takes a `ref` input, which is
+  how a rebase candidate gets smoke-tested (recipe step 7). There is one runner, so a staging
+  build and a production build queue behind each other — expected, not a fault.
 - `.github/workflows/upstream-sync-check.yml` — fork-owned. Weekly cron that checks for new
   upstream tags and writes a job summary when a newer tag is available.
 - `codeql.yml`, `copyright-check.yml`, `pull-request-build-lint-api.yml`,
-  `pull-request-build-lint-web-apps.yml` — upstream-owned, retargeted to `master` (see below).
+  `pull-request-build-lint-web-apps.yml` — upstream-owned, retargeted to `master` **and
+  `staging`** (see below).
+
+Operational detail for both environments — run dirs, compose projects, ports, the four-variable
+seam, the production-data clone, and the resource budget — lives in
+[`deployments/selfhost/README.md`](../deployments/selfhost/README.md). This document stays
+governance-level; duplicating the runbook here guarantees the two drift.
 
 ### Upstream-workflow core-edit exceptions (no upstream seam)
 
@@ -1116,15 +1163,15 @@ Renaming the production branch to `master` (2026-08-26) forced a decision on eve
 workflow: each hardcodes its branch names in `on:`, so none can be retargeted through a seam.
 Every row below is a documented core edit and a rebase-conflict surface.
 
-| Path                                                 | Edit                                                                    | Why                                                                                                                                                                                                                                                                                                     |
-| ---------------------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.github/workflows/check-version.yml`                | **Deleted.**                                                            | Fails any PR whose root `package.json` version equals the base branch's — correct for upstream's release flow, wrong for ours. Our `version` field is upstream's, overwritten by every rebase-on-tags, so a mandatory per-PR bump would be busywork on a field the fork does not own.                    |
-| `.github/workflows/build-branch.yml`                 | **Deleted.**                                                            | Builds seven Docker images and pushes them to `docker-image-owner: makeplane` — **upstream's** Docker Hub namespace — via `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN`. This repo holds neither secret, so on `master` it would fail every push; with secrets it would publish our fork into upstream's namespace. The fork builds its own images in `deployments/selfhost/deploy.sh`. |
-| `.github/workflows/codeql.yml`                       | `push` + `pull_request` branch lists → `["master"]`.                    | Security scanning is wanted on the production branch. This **reverses** the earlier decision to leave it dormant.                                                                                                                                                                                       |
-| `.github/workflows/copyright-check.yml`              | `pull_request` branch → `master`.                                       | Retargeted so the check actually runs; it was firing on a branch that does not exist here.                                                                                                                                                                                                              |
-| `.github/workflows/pull-request-build-lint-api.yml`  | `pull_request` branch → `master`; lint scoped to the fork-owned apps resolved by `.claude/scripts/plane-fork-test-paths.py`; dropped `--fix`. | Retargeted so it runs at all. **Scoped** because linting all of `apps/api` makes upstream's own lint debt gate our PRs — on #91 it went red on two unused imports upstream shipped in `makeplane/plane#8889`, and fixing those would be a core edit and a permanent rebase conflict over someone else's bug. Same fork-owned-only rule the pytest job already applies. `--fix` was dropped because it repairs findings in the runner and reports only the remainder, hiding 51 of this repo's 63 real errors. |
-| `.github/workflows/pull-request-build-lint-web-apps.yml` | `pull_request` branch → `master`.                                   | Adds `turbo run check:format --affected` on every PR, complementing `master-ci.yml`'s type-check.                                                                                                                                                                                                       |
-| `.github/workflows/feature-deployment.yml`           | `workflow_dispatch` input default `'preview'` → `'master'`.             | Input default only — the workflow has no push trigger. Changed so the dispatch form does not offer a branch that no longer exists.                                                                                                                                                                      |
+| Path                                                     | Edit                                                                                                                                          | Why                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.github/workflows/check-version.yml`                    | **Deleted.**                                                                                                                                  | Fails any PR whose root `package.json` version equals the base branch's — correct for upstream's release flow, wrong for ours. Our `version` field is upstream's, overwritten by every rebase-on-tags, so a mandatory per-PR bump would be busywork on a field the fork does not own.                                                                                                                                                                                                                         |
+| `.github/workflows/build-branch.yml`                     | **Deleted.**                                                                                                                                  | Builds seven Docker images and pushes them to `docker-image-owner: makeplane` — **upstream's** Docker Hub namespace — via `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN`. This repo holds neither secret, so on `master` it would fail every push; with secrets it would publish our fork into upstream's namespace. The fork builds its own images in `deployments/selfhost/deploy.sh`.                                                                                                                              |
+| `.github/workflows/codeql.yml`                           | `push` + `pull_request` branch lists → `["master"]`.                                                                                          | Security scanning is wanted on the production branch. This **reverses** the earlier decision to leave it dormant.                                                                                                                                                                                                                                                                                                                                                                                             |
+| `.github/workflows/copyright-check.yml`                  | `pull_request` branch → `master`.                                                                                                             | Retargeted so the check actually runs; it was firing on a branch that does not exist here.                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `.github/workflows/pull-request-build-lint-api.yml`      | `pull_request` branch → `master`; lint scoped to the fork-owned apps resolved by `.claude/scripts/plane-fork-test-paths.py`; dropped `--fix`. | Retargeted so it runs at all. **Scoped** because linting all of `apps/api` makes upstream's own lint debt gate our PRs — on #91 it went red on two unused imports upstream shipped in `makeplane/plane#8889`, and fixing those would be a core edit and a permanent rebase conflict over someone else's bug. Same fork-owned-only rule the pytest job already applies. `--fix` was dropped because it repairs findings in the runner and reports only the remainder, hiding 51 of this repo's 63 real errors. |
+| `.github/workflows/pull-request-build-lint-web-apps.yml` | `pull_request` branch → `master`.                                                                                                             | Adds `turbo run check:format --affected` on every PR, complementing `master-ci.yml`'s type-check.                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `.github/workflows/feature-deployment.yml`               | `workflow_dispatch` input default `'preview'` → `'master'`.                                                                                   | Input default only — the workflow has no push trigger. Changed so the dispatch form does not offer a branch that no longer exists.                                                                                                                                                                                                                                                                                                                                                                            |
 
 **On rebase:** upstream touching any of these will conflict. For the two **deleted** files the
 resolution is to **re-delete them** — do not "restore" them by reflex. `check-version.yml`

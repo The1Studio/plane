@@ -11,6 +11,16 @@ Auto-loaded guardrails for `master`. Full specification: `docs/FORK.md` (SSOT).
 Operational tools: `plane-rebase`, `plane-isolation-audit`, `plane-scaffold-feature`,
 `plane-propagate`, `plane-fork-doctor` skills.
 
+## Branch model
+
+- `master` is the production branch — a merge to it deploys `plane.the1studio.org`.
+- `staging` is the integration branch — a push to it deploys `plane-staging.the1studio.org`.
+  Features merge to `staging` first, then promote to `master` by PR.
+- **`staging`'s history is disposable and it is NEVER rebased.** After any
+  `git rebase <upstream-tag>` on `master`, hard-reset `staging` to `master` and re-merge open
+  features (`docs/FORK.md` § "Rebase-on-tags workflow" step 9). Skipping this leaves `staging`
+  permanently diverged, and its deploy then tests a tree `master` will never become.
+
 ## Backend customizations
 
 - New code = NEW Django app under `apps/api/plane/<name>/` — owns its own `migrations/`,
@@ -48,8 +58,13 @@ A rebase conflict **outside** this set = a customization leaked into core →
 
 ## After every rebase
 
-Run `python manage.py makemigrations --check --dry-run` (CI gate: `master-ci.yml`
-enforces this on every push/PR). Also run `python manage.py check` and `pnpm check`.
+1. `python manage.py makemigrations --check --dry-run` (CI gate: `master-ci.yml` enforces this
+   on every push/PR to `master` and `staging`).
+2. `python manage.py check`.
+3. `pnpm check`.
+4. **Resync `staging`** — `git checkout staging && git reset --hard master`, re-merge any open
+   feature branch, `git push --force-with-lease origin staging`. This is the step most likely to
+   be skipped and the one with the longest-lived consequence; see `docs/FORK.md` step 9.
 
 ## Feature propagation (mandatory)
 
