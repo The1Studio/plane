@@ -157,7 +157,7 @@ python manage.py check
 ```
 
 `makemigrations --check` must report no missing migrations (the CI gate in
-`company-main-ci.yml` enforces this on every push). Fix any missing migrations in the
+`master-ci.yml` enforces this on every push). Fix any missing migrations in the
 affected fork app before proceeding.
 
 ### Step 8 — Pre-push gate (HARD-GATE B)

@@ -416,7 +416,7 @@ Each app is **self-contained**:
 
 Cross-app FK dependencies must pin to a `db` migration name that exists in the **currently
 adopted upstream tag**. Re-run `python manage.py makemigrations --check` after every rebase
-(the CI gate in `company-main-ci.yml` enforces this).
+(the CI gate in `master-ci.yml` enforces this).
 
 **DB rule:** no new columns on core models. The core models (`Issue`, `Page`, `Module`,
 `State`, `Intake`, `Asset`) already carry `external_source` and `external_id` fields —
@@ -1062,8 +1062,8 @@ ownership decision):
 | `deployments/selfhost/`                     | fork                       | The1Studio self-host deploy stack (compose, scripts); the only `deployments/` subtree we own                                  |
 | `plans/`                                    | fork                       | Per-feature planning artefacts (phase docs, plan trees)                                                                       |
 | `docs/FORK.md`                              | fork                       | This document — the convention's own SSOT                                                                                     |
-| `.github/workflows/company-main-ci.yml`     | fork                       | Fork CI gate (makemigrations --check, Django check, pnpm check)                                                               |
-| `.github/workflows/deploy-company-main.yml` | fork                       | Fork production deploy workflow                                                                                               |
+| `.github/workflows/master-ci.yml`     | fork                       | Fork CI gate (makemigrations --check, Django check, pnpm check)                                                               |
+| `.github/workflows/deploy-master.yml` | fork                       | Fork production deploy workflow                                                                                               |
 
 `plane-classify-path.cjs` reads this list from the `forkPaths` array in
 `.claude/skills/_shared/references/fork-convention.md`. A prefix ending in `/` matches the
@@ -1094,30 +1094,42 @@ fork workflows listed above are `custom-infra`.
 
 ## CI gates
 
-Two GitHub Actions workflows enforce the fork convention automatically:
+Every workflow in this repo targets **`master` and nothing else**. There is no `preview` or
+`canary` branch here, so any workflow still naming one is dormant by accident rather than by
+decision — as of 2026-08-26 none are.
 
-- `.github/workflows/company-main-ci.yml` — runs on every push/PR to `master`:
+- `.github/workflows/master-ci.yml` — fork-owned. Runs on every push/PR to `master`:
   - `python manage.py makemigrations --check` — fails if any migration is missing after rebase.
   - `python manage.py check` — fails if Django's system check fails (import errors, url errors).
   - `pnpm install --frozen-lockfile` + `pnpm check` — fails if frontend type-check breaks.
-- `.github/workflows/upstream-sync-check.yml` — weekly cron that checks for new upstream tags
-  and writes a job summary when a newer tag is available.
+  - `pytest` over the fork-owned apps resolved from the `forkApps` registry.
+- `.github/workflows/deploy-master.yml` — fork-owned. Push to `master` builds and deploys on the
+  self-hosted `sv-0` runner. **A merge to `master` is a production deployment.**
+- `.github/workflows/upstream-sync-check.yml` — fork-owned. Weekly cron that checks for new
+  upstream tags and writes a job summary when a newer tag is available.
+- `codeql.yml`, `copyright-check.yml`, `pull-request-build-lint-api.yml`,
+  `pull-request-build-lint-web-apps.yml` — upstream-owned, retargeted to `master` (see below).
 
 ### Upstream-workflow core-edit exceptions (no upstream seam)
 
-Renaming the production branch to `master` (2026-08-26) put it in the trigger path of two
-upstream workflows that had been dormant for as long as the branch was called `company-main`.
-Neither has a seam — the branch name is hardcoded in `on:` — so each is a documented core edit
-and a rebase-conflict surface.
+Renaming the production branch to `master` (2026-08-26) forced a decision on every upstream
+workflow: each hardcodes its branch names in `on:`, so none can be retargeted through a seam.
+Every row below is a documented core edit and a rebase-conflict surface.
 
-| Path                                  | Edit                                                                                                  | Why no seam exists                                                                                                                                                                                                                                                                                                |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.github/workflows/check-version.yml` | **Deleted.**                                                                                          | It fails any PR whose root `package.json` version equals the base branch's — correct for upstream's release flow, wrong for ours. Our `version` field is upstream's (overwritten by every rebase-on-tags), not a number the fork owns, so a mandatory per-PR bump would be busywork on a field we do not control. |
-| `.github/workflows/codeql.yml`        | Dropped `"master"` from both `push` and `pull_request` branch lists, leaving `["preview", "canary"]`. | Neither remaining name is a branch this repo has, so the workflow is dormant rather than newly firing on every push to production. Not deleted — re-enabling scanning is a one-line change if a future decision wants it.                                                                                         |
+| Path                                                 | Edit                                                                    | Why                                                                                                                                                                                                                                                                                                     |
+| ---------------------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.github/workflows/check-version.yml`                | **Deleted.**                                                            | Fails any PR whose root `package.json` version equals the base branch's — correct for upstream's release flow, wrong for ours. Our `version` field is upstream's, overwritten by every rebase-on-tags, so a mandatory per-PR bump would be busywork on a field the fork does not own.                    |
+| `.github/workflows/build-branch.yml`                 | **Deleted.**                                                            | Builds seven Docker images and pushes them to `docker-image-owner: makeplane` — **upstream's** Docker Hub namespace — via `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN`. This repo holds neither secret, so on `master` it would fail every push; with secrets it would publish our fork into upstream's namespace. The fork builds its own images in `deployments/selfhost/deploy.sh`. |
+| `.github/workflows/codeql.yml`                       | `push` + `pull_request` branch lists → `["master"]`.                    | Security scanning is wanted on the production branch. This **reverses** the earlier decision to leave it dormant.                                                                                                                                                                                       |
+| `.github/workflows/copyright-check.yml`              | `pull_request` branch → `master`.                                       | Retargeted so the check actually runs; it was firing on a branch that does not exist here.                                                                                                                                                                                                              |
+| `.github/workflows/pull-request-build-lint-api.yml`  | `pull_request` branch → `master`.                                       | Adds `ruff` over `apps/api` on every PR. Note it runs `ruff check --fix`, which rewrites files in the runner's checkout; nothing commits them, so the job reports rather than mutates the repo.                                                                                                          |
+| `.github/workflows/pull-request-build-lint-web-apps.yml` | `pull_request` branch → `master`.                                   | Adds `turbo run check:format --affected` on every PR, complementing `master-ci.yml`'s type-check.                                                                                                                                                                                                       |
+| `.github/workflows/feature-deployment.yml`           | `workflow_dispatch` input default `'preview'` → `'master'`.             | Input default only — the workflow has no push trigger. Changed so the dispatch form does not offer a branch that no longer exists.                                                                                                                                                                      |
 
-**On rebase:** upstream touching either file will conflict. For `check-version.yml` the
-resolution is to **re-delete it** — do not "restore" it by reflex, that re-arms a mandatory
-version bump on every PR. For `codeql.yml`, keep our two-entry branch list.
+**On rebase:** upstream touching any of these will conflict. For the two **deleted** files the
+resolution is to **re-delete them** — do not "restore" them by reflex. `check-version.yml`
+re-arms a mandatory version bump on every PR; `build-branch.yml` re-arms a push to upstream's
+Docker Hub namespace. For the retargeted files, keep the single-entry `master` branch list.
 
 ---
 

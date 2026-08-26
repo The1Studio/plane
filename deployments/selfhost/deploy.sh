@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Self-hosted build + deploy for the master fork of Plane.
-# Invoked by .github/workflows/deploy-company-main.yml on the server runner.
+# Invoked by .github/workflows/deploy-master.yml on the server runner.
 #
 # Preconditions on the server:
 #   - Docker + docker compose v2 available to the runner user.

@@ -78,7 +78,7 @@ Output: a violation table (file | category | rule | fix) + overall PASS/FAIL ver
 
 ## CI Parity
 
-This skill mirrors the three checks in `.github/workflows/company-main-ci.yml`:
+This skill mirrors the three checks in `.github/workflows/master-ci.yml`:
 
 | CI command                                          | What it catches                                                               | Skill equivalent                                                                                         |
 | --------------------------------------------------- | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |

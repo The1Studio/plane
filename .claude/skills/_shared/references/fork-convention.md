@@ -106,8 +106,8 @@ Keep paths in sync with the table above (the doctor's drift check enforces it).
     "deployments/selfhost/",
     "plans/",
     "docs/FORK.md",
-    ".github/workflows/company-main-ci.yml",
-    ".github/workflows/deploy-company-main.yml"
+    ".github/workflows/master-ci.yml",
+    ".github/workflows/deploy-master.yml"
   ],
   "forkPathExceptions": [".claude/skills/pr-description.md", ".claude/skills/release-notes.md"]
 }

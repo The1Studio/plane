@@ -168,7 +168,7 @@ jobs:
         # declared non-optional, so `tsc` was perfectly happy — the bug only
         # exists in a construction window the type system does not model.
         # Before this step, `turbo run build --filter=web` lived solely in
-        # deploy-company-main.yml, which runs on push AFTER merge, so this
+        # deploy-master.yml, which runs on push AFTER merge, so this
         # entire class of failure was structurally invisible to PR CI.
         timeout-minutes: 10
 
