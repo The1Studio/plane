@@ -6,16 +6,14 @@
 # (per ci-cd-trigger-design rule §3: path-filtered required-check workflows cause
 # permanent "Expected — Waiting" → merge deadlock).
 
-name: company-main CI
+name: master CI
 
 on:
   push:
     branches:
-      - company-main
       - master
   pull_request:
     branches:
-      - company-main
       - master
 
 concurrency:
