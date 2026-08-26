@@ -13,6 +13,17 @@ on:
   push:
     branches: [staging]
     # Chỉ deploy khi có thay đổi liên quan tới app/build (bỏ qua thay đổi docs thuần)
+    #
+    # GOTCHA — creating `staging` at an ALREADY-PUSHED commit does not trigger
+    # this. A new ref pointing at an existing commit produces a push event with
+    # zero commits, so a path filter has no changed files to match and the run
+    # is skipped silently — no run record, not even a skipped one, and the
+    # workflow never registers. Observed 2026-08-26 when `staging` was branched
+    # from an already-pushed feat/ branch.
+    #
+    # Recovery: push one real commit touching a non-ignored path. The post-rebase
+    # reset in docs/FORK.md step 9 is NOT affected — it force-pushes master's
+    # commits onto staging, which is a normal push with commits.
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
