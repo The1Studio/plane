@@ -32,6 +32,13 @@ jobs:
           # through a default nobody re-reads.
           HEALTH_HTTP_PORT: '80'
           COMPOSE_PROJECT: plane-fork-app
+          # Production uses NEITHER bundled service: DATABASE_URL points at Neon
+          # (pg17.11) and uploads go to Cloudflare R2. Both containers were
+          # nevertheless still running, holding stale pre-migration copies of
+          # real data and ~220MB of RAM. Gating them out stops the containers;
+          # the plane-fork-app_pgdata and _uploads volumes are NOT deleted.
+          LOCAL_DB: '0'
+          LOCAL_STORAGE: '0'
         run: bash deployments/selfhost/deploy.sh
 
       - name: Notify Discord

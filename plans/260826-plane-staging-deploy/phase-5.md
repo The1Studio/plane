@@ -19,7 +19,7 @@ _If the thing this check guards were broken right now, would it go red?_ Two che
 exist specifically because their naive versions would not:
 
 - Probing `http://localhost/` from the server would return 200 **from production** even if the
-  staging stack never started. Every staging health probe below names port 8081 explicitly.
+  staging stack never started. Every staging health probe below names port 81 explicitly.
 - Counting containers proves nothing about volume isolation. The volume check below compares names
   directly, because a staging stack accidentally sharing production's `pgdata` would still show
   the right container count.
@@ -38,7 +38,7 @@ Expect a long first run — all six images build from scratch, though the local 
 with production's builds helps where the commits overlap. The 90-minute timeout is the ceiling.
 
 **Verify:** the run concludes `success`, and its log's `==> health:` line reports `web=200 api=200`
-and names `http://localhost:8081` as the probed base (the Phase 1 change added that).
+and names `http://localhost:81` as the probed base (the Phase 1 change added that).
 
 If it fails, the health-failure branch dumps `migrator api web` logs for the
 `plane-staging-app` project — read those before re-running.
@@ -46,25 +46,21 @@ If it fails, the health-failure branch dumps `migrator api web` logs for the
 ### 2. Staging serves, over both paths
 
 ```bash
-ssh server "curl -s -o /dev/null -w 'local  %{http_code}\n' http://localhost:8081/"
-ssh server "curl -s -o /dev/null -w 'localapi %{http_code}\n' http://localhost:8081/api/instances/"
-curl -s -o /dev/null -w 'public %{http_code}\n' -L https://staging-plane.the1studio.org/
+ssh server "curl -s -o /dev/null -w 'local  %{http_code}\n' http://localhost:81/"
+ssh server "curl -s -o /dev/null -w 'localapi %{http_code}\n' http://localhost:81/api/instances/"
+curl -s -o /dev/null -w 'public %{http_code}\n' -L https://plane-staging.the1studio.org/
 ```
 
-The two `localhost:8081` probes must be `200`. The public one must be an **Access challenge**
-(302, or 403) — not a 200, because resolved decision 7 puts staging behind the same Cloudflare
-Access policy as production. Read the three together:
+All three must be `200`. Production is not behind Cloudflare Access (verified 2026-08-26 — it
+returns 200 anonymously, with Plane's own login as the gate), and staging matches it, so the public
+probe returns Plane's sign-in page rather than a challenge. Read the three together:
 
-| local   | localapi | public          | Meaning                                                              |
-| ------- | -------- | --------------- | -------------------------------------------------------------------- |
-| 200     | 200      | 302/403         | Correct — stack up, route works, Access attached                     |
-| 200     | 200      | 200             | Stack and route fine, **Access policy missing** — fix Phase 4 step 4 |
-| 200     | 200      | 502             | Stack fine, tunnel ingress points at the wrong port                  |
-| 200     | 200      | DNS fail / 1033 | Public hostname was never created                                    |
-| non-200 | —        | —               | The stack itself is down; the route is not the problem               |
-
-Then confirm the app actually serves behind the challenge by loading
-`https://staging-plane.the1studio.org/` in a browser and authenticating.
+| local   | localapi | public          | Meaning                                                       |
+| ------- | -------- | --------------- | ------------------------------------------------------------- |
+| 200     | 200      | 200             | Correct — stack up, tunnel route works                        |
+| 200     | 200      | 502             | Stack fine; the tunnel ingress points at the wrong local port |
+| 200     | 200      | DNS fail / 1033 | The public hostname does not exist                            |
+| non-200 | —        | —               | The stack itself is down; the route is not the problem        |
 
 ### 3. Production is unharmed — the volume-adoption check
 
@@ -105,14 +101,14 @@ volume is shared.
 Port check:
 
 ```bash
-ssh server 'ss -ltnp | grep -E ":(80|8081|8443|8543)\b"'
+ssh server 'ss -ltnp | grep -E ":(80|81|8443|8543)\b"'
 ```
 
 Four distinct listeners, no overlap.
 
 ### 5. Object storage is isolated
 
-Log into `https://staging-plane.the1studio.org`, create a workspace, and attach a file to a work
+Log into `https://plane-staging.the1studio.org`, create a workspace, and attach a file to a work
 item. Then:
 
 ```bash
@@ -188,9 +184,8 @@ test cycles — that recommendation belongs in the README, not in a code change.
 
 Every command above produced its stated expected output, and specifically:
 
-1. `deploy-staging.yml` green, health line reporting port 8081.
-2. `https://staging-plane.the1studio.org/` returns an Access challenge unauthenticated, and
-   serves the staging build once authenticated.
+1. `deploy-staging.yml` green, health line reporting port 81.
+2. `https://plane-staging.the1studio.org/` returns 200 and serves the staging build's sign-in page.
 3. `https://plane.the1studio.org/` → 200, production volumes and container names unchanged, and a
    manual `deploy-master.yml` run still green.
 4. Container-name intersection between the two projects is empty; four distinct port listeners.

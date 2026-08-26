@@ -15,32 +15,52 @@ production, driven by a new `staging` branch through the same GitHub Actions sel
 Every fact below was read from the repo or from the live `server` host over SSH on 2026-08-26.
 Nothing here is recalled or assumed.
 
-| Fact                            | Value                                                                                                                                                      | Source                                                                                   |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| Production branch               | `master`                                                                                                                                                   | `.github/workflows/deploy-master.yml:6`                                                  |
-| Deploy trigger                  | push to `master` (paths-ignore `**/*.md`, `docs/**`) + `workflow_dispatch`                                                                                 | `deploy-master.yml:4-13`                                                                 |
-| Runner                          | `[self-hosted, sv-0]`, org-level runner registered to `github.com/The1Studio`                                                                              | `deploy-master.yml:19`; `server:/home/dietpi/actions-runner/.runner` (`agentName: sv-0`) |
-| Runner count                    | **one** — a single `Runner.Listener` process for `sv-0`                                                                                                    | `server: ps aux \| grep Runner.Listener`                                                 |
-| Deploy script                   | `deployments/selfhost/deploy.sh`, env-driven via `RUN_DIR` + `IMAGE_TAG`                                                                                   | `deploy-master.yml:26-30`                                                                |
-| Prod run dir                    | `/opt/plane-fork-app` (contains `docker-compose.yaml`, `plane.env`, `r2-proxy/`)                                                                           | `server: ls /opt/plane-fork-app`                                                         |
-| Prod compose project            | `plane-fork-app` (implicit, from run-dir basename)                                                                                                         | docker compose default behaviour                                                         |
-| Prod image tag                  | `companymain`, applied to 6 locally-built images                                                                                                           | `deploy.sh:16`                                                                           |
-| Prod host ports                 | HTTP `80`, HTTPS `8443`                                                                                                                                    | `server:/opt/plane-fork-app/plane.env`                                                   |
-| Prod domain                     | `plane.the1studio.org`                                                                                                                                     | `plane.env` `APP_DOMAIN` / `WEB_URL`                                                     |
-| Public exposure                 | `cloudflared tunnel run --token …` (**token-managed** — ingress lives in the Cloudflare dashboard, not on disk; there is no `/etc/cloudflared/config.yml`) | `server: ps aux \| grep cloudflared`; `ls /etc/cloudflared` returns nothing              |
-| Prod object storage             | Cloudflare R2 via worker proxy, `USE_MINIO=0`, bucket `plane-uploads`                                                                                      | `plane.env`                                                                              |
-| Prod database                   | `pgvector/pgvector:pg15`, patched in by `deploy.sh` (`ai_ext` needs the extension)                                                                         | `deploy.sh:57`                                                                           |
-| Host disk                       | 469G total, **256G free** (43% used)                                                                                                                       | `server: df -h /`                                                                        |
-| Host memory                     | 31G total, 8G used, 23G available                                                                                                                          | `server: free -g`                                                                        |
-| Docker footprint                | 105 images / 30.68GB, 336 volumes / 24.19GB, 21.29GB build cache                                                                                           | `server: docker system df`                                                               |
-| `plane-minio` service           | present in the community compose **unconditionally**, no profile gate, **no host port published**                                                          | `deployments/cli/community/docker-compose.yml:207-217`                                   |
-| Proxy host ports                | `${LISTEN_HTTP_PORT:-80}` / `${LISTEN_HTTPS_PORT:-443}`, `mode: host`                                                                                      | same file, `:228-236`                                                                    |
-| CI gate                         | `master-ci.yml`, push + PR on `master` only, deliberately **no** `paths:` filter                                                                           | `master-ci.yml:11-17`                                                                    |
-| Other PR gates                  | `pull-request-build-lint-api.yml`, `…-web-apps.yml`, `copyright-check.yml`, `codeql.yml` — all filter `branches: ["master"]`                               | each file's `on:` block                                                                  |
-| FORK.md already assumes staging | Rebase recipe step 7 reads _"Staging: migrate + smoke"_ against a stack that **does not exist**                                                            | `docs/FORK.md:68-70`                                                                     |
+| Fact                            | Value                                                                                                                                                                                            | Source                                                                                     |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| Production branch               | `master`                                                                                                                                                                                         | `.github/workflows/deploy-master.yml:6`                                                    |
+| Deploy trigger                  | push to `master` (paths-ignore `**/*.md`, `docs/**`) + `workflow_dispatch`                                                                                                                       | `deploy-master.yml:4-13`                                                                   |
+| Runner                          | `[self-hosted, sv-0]`, org-level runner registered to `github.com/The1Studio`                                                                                                                    | `deploy-master.yml:19`; `server:/home/dietpi/actions-runner/.runner` (`agentName: sv-0`)   |
+| Runner count                    | **one** — a single `Runner.Listener` process for `sv-0`                                                                                                                                          | `server: ps aux \| grep Runner.Listener`                                                   |
+| Deploy script                   | `deployments/selfhost/deploy.sh`, env-driven via `RUN_DIR` + `IMAGE_TAG`                                                                                                                         | `deploy-master.yml:26-30`                                                                  |
+| Prod run dir                    | `/opt/plane-fork-app` (contains `docker-compose.yaml`, `plane.env`, `r2-proxy/`)                                                                                                                 | `server: ls /opt/plane-fork-app`                                                           |
+| Prod compose project            | `plane-fork-app` (implicit, from run-dir basename)                                                                                                                                               | docker compose default behaviour                                                           |
+| Prod image tag                  | `companymain`, applied to 6 locally-built images                                                                                                                                                 | `deploy.sh:16`                                                                             |
+| Prod host ports                 | HTTP `80`, HTTPS `8443`                                                                                                                                                                          | `server:/opt/plane-fork-app/plane.env`                                                     |
+| Prod domain                     | `plane.the1studio.org`                                                                                                                                                                           | `plane.env` `APP_DOMAIN` / `WEB_URL`                                                       |
+| Public exposure                 | `cloudflared tunnel run --token …` (**token-managed** — ingress lives in the Cloudflare dashboard, not on disk; there is no `/etc/cloudflared/config.yml`)                                       | `server: ps aux \| grep cloudflared`; `ls /etc/cloudflared` returns nothing                |
+| Prod object storage             | Cloudflare R2 via worker proxy, `USE_MINIO=0`, bucket `plane-uploads`                                                                                                                            | `plane.env`                                                                                |
+| Prod database                   | **Neon** (managed Postgres, server_version **17.11**, 126 tables, extensions `plpgsql,vector`) — NOT the bundled container                                                                       | `docker exec plane-fork-app-api-1` reading `DATABASE_URL` + a Django `show server_version` |
+| Prod bundled db/minio           | **Running but unused** — `plane-db` (pg15, 185MB stale volume, 126 stale tables) and `plane-minio` (43 stale files); ~220MB RAM between them. Upstream compose defines both with no profile gate | `docker ps`, `docker stats`, `docker run --rm -v ...`                                      |
+| DB resolution order             | `settings/common.py:200` — `if DATABASE_URL: ... else: POSTGRES_*`. An `if/else`, so with `DATABASE_URL` set the `PG*` branch never runs; that branch reads `POSTGRES_HOST`, not `PGHOST`        | `apps/api/plane/settings/common.py:200-211`                                                |
+| Host disk                       | 469G total, **256G free** (43% used)                                                                                                                                                             | `server: df -h /`                                                                          |
+| Host memory                     | 31G total, 8G used, 23G available                                                                                                                                                                | `server: free -g`                                                                          |
+| Docker footprint                | 105 images / 30.68GB, 336 volumes / 24.19GB, 21.29GB build cache                                                                                                                                 | `server: docker system df`                                                                 |
+| `plane-minio` service           | present in the community compose **unconditionally**, no profile gate, **no host port published**                                                                                                | `deployments/cli/community/docker-compose.yml:207-217`                                     |
+| Proxy host ports                | `${LISTEN_HTTP_PORT:-80}` / `${LISTEN_HTTPS_PORT:-443}`, `mode: host`                                                                                                                            | same file, `:228-236`                                                                      |
+| CI gate                         | `master-ci.yml`, push + PR on `master` only, deliberately **no** `paths:` filter                                                                                                                 | `master-ci.yml:11-17`                                                                      |
+| Other PR gates                  | `pull-request-build-lint-api.yml`, `…-web-apps.yml`, `copyright-check.yml`, `codeql.yml` — all filter `branches: ["master"]`                                                                     | each file's `on:` block                                                                    |
+| FORK.md already assumes staging | Rebase recipe step 7 reads _"Staging: migrate + smoke"_ against a stack that **does not exist**                                                                                                  | `docs/FORK.md:68-70`                                                                       |
 
-**Free host ports** (probed live with `ss -ltn "sport = :$p"`): `8081`, `8100`, `8180`, `9080`,
+**Free host ports** (probed live with `ss -ltn "sport = :$p"`): `81`, `8100`, `8180`, `9080`,
 `8444`, `8543` are free. `8080`, `8090`, `9443` are **taken**.
+
+### Correction — production's backing services (found 2026-08-26, mid-implementation)
+
+An earlier revision of this plan stated production's database was its own
+`pgvector/pgvector:pg15` container. **That was wrong.** Production's `DATABASE_URL` points at
+**Neon** (pg17.11); the bundled `plane-db` container holds only a stale pre-Neon copy and nothing
+reads it. The same is true of `plane-minio` against Cloudflare R2.
+
+Three things followed from the correction:
+
+1. `clone-prod-db-to-staging.sh` originally dumped the production compose project's `plane-db`
+   container — i.e. the stale copy. It would have produced a plausible, complete-looking 126-table
+   dump of outdated data, restored it, run the migrator, and printed "clone complete" while never
+   touching the real database. Now it reads `DATABASE_URL` from production's `plane.env` and dumps
+   Neon, and refuses outright if that URL ever points back at `plane-db`.
+2. Staging was pinned to pg15 against a pg17.11 production, which defeats the migration-rehearsal
+   argument that justified the clone feature at all. Staging now pins `PG_IMAGE=pgvector/pgvector:pg17`.
+3. The two unused production containers are now gated off (`LOCAL_DB=0`, `LOCAL_STORAGE=0`).
 
 ### Prior-art gate
 
@@ -69,16 +89,16 @@ Searched across `.github/workflows/`, `deployments/`, `docs/`, and the repo root
 
 These were decided with the user before this plan was written. They are facts, not options.
 
-| #   | Decision                       | Resolution                                                                                                                                                                    |
-| --- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Branch model                   | **Integration branch.** Features merge into `staging`; `staging` merges up into `master`.                                                                                     |
-| 2   | Post-rebase policy             | **Reset staging to master, re-merge open features.** Staging's merge history is disposable by design.                                                                         |
-| 3   | Exposure                       | **New Cloudflare tunnel hostname** — `staging-plane.the1studio.org` → `http://localhost:8081`.                                                                                |
-| 4   | Staging data                   | **Fresh empty DB**, plus a documented on-demand script to clone production when a migration rehearsal needs real rows.                                                        |
-| 5   | Object storage                 | **Local MinIO inside the staging stack** (`USE_MINIO=1`). Fully isolated from prod's R2 bucket.                                                                               |
-| 6   | Discord notifications          | **Same thread as production** (`1524317964160204800`). The `ENV_LABEL` / `Environment` embed field distinguishes them.                                                        |
-| 7   | Access control                 | **Cloudflare Access, same policy as production.** Staging runs real fork code against a real database, so it is not a lower-value target than production.                     |
-| 8   | Branch protection on `staging` | **None.** The branch is disposable and gets force-pushed after every upstream rebase; protection would fight that. PRs into `staging` still run all four CI gates regardless. |
+| #   | Decision                       | Resolution                                                                                                                                                                                                                                                                                                                                          |
+| --- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Branch model                   | **Integration branch.** Features merge into `staging`; `staging` merges up into `master`.                                                                                                                                                                                                                                                           |
+| 2   | Post-rebase policy             | **Reset staging to master, re-merge open features.** Staging's merge history is disposable by design.                                                                                                                                                                                                                                               |
+| 3   | Exposure                       | **New Cloudflare tunnel hostname** — `plane-staging.the1studio.org` → `http://localhost:81`.                                                                                                                                                                                                                                                        |
+| 4   | Staging data                   | **Fresh empty DB**, plus a documented on-demand script to clone production when a migration rehearsal needs real rows.                                                                                                                                                                                                                              |
+| 5   | Object storage                 | **Local MinIO inside the staging stack** (`USE_MINIO=1`). Fully isolated from prod's R2 bucket.                                                                                                                                                                                                                                                     |
+| 6   | Discord notifications          | **Same thread as production** (`1524317964160204800`). The `ENV_LABEL` / `Environment` embed field distinguishes them.                                                                                                                                                                                                                              |
+| 7   | Access control                 | **None — matching production.** Verified 2026-08-26: `https://plane.the1studio.org/` returns 200 to an anonymous request with no CF-Access headers, so production has no Access policy and Plane's own login is the only gate. Staging matches. (Originally taken as "same policy as production" on the false premise that production _was_ gated.) |
+| 8   | Branch protection on `staging` | **None.** The branch is disposable and gets force-pushed after every upstream rebase; protection would fight that. PRs into `staging` still run all four CI gates regardless.                                                                                                                                                                       |
 
 ### Concern on record — decision 1 vs. the rebase workflow
 
@@ -105,17 +125,17 @@ mandatory post-rebase step, not a suggestion.
                     │        │     RUN_DIR=/opt/plane-fork-app   IMAGE_TAG=companymain             │
                     │        │     HEALTH_HTTP_PORT=80                                             │
                     │        │        └─► compose project `plane-fork-app`                         │
-                    │        │              :80 / :8443 · R2 uploads · pgvector                    │
+                    │        │              :80 / :8443 · R2 uploads · Neon pg17.11              │
                     │        │                                                                     │
  staging ──push───► │        └─► deploy-staging.yml            ◄── NEW                             │
                     │              RUN_DIR=/opt/plane-staging-app  IMAGE_TAG=staging               │
-                    │              HEALTH_HTTP_PORT=8081                                           │
+                    │              HEALTH_HTTP_PORT=81                                           │
                     │                 └─► compose project `plane-staging-app`                      │
-                    │                       :8081 / :8543 · local MinIO · own pgvector             │
+                    │                       :81 / :8543 · MinIO · bundled pg17                   │
                     │                                                                              │
                     │   cloudflared (token-managed tunnel)                                         │
                     │     plane.the1studio.org          ──► localhost:80                           │
-                    │     staging-plane.the1studio.org  ──► localhost:8081   ◄── NEW (dashboard)   │
+                    │     plane-staging.the1studio.org  ──► localhost:81   ◄── NEW (dashboard)   │
                     └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -132,12 +152,12 @@ with independently-generated secrets, and separate object storage.
 | Run dir          | `/opt/plane-fork-app`  | `/opt/plane-staging-app`                                                                                                             |
 | Compose project  | `plane-fork-app`       | `plane-staging-app`                                                                                                                  |
 | Image tag        | `companymain`          | `staging`                                                                                                                            |
-| HTTP port        | `80`                   | `8081`                                                                                                                               |
+| HTTP port        | `80`                   | `81`                                                                                                                                 |
 | HTTPS port       | `8443`                 | `8543`                                                                                                                               |
-| Domain           | `plane.the1studio.org` | `staging-plane.the1studio.org`                                                                                                       |
+| Domain           | `plane.the1studio.org` | `plane-staging.the1studio.org`                                                                                                       |
 | `USE_MINIO`      | `0` (R2)               | `1` (local MinIO)                                                                                                                    |
 | `DEBUG`          | `0`                    | `0` (staging mirrors prod; do **not** enable — it changes Django error handling and would mask the failures staging exists to catch) |
-| Health-check URL | `http://localhost/`    | `http://localhost:8081/`                                                                                                             |
+| Health-check URL | `http://localhost/`    | `http://localhost:81/`                                                                                                               |
 
 ---
 
@@ -209,7 +229,7 @@ explicitly before the change is allowed to merge.
 | Memory exhaustion — a second full stack (12 containers) alongside production plus build peaks                                               | 2                | 4            | 8      | 23G currently available against a measured 8G production footprint. Staging pins every `*_REPLICAS=1` and `GUNICORN_WORKERS=1`. Phase 5 records `free -g` and `docker stats` post-deploy as the baseline; if headroom drops below ~6G, stop the staging stack between test cycles.                         |
 | Staging writes into production's R2 bucket (`plane-uploads`) and destroys real uploads                                                      | 2                | 5            | **10** | `USE_MINIO=1` and **no** `AWS_S3_*` R2 credentials in the staging `plane.env` at all — the absent credential is the real guard, not the flag. Phase 5 asserts an upload lands in the staging MinIO volume and that `plane-uploads` object count is unchanged.                                              |
 | The DB clone script runs against the wrong direction and overwrites production                                                              | 1                | 5            | 5      | Script is one-directional by construction (prod is opened read-only via `pg_dump`, never `psql`), hard-codes the staging project as the only restore target, refuses unless `--yes-wipe-staging` is passed, and aborts if the target project name does not literally equal `plane-staging-app`.            |
-| Cloudflare ingress cannot be scripted (token-managed tunnel) so the hostname silently never gets added                                      | 3                | 3            | 9      | Phase 4 makes it an explicit operator checklist item with a `curl` verification, and Phase 5's smoke test fails loudly if `staging-plane.the1studio.org` does not resolve to the staging stack.                                                                                                            |
+| Cloudflare ingress cannot be scripted (token-managed tunnel) so the hostname silently never gets added                                      | 3                | 3            | 9      | Phase 4 makes it an explicit operator checklist item with a `curl` verification, and Phase 5's smoke test fails loudly if `plane-staging.the1studio.org` does not resolve to the staging stack.                                                                                                            |
 | Widening `master-ci.yml` to `staging` creates a required-check deadlock                                                                     | 2                | 3            | 6      | `master-ci.yml` carries no `paths:` filter and must not gain one (`ci-cd-trigger-design` §3). Phase 2 only adds branch names to existing `on:` blocks. If `staging` is given branch protection, the same checks are already running on it.                                                                 |
 | Disk pressure from a second set of images + a shared build cache                                                                            | 2                | 3            | 6      | 256G free against a 30.68GB image footprint; staging adds ~15GB. `docker builder prune --keep-storage=20GB` already runs per deploy and is shared. Phase 5 records `docker system df` as a baseline.                                                                                                       |
 | Post-rebase `staging` reset is forgotten, leaving staging permanently diverged                                                              | 3                | 3            | 9      | Phase 6 writes the reset into `docs/FORK.md` as a numbered, mandatory step **inside** the rebase recipe (not an appendix), and into `.claude/rules/plane-fork-discipline.md` so it auto-loads every session.                                                                                               |
@@ -225,8 +245,7 @@ The whole plan is done when all of the following hold, each verified by running 
 by inspection:
 
 1. `git push origin staging` triggers `deploy-staging.yml`, which completes green on `sv-0`.
-2. `https://staging-plane.the1studio.org/` is Access-gated and serves the staging build once
-   authenticated.
+2. `https://plane-staging.the1studio.org/` returns 200 and serves the staging build.
 3. `https://plane.the1studio.org/` still returns 200, and `docker volume ls | grep plane-fork-app`
    lists the same volumes with the same names as before Phase 1.
 4. The two stacks share no container, no volume, no port, and no credential —

@@ -7,18 +7,19 @@ governance SSOT.
 
 ## The two environments
 
-|                   | Production                            | Staging                                    |
-| ----------------- | ------------------------------------- | ------------------------------------------ |
-| Branch            | `master`                              | `staging`                                  |
-| Workflow          | `.github/workflows/deploy-master.yml` | `.github/workflows/deploy-staging.yml`     |
-| Run dir           | `/opt/plane-fork-app`                 | `/opt/plane-staging-app`                   |
-| Compose project   | `plane-fork-app`                      | `plane-staging-app`                        |
-| Image tag         | `companymain`                         | `staging`                                  |
-| HTTP / HTTPS port | `80` / `8443`                         | `8081` / `8543`                            |
-| Domain            | `plane.the1studio.org`                | `staging-plane.the1studio.org`             |
-| Uploads           | Cloudflare R2 via worker proxy        | local MinIO container                      |
-| Database          | own `pgvector/pgvector:pg15`          | own `pgvector/pgvector:pg15`, starts empty |
-| Concurrency group | `deploy-master`                       | `deploy-staging`                           |
+|                   | Production                                  | Staging                                        |
+| ----------------- | ------------------------------------------- | ---------------------------------------------- |
+| Branch            | `master`                                    | `staging`                                      |
+| Workflow          | `.github/workflows/deploy-master.yml`       | `.github/workflows/deploy-staging.yml`         |
+| Run dir           | `/opt/plane-fork-app`                       | `/opt/plane-staging-app`                       |
+| Compose project   | `plane-fork-app`                            | `plane-staging-app`                            |
+| Image tag         | `companymain`                               | `staging`                                      |
+| HTTP / HTTPS port | `80` / `8443`                               | `81` / `8543`                                  |
+| Domain            | `plane.the1studio.org`                      | `plane-staging.the1studio.org`                 |
+| Uploads           | Cloudflare R2 via worker proxy              | bundled MinIO container                        |
+| Database          | **Neon** (managed, pg17.11)                 | bundled `pgvector/pgvector:pg17`, starts empty |
+| Bundled db/minio  | gated OFF (`LOCAL_DB=0`, `LOCAL_STORAGE=0`) | both ON                                        |
+| Concurrency group | `deploy-master`                             | `deploy-staging`                               |
 
 The two share **nothing**: separate run directory, compose project (so separate container names
 _and_ separate named volumes), image tags, host ports, `plane.env` with independently generated
@@ -119,7 +120,7 @@ if you still need it (`docker compose -p plane-staging-app exec -T api python ma
 The health check reports the base URL it probed:
 
 ```
-==> health: base=http://localhost:8081 web=502 api=200
+==> health: base=http://localhost:81 web=502 api=200
 ```
 
 If that base is not the port you expected, the workflow's `HEALTH_HTTP_PORT` and the stack's

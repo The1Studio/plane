@@ -100,7 +100,7 @@ accepted (see the plan's risk table) and needs no workaround here.
 env:
   RUN_DIR: /opt/plane-staging-app
   IMAGE_TAG: staging
-  HEALTH_HTTP_PORT: "8081"
+  HEALTH_HTTP_PORT: "81"
   COMPOSE_PROJECT: plane-staging-app
 run: bash deployments/selfhost/deploy.sh
 ```
@@ -113,7 +113,7 @@ project it drives without deriving it from a path.
 
 ```yaml
 ENV_LABEL: staging
-SITE_URL: https://staging-plane.the1studio.org
+SITE_URL: https://plane-staging.the1studio.org
 DISCORD_THREAD_ID: "1524317964160204800"
 ```
 

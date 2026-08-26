@@ -51,8 +51,15 @@ jobs:
         env:
           RUN_DIR: /opt/plane-staging-app
           IMAGE_TAG: staging
-          HEALTH_HTTP_PORT: '8081'
+          HEALTH_HTTP_PORT: '81'
           COMPOSE_PROJECT: plane-staging-app
+          # Staging DOES use the bundled services — that is the whole point of
+          # its isolation. pg17 matches production's Neon server version
+          # (17.11), so a migration rehearsed here meets the same major version
+          # it will meet in production.
+          LOCAL_DB: '1'
+          LOCAL_STORAGE: '1'
+          PG_IMAGE: pgvector/pgvector:pg17
         run: bash deployments/selfhost/deploy.sh
 
       - name: Notify Discord
@@ -62,7 +69,7 @@ jobs:
           # Same thread as production; ENV_LABEL is what distinguishes them.
           DISCORD_THREAD_ID: '1524317964160204800'
           ENV_LABEL: staging
-          SITE_URL: https://staging-plane.the1studio.org
+          SITE_URL: https://plane-staging.the1studio.org
           DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
           GH_REPO: ${{ github.repository }}
           GH_REF: ${{ github.event.inputs.ref || github.ref_name }}

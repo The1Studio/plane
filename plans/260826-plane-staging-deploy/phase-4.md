@@ -54,7 +54,7 @@ structurally impossible for staging to write into production's `plane-uploads` b
 ```bash
 ssh server 'grep -c . /opt/plane-staging-app/plane.env'                      # non-zero
 ssh server 'grep -E "^(APP_DOMAIN|LISTEN_HTTP_PORT|USE_MINIO|APP_RELEASE)=" /opt/plane-staging-app/plane.env'
-# expect: staging-plane.the1studio.org / 8081 / 1 / staging
+# expect: plane-staging.the1studio.org / 81 / 1 / staging
 ssh server 'grep -iE "r2|workers\.dev|plane-uploads" /opt/plane-staging-app/plane.env'   # must be EMPTY
 ```
 
@@ -75,7 +75,7 @@ Every line must read `ok:`. (This compares hashes, so no secret value is printed
 They were verified free on 2026-08-26, but something may have claimed them since:
 
 ```bash
-ssh server 'for p in 8081 8543; do ss -ltn "sport = :$p" | grep -q LISTEN && echo "$p TAKEN" || echo "$p free"; done'
+ssh server 'for p in 81 8543; do ss -ltn "sport = :$p" | grep -q LISTEN && echo "$p TAKEN" || echo "$p free"; done'
 ```
 
 Both must read `free`. If either is taken, pick from the other verified-free ports (`8100`,
@@ -90,27 +90,29 @@ In the Cloudflare Zero Trust dashboard → Networks → Tunnels → the tunnel c
 
 - **Subdomain:** `staging-plane`
 - **Domain:** `the1studio.org`
-- **Service:** `HTTP` → `localhost:8081`
+- **Service:** `HTTP` → `localhost:81`
 
 Do not use HTTPS as the service type: Caddy inside the staging proxy listens plain HTTP on the
 container's port 80 (`SITE_ADDRESS=:80`), exactly as production does. Cloudflare terminates TLS at
 its edge.
 
-**Then apply the same Cloudflare Access policy production uses** (resolved decision 7). This is a
-required step, not a nicety: staging runs real fork code against a real database and, after any
-data clone, potentially real rows — it is not a lower-value target than production.
+**No Cloudflare Access policy** — resolved decision 7, corrected. Production has none: verified
+2026-08-26, `https://plane.the1studio.org/` returns 200 to an anonymous request with no CF-Access
+headers, so Plane's own login is the only gate there. Staging matches it. Do not attach a policy
+here unless you also decide to change production, which is out of scope for this work.
 
-**Verify both facts with one probe**, once Phase 5 has the stack up:
+**Verify the route with one probe:**
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' -L https://staging-plane.the1studio.org/
+curl -s -o /dev/null -w '%{http_code}\n' -L https://plane-staging.the1studio.org/
 ```
 
-Expected: an Access login challenge (302, or 403 on the JSON path) — that single result proves the
-hostname resolves through the tunnel **and** that the policy is attached. A **200 serving a Plane
-page** means the ingress works but Access is missing. A **502** means the ingress reached the
-tunnel but nothing is listening on 8081 (before Phase 5, this is the correct result). A **1033 or
-DNS failure** means the public hostname was never created.
+| Result                 | Meaning                                                                                 |
+| ---------------------- | --------------------------------------------------------------------------------------- |
+| **502**                | Correct **before** Phase 5 — the tunnel reaches the server, nothing listening on 81 yet |
+| **200**                | Correct **after** Phase 5 — Plane's own sign-in page, same as production                |
+| **1033 / DNS failure** | The public hostname was never created                                                   |
+| **404 / wrong app**    | The ingress rule points at the wrong local port                                         |
 
 ### 5. Create the `staging` branch
 
@@ -157,11 +159,11 @@ If `protected` reports `true`, an organization ruleset is matching the branch �
 
 1. `/opt/plane-staging-app/plane.env` exists, is runner-writable, contains the staging values, and
    shares no secret with production (verified by the hash comparison in step 2).
-2. Ports 8081 and 8543 are free immediately before the first deploy.
-3. The Cloudflare public hostname `staging-plane.the1studio.org` exists and points at
-   `http://localhost:8081`.
+2. Ports 81 and 8543 are free immediately before the first deploy.
+3. The Cloudflare public hostname `plane-staging.the1studio.org` exists and points at
+   `http://localhost:81`.
 4. Branch `staging` exists on the origin remote.
-5. `staging-plane.the1studio.org` is Access-gated (unauthenticated request is challenged), and
+5. `plane-staging.the1studio.org` routes through the tunnel (502 before deploy, 200 after), and
    `gh api repos/The1Studio/plane/branches/staging --jq .protected` returns `false`.
 6. **Production is untouched:** `curl -s -o /dev/null -w '%{http_code}' https://plane.the1studio.org/`
    still returns 200, and `ssh server 'docker volume ls --format "{{.Name}}" | grep -c ^plane-fork-app_'`

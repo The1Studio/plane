@@ -14,7 +14,7 @@ Operational tools: `plane-rebase`, `plane-isolation-audit`, `plane-scaffold-feat
 ## Branch model
 
 - `master` is the production branch — a merge to it deploys `plane.the1studio.org`.
-- `staging` is the integration branch — a push to it deploys `staging-plane.the1studio.org`.
+- `staging` is the integration branch — a push to it deploys `plane-staging.the1studio.org`.
   Features merge to `staging` first, then promote to `master` by PR.
 - **`staging`'s history is disposable and it is NEVER rebased.** After any
   `git rebase <upstream-tag>` on `master`, hard-reset `staging` to `master` and re-merge open

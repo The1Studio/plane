@@ -11,7 +11,7 @@ This document is the single source of truth for how The1Studio governs its priva
 | Branch                | Purpose                                                                                    | Derived from                        |
 | --------------------- | ------------------------------------------------------------------------------------------ | ----------------------------------- |
 | `master`              | Production branch — deploys to `plane.the1studio.org`                                      | upstream **tags** (e.g. `v1.3.1`)   |
-| `staging`             | Integration branch — deploys to `staging-plane.the1studio.org`. **History is disposable.** | reset from `master` (never rebased) |
+| `staging`             | Integration branch — deploys to `plane-staging.the1studio.org`. **History is disposable.** | reset from `master` (never rebased) |
 | `sp1/clickup-migrate` | One-time ClickUp → Plane ETL                                                               | branches from `master`              |
 | `sp2/ai-ext`          | AI feature suite (BGE-M3 embeddings, Claude tooling)                                       | branches from `master`              |
 
@@ -79,7 +79,7 @@ pnpm check
 #    The workflow_dispatch `ref` input exists for exactly this — it deploys any ref to the
 #    staging stack WITHOUT force-pushing `staging` first.
 gh workflow run deploy-staging.yml -f ref=master
-#    Then smoke https://staging-plane.the1studio.org
+#    Then smoke https://plane-staging.the1studio.org
 #    Runbook: deployments/selfhost/README.md
 
 # 8. Tag the result

@@ -40,7 +40,7 @@ The table currently lists `master`, `sp1/clickup-migrate`, and `sp2/ai-ext`. Add
 
 | Branch    | Purpose                                                                                                                                                                                           | Rebases onto                       |
 | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| `staging` | Integration branch — features merge here first, then promote to `master`. Deployed to `staging-plane.the1studio.org`. **Disposable history**: hard-reset to `master` after every upstream rebase. | _never rebased_ — reset, see below |
+| `staging` | Integration branch — features merge here first, then promote to `master`. Deployed to `plane-staging.the1studio.org`. **Disposable history**: hard-reset to `master` after every upstream rebase. | _never rebased_ — reset, see below |
 
 Then amend the prose beneath the table. It currently says feature branches "are never merged
 directly to `master` — instead, changes ride the rebase cycle." That is now only half true and must
@@ -58,7 +58,7 @@ therefore the release action.
 ```
 # 7. Staging: deploy the rebase candidate and smoke it
 #    gh workflow run deploy-staging.yml -f ref=<your-rebase-branch>
-#    Then run the smoke checklist against https://staging-plane.the1studio.org
+#    Then run the smoke checklist against https://plane-staging.the1studio.org
 ```
 
 This is what the `workflow_dispatch` `ref` input from Phase 2 is _for_: validating a rebase
@@ -107,7 +107,7 @@ from being forgotten mid-rebase. Keep the additions short — it is a summary th
 
 Add to the top matter, alongside the existing branch guidance:
 
-- `staging` is the integration branch; it deploys to `staging-plane.the1studio.org` on every push.
+- `staging` is the integration branch; it deploys to `plane-staging.the1studio.org` on every push.
 - Features merge to `staging`, then promote to `master` by PR. `master` remains the only
   production branch.
 - **After any `git rebase <upstream-tag>` on `master`, `staging` MUST be hard-reset to `master`

@@ -23,7 +23,7 @@ Touch nothing else. Workflow files belong to Phase 2, env templates to Phase 3.
 seam is half-built. Two things are still hardcoded to production and would break a second stack:
 
 1. **The health check probes `http://localhost/`** — port 80, production's proxy. A staging stack
-   on port 8081 would have its health check silently probe _production_ and pass, reporting a green
+   on port 81 would have its health check silently probe _production_ and pass, reporting a green
    deploy for a staging stack that never came up. This is the failure this phase primarily exists
    to prevent: the check would not go red when the thing it guards is broken.
 2. **The compose project name is implicit**, derived by docker compose from the run directory's
