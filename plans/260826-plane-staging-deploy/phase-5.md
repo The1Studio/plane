@@ -201,3 +201,5 @@ Every command above produced its stated expected output, and specifically:
 - Running an actual production→staging data clone.
 - Load or performance testing either stack.
 - Documentation updates — Phase 6.
+
+<!-- gate-check: temporary, PR closed without merging -->
