@@ -1,4 +1,9 @@
 /**
+ * Copyright (c) 2023-present Plane Software, Inc. and contributors
+ * SPDX-License-Identifier: AGPL-3.0-only
+ * See the LICENSE file for details.
+ */
+/**
  * The1Studio fork (work-item creation defaults).
  *
  * The values the create surfaces prefill so a user SEES the defaults and can

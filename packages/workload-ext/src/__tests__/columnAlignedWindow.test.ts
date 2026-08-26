@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) 2023-present Plane Software, Inc. and contributors
+ * SPDX-License-Identifier: AGPL-3.0-only
+ * See the LICENSE file for details.
+ */
 // Tests for the timeline's PACK WINDOW — the visible span snapped outward to
 // whole columns of the current zoom (`columnAlignedWindow` in ../dateRange).
 //

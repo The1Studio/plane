@@ -1,4 +1,9 @@
 /**
+ * Copyright (c) 2023-present Plane Software, Inc. and contributors
+ * SPDX-License-Identifier: AGPL-3.0-only
+ * See the LICENSE file for details.
+ */
+/**
  * Range algebra + response merging for the timeline's incremental loading.
  *
  * The timeline has no date-range picker: the chart's viewport IS the range, and

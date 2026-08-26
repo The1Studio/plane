@@ -1,4 +1,9 @@
 /**
+ * Copyright (c) 2023-present Plane Software, Inc. and contributors
+ * SPDX-License-Identifier: AGPL-3.0-only
+ * See the LICENSE file for details.
+ */
+/**
  * Will a task bar's hours estimate fit inside the bar, and at what size?
  *
  * This module owns a guarantee that used to live inside a single constant.

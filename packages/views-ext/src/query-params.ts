@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) 2023-present Plane Software, Inc. and contributors
+ * SPDX-License-Identifier: AGPL-3.0-only
+ * See the LICENSE file for details.
+ */
 // The1Studio fork (views-layouts, profile-layouts)
 //
 // Layout-aware query-param builders for two workspace-level, cross-project issue stores: the

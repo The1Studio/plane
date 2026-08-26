@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) 2023-present Plane Software, Inc. and contributors
+ * SPDX-License-Identifier: AGPL-3.0-only
+ * See the LICENSE file for details.
+ */
 // Tests for the unscheduled-task selector and its anchor rule
 // (plans/260824-workload-unscheduled-in-today/phase-3-selector-and-blocks.md).
 //
