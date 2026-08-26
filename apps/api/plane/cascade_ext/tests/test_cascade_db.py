@@ -184,7 +184,7 @@ class TestCollectDescendants(TransactionTestCase):
         st_started = _state(ws, proj, "started")
         st_cancelled = _state(ws, proj, "cancelled")
         root = _issue(ws, proj, user, state=st_started)
-        child = _issue(ws, proj, user, state=st_started, parent=root)
+        _issue(ws, proj, user, state=st_started, parent=root)
 
         result = collect_descendants(root_issue=root, target_group="cancelled", actor_id=user.id)
 
@@ -260,7 +260,7 @@ class TestCollectDescendants(TransactionTestCase):
         # deliberately no _pmember(ws, other_proj, user) — actor has no membership there.
         st_started = _state(ws, proj, "started")
         root = _issue(ws, proj, user, state=st_started)
-        child = _issue(ws, other_proj, user, state=_state(ws, other_proj, "started"), parent=root)
+        _issue(ws, other_proj, user, state=_state(ws, other_proj, "started"), parent=root)
 
         result = collect_descendants(root_issue=root, target_group="completed", actor_id=user.id)
         node = result["descendants"][0]
@@ -273,7 +273,7 @@ class TestCollectDescendants(TransactionTestCase):
         st_started = _state(ws, proj, "started")
         st_shipped = _state(ws, proj, "completed", name="Shipped")  # renamed from "Done"
         root = _issue(ws, proj, user, state=st_started)
-        child = _issue(ws, proj, user, state=st_started, parent=root)
+        _issue(ws, proj, user, state=st_started, parent=root)
 
         result = collect_descendants(root_issue=root, target_group="completed", actor_id=user.id)
 

@@ -254,7 +254,9 @@ class MappingCache:
 # Project + State + Label + Module writers
 # ─────────────────────────────────────────────────────────────────────
 
-def write_project(run, workspace, clickup_folder_or_list: dict, user_cache: UserCache, dry_run: bool) -> Optional[object]:
+def write_project(
+    run, workspace, clickup_folder_or_list: dict, user_cache: UserCache, dry_run: bool
+) -> Optional[object]:
     """Write a single Project.
 
     C1 fix: removed created_by_id from defaults; post-save .save(created_by_id=...)

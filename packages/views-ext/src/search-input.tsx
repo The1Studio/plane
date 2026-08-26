@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) 2023-present Plane Software, Inc. and contributors
+ * SPDX-License-Identifier: AGPL-3.0-only
+ * See the LICENSE file for details.
+ */
 // The1Studio fork (views-search). Deliberately parallel to core's `PageSearchInput`
 // (`apps/web/core/components/pages/list/search-input.tsx`), which implements the same interaction.
 // It is not reused because a file under `packages/` cannot import from `apps/web/core/` — that

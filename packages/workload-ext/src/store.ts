@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) 2023-present Plane Software, Inc. and contributors
+ * SPDX-License-Identifier: AGPL-3.0-only
+ * See the LICENSE file for details.
+ */
 import { action, computed, makeObservable, observable, runInAction } from "mobx";
 import { MAX_SPAN_DAYS, daysBetween, shiftDate } from "./dateRange";
 import { mergeWorkloadResponses, normalizeRanges, snapRangeToPeriods, subtractRanges } from "./merge";

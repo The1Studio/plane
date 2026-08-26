@@ -30,10 +30,27 @@ except Exception:  # pragma: no cover
 ENDPOINT = "/api/views-ext/workspaces/{slug}/issues/"
 
 
+# Random fixture tokens must contain NO DIGITS.
+#
+# `search_issues` matches on `name icontains`, whole-integer `sequence_id`, AND
+# `project__identifier icontains`. SearchTests searches for numeric terms ("79",
+# "PLANE-79"), so a digit anywhere in a generated project identifier or issue
+# name can match rows the test never intended — e.g. an identifier of "A79FC"
+# makes EVERY issue in that project match a search for "79", and the assertion
+# fails with extra ids. That is a ~1.6% flake per run, which is exactly often
+# enough to look like an unrelated infra problem. Keep these alphabetic.
+_NO_DIGITS = str.maketrans("0123456789", "ghijklmnop")
+
+
+def _tok(n: int) -> str:
+    """A digit-free random token of length `n` (see the note above)."""
+    return uuid.uuid4().hex[:n].translate(_NO_DIGITS)
+
+
 def _user(email=None):
     from plane.db.models import User
 
-    uid = uuid.uuid4().hex[:8]
+    uid = _tok(8)
     email = email or f"u-{uid}@test.invalid"
     return User.objects.create_user(username=f"user_{uid}", email=email, password="x")
 
@@ -41,7 +58,7 @@ def _user(email=None):
 def _ws(slug=None, owner=None):
     from plane.db.models import Workspace
 
-    slug = slug or f"ws-{uuid.uuid4().hex[:8]}"
+    slug = slug or f"ws-{_tok(8)}"
     owner = owner or _user()
     return Workspace.objects.create(name=slug, slug=slug, logo="", owner=owner)
 
@@ -57,8 +74,8 @@ def _project(ws, guest_view_all_features=False, identifier=None):
 
     return Project.objects.create(
         workspace=ws,
-        name=f"p-{uuid.uuid4().hex[:6]}",
-        identifier=identifier or uuid.uuid4().hex[:5].upper(),
+        name=f"p-{_tok(6)}",
+        identifier=identifier or _tok(5).upper(),
         guest_view_all_features=guest_view_all_features,
     )
 
@@ -75,7 +92,7 @@ def _state(ws, proj, group):
     return State.objects.create(
         workspace=ws,
         project=proj,
-        name=f"{group}-{uuid.uuid4().hex[:4]}",
+        name=f"{group}-{_tok(4)}",
         color="#fff",
         group=group,
     )
@@ -98,7 +115,7 @@ def _issue(ws, proj, state, created_by, priority="none", target=None, sequence_i
     issue = Issue(
         workspace=ws,
         project=proj,
-        name=name or f"i-{uuid.uuid4().hex[:6]}",
+        name=name or f"i-{_tok(6)}",
         state=state,
         priority=priority,
         target_date=target,

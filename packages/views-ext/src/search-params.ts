@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) 2023-present Plane Software, Inc. and contributors
+ * SPDX-License-Identifier: AGPL-3.0-only
+ * See the LICENSE file for details.
+ */
 // The1Studio fork (views-search)
 //
 // Resolves B1 (plan.md): `search` is not a member of upstream's sealed `TIssueParams`

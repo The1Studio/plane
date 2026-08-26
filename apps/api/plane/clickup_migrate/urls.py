@@ -7,6 +7,5 @@
 # This file is provided so the app is self-contained per docs/FORK.md
 # and the URL include does not error if mounted.
 
-from django.urls import path
 
 urlpatterns: list = []

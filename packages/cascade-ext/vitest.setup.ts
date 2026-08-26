@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) 2023-present Plane Software, Inc. and contributors
+ * SPDX-License-Identifier: AGPL-3.0-only
+ * See the LICENSE file for details.
+ */
 import { cleanup } from "@testing-library/react";
 import { afterEach } from "vitest";
 // Namespace-imported (not a bare `import "...";`) so oxlint's `no-unassigned-import` doesn't flag

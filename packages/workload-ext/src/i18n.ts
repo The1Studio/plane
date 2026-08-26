@@ -1,4 +1,9 @@
 /**
+ * Copyright (c) 2023-present Plane Software, Inc. and contributors
+ * SPDX-License-Identifier: AGPL-3.0-only
+ * See the LICENSE file for details.
+ */
+/**
  * Fork-owned i18n for the SP2 workload feature.
  *
  * The core `@plane/i18n` package must NOT be edited in place (docs/FORK.md —

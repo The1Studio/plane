@@ -12,7 +12,6 @@ import hashlib
 import html
 import json
 import logging
-import os
 
 from celery import shared_task
 from django.db import transaction
@@ -131,9 +130,7 @@ def _run_triage(workspace_id: str, project_id: str, source_text: str, created_by
     # Late imports to avoid Django app-loading issues at module level.
     from plane.db.models import Intake, Issue, Label, ProjectMember, State
     from plane.db.models.state import StateGroup
-    from plane.db.models.intake import SourceType
     from plane.bgtasks.issue_activities_task import issue_activity
-    from plane.utils.host import base_host
 
     # ------------------------------------------------------------------
     # Build grounding enums (≤50 each, ids only — no names to model).
@@ -153,7 +150,7 @@ def _run_triage(workspace_id: str, project_id: str, source_text: str, created_by
 
     # Convert UUIDs to strings for JSON serialisability.
     str_states = [str(s) for s in candidate_states]
-    str_labels = [str(l) for l in candidate_labels]
+    str_labels = [str(lbl) for lbl in candidate_labels]
     str_members = [str(m) for m in candidate_members]
 
     user_message = (

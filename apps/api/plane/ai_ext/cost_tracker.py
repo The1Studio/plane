@@ -8,10 +8,8 @@
 
 import calendar
 import logging
-import time
 from datetime import datetime, timezone
 
-from django.conf import settings
 
 from plane.settings.redis import redis_instance
 

@@ -6,7 +6,6 @@
 # T1: submit_digest_batch — gather content, submit Anthropic Batch, store batch_id + receivers.
 # T2: poll_digest_batches — beat poller (~10 min) retrieves ended batches, fans out Notifications.
 
-import json
 import logging
 import uuid
 
@@ -237,7 +236,7 @@ def poll_digest_batches(self):
 
 def _process_batch_job(job):
     from plane.ai_ext.models import AiBatchJob
-    from plane.db.models import Notification, User, Workspace, Project
+    from plane.db.models import Notification, Workspace
 
     # Check gate for this workspace before fan-out.
     try:

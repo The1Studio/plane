@@ -15,7 +15,6 @@ from django.test import TransactionTestCase
 from plane.github_ext.tests.test_webhook import (
     _bind_github_workspace,
     _project,
-    _user,
     _workspace,
 )
 

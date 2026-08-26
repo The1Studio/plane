@@ -46,16 +46,9 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         from plane.db.models import (
-            Cycle,
-            Issue,
-            IssueComment,
-            Module,
-            Page,
-            Project,
             Workspace,
         )
         from plane.ai_ext.clients.bge_client import BgeClient
-        from plane.ai_ext.models import AiEmbedding
 
         workspace_slug = options["workspace_slug"]
         batch_size = options["batch_size"]

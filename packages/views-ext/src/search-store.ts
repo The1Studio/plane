@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) 2023-present Plane Software, Inc. and contributors
+ * SPDX-License-Identifier: AGPL-3.0-only
+ * See the LICENSE file for details.
+ */
 // The1Studio fork (views-search)
 //
 // Ephemeral, per-view search-term store for the workspace Views tab. Resolves D3 (plan.md):

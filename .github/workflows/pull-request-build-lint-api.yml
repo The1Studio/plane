@@ -38,5 +38,23 @@ jobs:
         run: python -m pip install ruff
       - name: Install API Dependencies
         run: cd apps/api && pip install -r requirements.txt
-      - name: Lint apps/api
-        run: ruff check --fix apps/api
+      - name: Resolve fork-owned app paths
+        id: fork-paths
+        # Scope: fork-owned apps ONLY -- the same rule the pytest job in
+        # master-ci.yml already applies. Linting all of apps/api makes
+        # UPSTREAM's lint debt gate our PRs: on The1Studio/plane#91 this job
+        # went red on two unused imports in plane/app/views/issue/sub_issue.py
+        # that upstream shipped in makeplane/plane#8889. Fixing those would be
+        # a core edit and a permanent rebase conflict over someone else's bug.
+        run: |
+          set -euo pipefail
+          apps="$(python3 .claude/scripts/plane-fork-test-paths.py)"
+          echo "Linting fork-owned apps: $apps"
+          echo "apps=$apps" >> "$GITHUB_OUTPUT"
+
+      - name: Lint fork-owned apps
+        # No `--fix`: with it, ruff repairs the auto-fixable findings in the
+        # runner and reports only what is left, so 51 of the 63 errors this
+        # repo actually had were invisible to the gate. A CI check should
+        # report the tree as committed.
+        run: cd apps/api && ruff check ${{ steps.fork-paths.outputs.apps }}

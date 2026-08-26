@@ -27,7 +27,6 @@ except Exception:  # pragma: no cover
     pass
 
 from plane.workload.service import (
-    ROW_GUARD,
     WORKLOAD_MAX_TASKS_PER_ASSIGNEE,
     WorkloadTooLarge,
     compute_workload,

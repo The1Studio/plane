@@ -20,7 +20,6 @@
 
 import logging
 import os
-import sys
 import time
 from datetime import date
 
@@ -121,7 +120,7 @@ class Command(BaseCommand):
             )
 
         from plane.clickup_migrate.client import ClickUpClient
-        from plane.clickup_migrate.models import EmailCoverage, MigrationRun
+        from plane.clickup_migrate.models import MigrationRun
         from plane.db.models import User, Workspace
 
         client = ClickUpClient(token=token, team_id=team_id)
@@ -312,7 +311,6 @@ class Command(BaseCommand):
     def _run_plan(self, run, client, workspace, bot_user, space_ids, dry_run, review_dir,
                   date_updated_gt=None, auto_map=False,
                   snapshot_path=None, snapshot_by_list=None, since_days=None):
-        import json
         import os
 
         from plane.clickup_migrate.models import EmailCoverage, MappingTable
@@ -668,22 +666,13 @@ class Command(BaseCommand):
             write_state,
             write_label,
             write_module,
-            write_issue,
-            write_issue_assignee,
-            write_issue_label,
-            write_module_issue,
-            write_issue_subscriber,
-            write_comment,
             write_subtask_parent,
             write_issue_relation,
-            write_attachment,
-            write_custom_fields_to_description,
             write_workload_estimate,
             _parse_ms_estimate,
         )
         from plane.workload.rollup import parent_issue_ids
         from plane.workload.aggregation import MAX_HOURS
-        from plane.db.models import Issue
 
         # ── gate check ────────────────────────────────────────────────
         blockers = check_apply_gate(run)
