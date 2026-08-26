@@ -1,0 +1,73 @@
+name: Deploy staging (self-hosted)
+
+# Staging counterpart to deploy-master.yml. Same runner, same script, same
+# Discord step — everything environment-specific rides in as an env var
+# (see deployments/selfhost/deploy.sh's header for the four-variable contract).
+#
+# Staging is an integration branch: features merge here first, then promote to
+# master by PR. Its history is DISPOSABLE — after every upstream rebase on
+# master it is hard-reset to master and open features are re-merged. See
+# docs/FORK.md § "Rebase-on-tags workflow" step 9.
+
+on:
+  push:
+    branches: [staging]
+    # Chỉ deploy khi có thay đổi liên quan tới app/build (bỏ qua thay đổi docs thuần)
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to deploy to staging (branch, tag, or SHA)'
+        required: false
+        default: 'staging'
+
+# A SEPARATE group from production's `deploy-master`. Sharing one would let a
+# staging deploy queue behind or cancel a production deploy at the workflow
+# level, on top of the runner-level serialization that already exists (there is
+# a single sv-0 runner). cancel-in-progress stays false: a deploy halfway
+# through `docker compose up` must never be killed.
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Runner tự host trên server, gắn label 'sv-0' — same machine as production.
+    runs-on: [self-hosted, sv-0]
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # workflow_dispatch can target any ref — that is what makes staging
+          # useful for validating a rebase candidate without force-pushing the
+          # branch first. A push event falls through to github.ref.
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Build images & deploy
+        id: deploy
+        env:
+          RUN_DIR: /opt/plane-staging-app
+          IMAGE_TAG: staging
+          HEALTH_HTTP_PORT: '8081'
+          COMPOSE_PROJECT: plane-staging-app
+        run: bash deployments/selfhost/deploy.sh
+
+      - name: Notify Discord
+        if: always()
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          # Same thread as production; ENV_LABEL is what distinguishes them.
+          DISCORD_THREAD_ID: '1524317964160204800'
+          ENV_LABEL: staging
+          SITE_URL: https://staging-plane.the1studio.org
+          DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
+          GH_REPO: ${{ github.repository }}
+          GH_REF: ${{ github.event.inputs.ref || github.ref_name }}
+          GH_SHA: ${{ github.sha }}
+          GH_ACTOR: ${{ github.actor }}
+          GH_EVENT: ${{ github.event_name }}
+          GH_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash deployments/selfhost/notify-discord.sh
