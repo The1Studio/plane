@@ -1,8 +1,8 @@
-name: Deploy company-main (self-hosted)
+name: Deploy master (self-hosted)
 
 on:
   push:
-    branches: [company-main, master]
+    branches: [master]
     # Chỉ deploy khi có thay đổi liên quan tới app/build (bỏ qua thay đổi docs thuần)
     paths-ignore:
       - '**/*.md'
@@ -10,7 +10,7 @@ on:
   workflow_dispatch: {}
 
 concurrency:
-  group: deploy-company-main
+  group: deploy-master
   cancel-in-progress: false
 
 jobs:
