@@ -175,6 +175,43 @@ cd "$RUN_DIR"
 docker compose -p "$COMPOSE_PROJECT" "${COMPOSE_FILES[@]}" --env-file=plane.env up -d --pull never --remove-orphans
 
 # ---------------------------------------------------------------------------
+# 3b) Enforce the gate on ALREADY-RUNNING containers.
+#
+# `up -d` does NOT stop a service that a profile gated out. Profiles govern what
+# STARTS, and --remove-orphans only removes services absent from the compose
+# file entirely — plane-db is still defined there, merely profiled. So without
+# this step the deploy prints "Local DB: 0", writes the override, and leaves the
+# container running: the log claims the gate took effect while nothing changed.
+# Observed on production 2026-08-26, run 32949970398.
+#
+# Containers are addressed by compose's own project+service labels rather than
+# by name, so this is not coupled to the container-naming scheme. `docker rm`
+# removes the container only — named volumes (plane-fork-app_pgdata,
+# plane-fork-app_uploads) are untouched and survive for a later re-enable via
+# `--profile local-db` / `--profile local-storage`.
+# ---------------------------------------------------------------------------
+gate_off_service() {  # <compose-service-name>
+  local svc="$1" ids
+  ids="$(docker ps -aq \
+          --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" \
+          --filter "label=com.docker.compose.service=$svc" || true)"
+  if [ -n "$ids" ]; then
+    echo "==> gating off $svc (removing $(echo "$ids" | wc -l) container(s); volumes kept)"
+    # shellcheck disable=SC2086
+    docker rm -f $ids >/dev/null
+  else
+    echo "==> $svc already absent"
+  fi
+}
+
+if [ "$LOCAL_DB" = "0" ]; then
+  gate_off_service plane-db
+fi
+if [ "$LOCAL_STORAGE" = "0" ]; then
+  gate_off_service plane-minio
+fi
+
+# ---------------------------------------------------------------------------
 # 4) Health check: wait for migrations + API. Fail the job on timeout.
 # ---------------------------------------------------------------------------
 # Poll BOTH endpoints together. Previously only `api` was retried and `web` got a
