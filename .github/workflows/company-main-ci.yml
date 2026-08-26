@@ -1,8 +1,8 @@
-# CI gate for The1Studio's company-main fork branch.
+# CI gate for The1Studio's master fork branch.
 # Purpose: fail fast on any rebase that silently breaks the fork — missing migrations,
 # Django system errors, frontend type-check failures, or frontend unit-test failures.
 #
-# This workflow is REQUIRED on company-main and must never carry a `paths:` filter
+# This workflow is REQUIRED on master and must never carry a `paths:` filter
 # (per ci-cd-trigger-design rule §3: path-filtered required-check workflows cause
 # permanent "Expected — Waiting" → merge deadlock).
 
@@ -12,9 +12,11 @@ on:
   push:
     branches:
       - company-main
+      - master
   pull_request:
     branches:
       - company-main
+      - master
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -150,7 +152,7 @@ jobs:
         # builds each package's dependencies first (e.g. apps/live's tests
         # need @plane/editor built, not just type-checked, to resolve).
         # Was previously ungated: cascade-ext's and workload-ext's suites
-        # could go red on company-main and nothing here would notice.
+        # could go red on master and nothing here would notice.
         # See The1Studio/plane#65.
         timeout-minutes: 10
 
@@ -196,7 +198,7 @@ jobs:
   # every plane/*/tests directory.
   #
   # KNOWN RED AT INTRODUCTION: plane/ai_ext/tests/test_rag_access.py is
-  # broken on company-main; PR #15 fixes it (16/16 green). Merge #15 FIRST,
+  # broken on master; PR #15 fixes it (16/16 green). Merge #15 FIRST,
   # then this PR. No continue-on-error / `|| true` / app exclusion is used
   # to mask this — a CI job that hides failures is worse than no CI job.
   # ---------------------------------------------------------------------------

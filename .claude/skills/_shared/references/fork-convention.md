@@ -31,7 +31,7 @@ table in your fork app (OneToOne/FK to the core model) instead of a column. Neve
 - **Backend** = NEW Django app under `apps/api/plane/<name>/` (owns its `migrations/`, `urls.py`,
   `models.py`, `apps.py`). Current fork apps: `ai_ext`, `clickup_migrate`, `workload`, `github_ext`,
   `project_ext`, `workspace_ext`, `views_ext`, `cascade_ext`, `issue_defaults_ext` — keep this list and the `forkApps` array below in sync. `forkApps` also selects which
-  apps company-main CI runs tests for (via `.claude/scripts/plane-fork-test-paths.py`), so an app
+  apps master CI runs tests for (via `.claude/scripts/plane-fork-test-paths.py`), so an app
   missing from it is both misclassified AND untested.
 - **Frontend** = NEW package under `packages/<name>-ext/`, mounted via touch-point 6.
 - **Infrastructure** = a path listed in `forkPaths` below, classified `custom-infra`. These are

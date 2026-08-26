@@ -3,7 +3,7 @@
 This document is a **documented dry-run scenario** — no actual rebase is performed.
 It proves that a conflict in a core file triggers HARD-GATE A (abort), while a conflict
 in a touch-point file triggers the recipe path (continue). The classifier output below
-was captured from the live repo (`company-main`, 2026-06-20).
+was captured from the live repo (`master`, 2026-06-20).
 
 ---
 
@@ -57,7 +57,7 @@ node .claude/scripts/plane-classify-path.cjs \
 **HARD-GATE A fires. Mandatory response:**
 
 ```bash
-git rebase --abort   # restores company-main to its pre-rebase state
+git rebase --abort   # restores master to its pre-rebase state
 ```
 
 The skill NEVER calls `git rebase --continue` for this file. It presents the

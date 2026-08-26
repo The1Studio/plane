@@ -1,7 +1,7 @@
 ---
 name: plane-rebase
-description: Rebase company-main onto an upstream Plane CE tag per docs/FORK.md — classify conflicts, auto-resolve touch-points, abort on leaks. Use for "rebase onto upstream tag", "run the monthly rebase", "sync fork to upstream".
-keywords: [rebase, upstream, fork, company-main, touch-point, rerere, sync]
+description: Rebase master onto an upstream Plane CE tag per docs/FORK.md — classify conflicts, auto-resolve touch-points, abort on leaks. Use for "rebase onto upstream tag", "run the monthly rebase", "sync fork to upstream".
+keywords: [rebase, upstream, fork, master, touch-point, rerere, sync]
 metadata:
   author: the1studio
   version: "1.0.0"
@@ -16,7 +16,7 @@ metadata:
 ## When to Use
 
 Invoke this skill when you need to adopt a new upstream Plane CE release tag onto
-`company-main`. It drives the full cycle defined in `docs/FORK.md` §Rebase-on-tags —
+`master`. It drives the full cycle defined in `docs/FORK.md` §Rebase-on-tags —
 classifying every conflict, auto-resolving documented touch-points (1–6) via per-touch-point
 recipes, and performing two mandatory stops: one on any leak, and one before pushing the
 result.
@@ -35,7 +35,7 @@ Trigger phrases (any of these activates this skill):
 - "adopt upstream Plane CE tag"
 - "run the monthly rebase"
 - "sync fork to upstream"
-- "rebase company-main onto vX.Y.Z"
+- "rebase master onto vX.Y.Z"
 
 ---
 
@@ -61,13 +61,13 @@ git tag -l 'v*' | sort -V | tail -10
 
 Pick the tag to adopt. Cadence guideline from `docs/FORK.md`: do not skip more than two
 consecutive upstream tags — the conflict surface grows quickly. If the candidate tag is more
-than 2 tags ahead of the current `company-main` base, warn the user before proceeding.
+than 2 tags ahead of the current `master` base, warn the user before proceeding.
 
-### Step 3 — Verify clean tree and switch to company-main
+### Step 3 — Verify clean tree and switch to master
 
 ```bash
 git status --short   # must be empty
-git checkout company-main
+git checkout master
 ```
 
 If the working tree is not clean, STOP and ask the user to stash or commit pending changes
@@ -114,7 +114,7 @@ when a touch-point file has been deleted or renamed upstream.
 **Mandatory action:**
 
 ```bash
-git rebase --abort   # restores company-main to its pre-rebase state
+git rebase --abort   # restores master to its pre-rebase state
 ```
 
 After abort, use `AskUserQuestion` to surface:
@@ -185,7 +185,7 @@ On confirmation:
 
 ```bash
 git tag company-v<tag>-<N>
-git push origin company-main --tags
+git push origin master --tags
 ```
 
 </HARD-GATE>

@@ -110,7 +110,7 @@ issue #7 fix in production, not just in tests.
 ## Attachments — fixed, not yet backfilled
 
 Attachment migration was broken end-to-end (originally **0 of ~13k** attachments migrated).
-Three bugs were found and fixed (all on `company-main`), each caught by progressively deeper testing:
+Three bugs were found and fixed (all on `master`), each caught by progressively deeper testing:
 
 | Commit       | Fix                                                                                                              |
 | ------------ | ---------------------------------------------------------------------------------------------------------------- |

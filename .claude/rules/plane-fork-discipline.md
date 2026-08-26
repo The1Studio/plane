@@ -7,7 +7,7 @@ protected: false
 
 # Plane Fork Discipline
 
-Auto-loaded guardrails for `company-main`. Full specification: `docs/FORK.md` (SSOT).
+Auto-loaded guardrails for `master`. Full specification: `docs/FORK.md` (SSOT).
 Operational tools: `plane-rebase`, `plane-isolation-audit`, `plane-scaffold-feature`,
 `plane-propagate`, `plane-fork-doctor` skills.
 

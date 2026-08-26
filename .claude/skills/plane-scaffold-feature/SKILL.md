@@ -179,7 +179,7 @@ Append `"<name>"` to the array so the classifier (`plane-classify-path.cjs`) rec
 
 This prevents drift: after the next `plane-fork-doctor` run the new app is known, not flagged as unclassified.
 
-**This array also selects which apps company-main CI runs tests for** — `.claude/scripts/plane-fork-test-paths.py`
+**This array also selects which apps master CI runs tests for** — `.claude/scripts/plane-fork-test-paths.py`
 intersects it with the `tests/` directories on disk to build the pytest invocation. An app missing from
 `forkApps` is therefore misclassified as `core` AND its tests never run, while the job still reports
 green. The script hard-fails on that combination, so CI will tell you; registering here is the single

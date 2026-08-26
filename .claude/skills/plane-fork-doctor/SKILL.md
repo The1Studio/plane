@@ -9,7 +9,7 @@ metadata:
 
 # plane-fork-doctor
 
-Read-only aggregate health report for the `company-main` fork. Collects 7 signals
+Read-only aggregate health report for the `master` fork. Collects 7 signals
 from existing tools and skills — no logic is duplicated here. Emits a single
 GREEN/YELLOW/RED verdict table.
 
@@ -24,7 +24,7 @@ Convention data mirror (JSON block): `.claude/skills/_shared/references/fork-con
 ## When to Use
 
 - "Fork health" — quick pre-rebase sanity check
-- Before opening a PR to `company-main`
+- Before opening a PR to `master`
 - After a merge/rebase, to confirm the fork is in a clean state
 - Periodic maintenance (monthly rebase cadence)
 - When onboarding a new contributor who needs a fork-state overview

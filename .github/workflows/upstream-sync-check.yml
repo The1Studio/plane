@@ -114,7 +114,7 @@ jobs:
 
           \`\`\`bash
           git fetch upstream --tags
-          git checkout company-main
+          git checkout master
           git rebase ${{ steps.check.outputs.latest_upstream }}
           \`\`\`
           EOF
@@ -132,7 +132,7 @@ jobs:
 
           \`\`\`bash
           git fetch upstream --tags
-          git checkout company-main
+          git checkout master
           git rebase ${{ steps.check.outputs.latest_upstream }}
           \`\`\`
 

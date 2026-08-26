@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Resolve the pytest paths for fork-owned Django apps.
 
-The company-main CI pytest job used to carry a HARDCODED app list, so a newly
+The master CI pytest job used to carry a HARDCODED app list, so a newly
 scaffolded app's tests silently never ran — the job went green while covering
 nothing of the new app, which is the most dangerous kind of pass. It happened
 with `github_ext` (47 tests merged only because a human ran pytest by hand) and
