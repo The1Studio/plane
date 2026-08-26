@@ -162,3 +162,52 @@ Plane project **PLANE** (workspace `infrastructure`), all items in **Todo**, ass
 | [PLANE-184](https://plane.the1studio.org/infrastructure/browse/PLANE-184/)          | Phase 2 | 0.5h         |
 | [PLANE-185](https://plane.the1studio.org/infrastructure/browse/PLANE-185/)          | Phase 3 | 0.5h         |
 | [PLANE-186](https://plane.the1studio.org/infrastructure/browse/PLANE-186/)          | Phase 4 | 1h           |
+
+---
+
+## Outcome (2026-08-26)
+
+Executed in four phases as planned. Both PRs squash-merged after CI green.
+
+| Phase | PR                                                 | Result                                                                                        |
+| ----- | -------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| 1     | [#88](https://github.com/The1Studio/plane/pull/88) | CI dual-targeted, `check-version.yml` deleted, `codeql.yml` neutered, live docs swept         |
+| 2     | —                                                  | `origin/master` deleted (`88b609e6ce`); `company-main` renamed to `master` via the rename API |
+| 3     | —                                                  | `origin/preview` deleted; local clone reduced to a single `master` branch                     |
+| 4     | [#89](https://github.com/The1Studio/plane/pull/89) | Triggers narrowed to `[master]`; display names and concurrency group renamed                  |
+
+### Evidence
+
+- Default branch is `master`; `git ls-remote --heads origin` returns `master` alone.
+- Ruleset `20970827` still reports `enforcement: active` on `~DEFAULT_BRANCH` — protection
+  followed the rename, which was the open question Phase 2 existed to settle.
+- **Three production deploys observed green**, in the order that actually proves the risk:
+  the Phase 1 merge on `company-main` (`32925276883`, push), a dispatch against the renamed
+  branch (`32925506764`, `workflow_dispatch`), and the Phase 4 merge (`32926250633`, **push on
+  `master`**). Only the last one proves the push trigger survived the rename; the dispatch
+  alone would have proven the job runs, not that anything invokes it.
+- PR #89's own check list showed the fork CI gate and showed **neither** "Version Change Before
+  Release" **nor** CodeQL. A PR into `master` is the only thing that can make either fire, so
+  nothing earlier could have detected a failure there.
+- Repo-wide grep: 119 references under the preserved history directories, 17 workflow-filename
+  references, and **one** live string — the deliberate historical sentence at `docs/FORK.md:1109`.
+
+### Corrections to the plan
+
+**Phase 3's eight-branch deletion was a no-op.** All eight head branches from PRs #80–#87 had
+already been deleted on the remote before this session; the planning-time `git branch -r` listed
+them only because the local remote-tracking refs were stale. The plan asserted their existence
+from that stale read rather than from `git ls-remote`, which is the authoritative source. Nothing
+was lost — but a claim about a remote should be made against the remote.
+
+**Phase 1's cosmetics were deferred to Phase 4**, which the plan had not anticipated: the two
+workflow `name:` fields and the `deploy-company-main` concurrency group. Renaming the display
+name earlier would have invalidated Phase 4's own `gh workflow run "<name>"` verification step,
+and changing a concurrency group mid-transition could have let two deploys overlap.
+
+### Still open
+
+The workflow **filenames** (`company-main-ci.yml`, `deploy-company-main.yml`) are now misleading —
+their contents say `master` throughout. They were left alone deliberately: `fork-convention.md`
+lists both as literal paths the isolation audit reads, so renaming them is doc churn for no
+functional gain. Worth doing as its own small PR when someone is next in those files.
