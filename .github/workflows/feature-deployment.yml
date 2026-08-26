@@ -6,7 +6,7 @@ on:
       base_tag_name:
         description: 'Base Tag Name'
         required: false
-        default: 'preview'
+        default: 'master'
 
 env:
   TARGET_BRANCH: ${{ github.ref_name }}

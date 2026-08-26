@@ -48,7 +48,7 @@ A rebase conflict **outside** this set = a customization leaked into core →
 
 ## After every rebase
 
-Run `python manage.py makemigrations --check --dry-run` (CI gate: `company-main-ci.yml`
+Run `python manage.py makemigrations --check --dry-run` (CI gate: `master-ci.yml`
 enforces this on every push/PR). Also run `python manage.py check` and `pnpm check`.
 
 ## Feature propagation (mandatory)

@@ -510,7 +510,7 @@ class DormantModelIsolationTests(TransactionTestCase):
     pytest — `pytest.ini` passes `--nomigrations`, which stubs out every app's
     migration module, so `makemigrations` would report the entire schema as
     unmigrated. It runs as a separate `manage.py` invocation (the same one
-    `company-main-ci.yml` gates on).
+    `master-ci.yml` gates on).
     """
 
     def test_github_ext_migration_set_is_unchanged(self):

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Post a deploy-result notification to a Discord thread.
-# Called by .github/workflows/deploy-company-main.yml as a final `if: always()` step.
+# Called by .github/workflows/deploy-master.yml as a final `if: always()` step.
 # Never fails the job: a webhook error is logged as a warning and the script exits 0.
 #
 # Required env (from the workflow):

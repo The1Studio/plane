@@ -39,8 +39,8 @@ const cases = [
   ["deployments/selfhost/notify-discord.sh", "custom-infra", null],
   ["plans/260822-1102-views-workitem-search/plan.md", "custom-infra", null],
   ["docs/FORK.md", "custom-infra", null],
-  [".github/workflows/company-main-ci.yml", "custom-infra", null],
-  [".github/workflows/deploy-company-main.yml", "custom-infra", null],
+  [".github/workflows/master-ci.yml", "custom-infra", null],
+  [".github/workflows/deploy-master.yml", "custom-infra", null],
   ["./docs/FORK.md", "custom-infra", null], // normalization variant
   // --- the negative half: a too-broad forkPaths prefix would silently grant fork-edit
   //     approval to UPSTREAM files. These four pin the boundary and are the point of the
