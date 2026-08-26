@@ -1,7 +1,7 @@
 ---
 name: plane-isolation-audit
-description: Audit fork-isolation — scan tree/diff/PR for edits that leak into core, mirroring company-main CI gates. Use for "audit fork isolation", "did I leak into core", "will this pass company-main CI".
-keywords: [fork, isolation, audit, leak, touch-point, company-main, ci-parity]
+description: Audit fork-isolation — scan tree/diff/PR for edits that leak into core, mirroring master CI gates. Use for "audit fork isolation", "did I leak into core", "will this pass master CI".
+keywords: [fork, isolation, audit, leak, touch-point, master, ci-parity]
 metadata:
   author: the1studio
   version: "1.0.0"
@@ -20,7 +20,7 @@ classification logic lives here.
 
 ## When to Use
 
-- Before opening a PR to `company-main`
+- Before opening a PR to `master`
 - After resolving rebase conflicts, to confirm no leak crept in
 - Before running the monthly upstream rebase (`git rebase <tag>`)
 - Whenever you suspect a core edit slipped through
@@ -34,7 +34,7 @@ Trigger phrases (any of these should activate this skill):
 - "audit fork isolation"
 - "check isolation"
 - "did I leak into core"
-- "will this pass company-main CI"
+- "will this pass master CI"
 - "isolation audit"
 - "pre-rebase isolation check"
 
@@ -68,11 +68,11 @@ Output: a violation table (file | category | rule | fix) + overall PASS/FAIL ver
 
 **Scope determination** — ask the user if not obvious:
 
-| User says                          | Scope                                                     |
-| ---------------------------------- | --------------------------------------------------------- |
-| "current changes", "what I have"   | working tree (`git diff --name-only HEAD`)                |
-| "this branch", "my branch vs main" | commit range (`git diff --name-only company-main...HEAD`) |
-| "PR #N", "pull request N"          | PR diff (`gh pr diff N --name-only`)                      |
+| User says                          | Scope                                               |
+| ---------------------------------- | --------------------------------------------------- |
+| "current changes", "what I have"   | working tree (`git diff --name-only HEAD`)          |
+| "this branch", "my branch vs main" | commit range (`git diff --name-only master...HEAD`) |
+| "PR #N", "pull request N"          | PR diff (`gh pr diff N --name-only`)                |
 
 ---
 

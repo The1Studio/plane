@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Self-hosted build + deploy for the company-main fork of Plane.
+# Self-hosted build + deploy for the master fork of Plane.
 # Invoked by .github/workflows/deploy-company-main.yml on the server runner.
 #
 # Preconditions on the server:
@@ -46,7 +46,7 @@ build plane-proxy     apps/proxy/Dockerfile.ce      apps/proxy
 
 # ---------------------------------------------------------------------------
 # 2) Sync compose into the run dir (preserve plane.env), apply pgvector fix.
-#    company-main's ai_ext module needs the pgvector extension; the upstream
+#    master's ai_ext module needs the pgvector extension; the upstream
 #    compose ships postgres:15.7-alpine (no pgvector), so patch it here.
 # ---------------------------------------------------------------------------
 if [ ! -f "$RUN_DIR/plane.env" ]; then

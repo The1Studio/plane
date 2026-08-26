@@ -4,10 +4,10 @@ Thank you for showing an interest in contributing to Plane! All kinds of contrib
 
 ---
 
-## Fork governance (The1Studio company-main)
+## Fork governance (The1Studio master)
 
 This repository is a **governed private fork** of [Plane CE](https://github.com/makeplane/plane)
-maintained by The1Studio. The production branch is `company-main`, derived from upstream release
+maintained by The1Studio. The production branch is `master`, derived from upstream release
 tags. All The1Studio customizations go into **new Django apps** (`apps/api/plane/ai_ext/`,
 `apps/api/plane/clickup_migrate/`) or **new frontend packages** (`packages/ai-ext/`) — core
 Plane source files are never edited in place except at the six documented touch-points (two

@@ -2,7 +2,7 @@ name: Deploy company-main (self-hosted)
 
 on:
   push:
-    branches: [company-main]
+    branches: [company-main, master]
     # Chỉ deploy khi có thay đổi liên quan tới app/build (bỏ qua thay đổi docs thuần)
     paths-ignore:
       - '**/*.md'

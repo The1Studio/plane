@@ -1,8 +1,8 @@
-# Fork Governance — The1Studio / company-main
+# Fork Governance — The1Studio / master
 
 This document is the single source of truth for how The1Studio governs its private fork of
 [Plane CE](https://github.com/makeplane/plane). Read it in full before making any change to
-`company-main` or a feature branch derived from it.
+`master` or a feature branch derived from it.
 
 ---
 
@@ -10,19 +10,18 @@ This document is the single source of truth for how The1Studio governs its priva
 
 | Branch                | Purpose                                              | Derived from                      |
 | --------------------- | ---------------------------------------------------- | --------------------------------- |
-| `company-main`        | Production branch — the only branch deployed         | upstream **tags** (e.g. `v1.3.1`) |
-| `sp1/clickup-migrate` | One-time ClickUp → Plane ETL                         | branches from `company-main`      |
-| `sp2/ai-ext`          | AI feature suite (BGE-M3 embeddings, Claude tooling) | branches from `company-main`      |
-| `preview`, `master`   | Upstream tracking branches — **untouched**           | never deployed, never edited      |
+| `master`              | Production branch — the only branch deployed         | upstream **tags** (e.g. `v1.3.1`) |
+| `sp1/clickup-migrate` | One-time ClickUp → Plane ETL                         | branches from `master`            |
+| `sp2/ai-ext`          | AI feature suite (BGE-M3 embeddings, Claude tooling) | branches from `master`            |
 
 **Rules:**
 
-- `company-main` is derived from an upstream **tag**, never from `preview` or `master`.
-  Production deploys from a tag-derived SHA on `company-main`; no deploy pulls from an
-  untagged tip.
-- Feature branches (`sp1/clickup-migrate`, `sp2/ai-ext`) branch FROM `company-main`. They are
-  never merged directly to `company-main` — instead, changes ride the rebase cycle below.
-- When upstream ships a new tag, the monthly rebase is performed on `company-main` (see
+- `master` is derived from an upstream **tag**, never from `upstream/preview` or
+  `upstream/master`. Production deploys from a tag-derived SHA on `master`; no deploy pulls
+  from an untagged tip.
+- Feature branches (`sp1/clickup-migrate`, `sp2/ai-ext`) branch FROM `master`. They are
+  never merged directly to `master` — instead, changes ride the rebase cycle below.
+- When upstream ships a new tag, the monthly rebase is performed on `master` (see
   "Rebase-on-tags workflow" below). The result is tagged `company-vX.Y.Z-N` before
   any deploy.
 
@@ -32,7 +31,18 @@ This document is the single source of truth for how The1Studio governs its priva
 
 Upstream Plane CE releases approximately monthly (`v1.2.0` Dec 2025 → `v1.3.1` May 2026).
 We adopt **selected tags** — not every tag — when the diff is clean and staging smoke passes.
-Never rebase onto `preview`/`master` (moving targets that carry unfinished work).
+Never rebase onto `upstream/preview` / `upstream/master` (moving targets that carry
+unfinished work).
+
+> **Name collision — read this before any rebase.** Our production branch is `master`, and
+> upstream's **release** branch is also called `master`. A bare `master` in any git command
+> resolves to **ours**; upstream's is only ever reachable as `upstream/master`. The two are
+> unrelated lines — `upstream/master` is not an ancestor of ours and never has been. Always
+> remote-qualify when you mean upstream's, and never `git merge master` expecting upstream.
+>
+> This fork does **not** mirror `upstream/preview` or `upstream/master` into `origin`. Both
+> mirrors were deleted on 2026-08-26; adopt upstream work by rebasing onto a **tag**, per the
+> recipe below.
 
 ```bash
 # 1. Fetch latest upstream tags
@@ -41,8 +51,8 @@ git fetch upstream --tags
 # 2. Identify the tag to adopt (e.g. v1.4.0)
 git tag -l 'v*' | sort -V | tail -10
 
-# 3. Switch to company-main
-git checkout company-main
+# 3. Switch to master
+git checkout master
 
 # 4. Rebase onto the new tag
 git rebase v1.4.0
@@ -61,7 +71,7 @@ pnpm check
 
 # 8. Tag the result
 git tag company-v1.4.0-1   # increment N for re-rebases on the same upstream tag
-git push origin company-main --tags
+git push origin master --tags
 ```
 
 **Cadence recommendation:** rebase monthly or when a tag fixes a security issue. Do not skip
@@ -106,7 +116,7 @@ When `git rebase <tag>` produces conflicts:
    After resolving: `git add <file>` then `git rebase --continue`.
 
 3. **If a touch-point file was renamed or deleted upstream:** STOP. Do not force-resolve.
-   Run `git rebase --abort` to restore `company-main` to its pre-rebase state, then
+   Run `git rebase --abort` to restore `master` to its pre-rebase state, then
    re-home the customization into the new location upstream chose. This is normal — upstream
    refactors occasionally move files; track-and-relocate is correct; force-resolving against
    a deleted file is not.
@@ -118,7 +128,7 @@ When `git rebase <tag>` produces conflicts:
 
 5. **Abort path at any time:**
    ```bash
-   git rebase --abort   # restores company-main to its pre-rebase state
+   git rebase --abort   # restores master to its pre-rebase state
    ```
    The abort is safe. No committed history is lost. Diagnose, fix the convention violation,
    then rebase again from step 1.
@@ -289,14 +299,14 @@ New backend code lives in **new Django apps**:
   border only.
   **Unestimated work items** — no `WorkloadEstimate` row at all, or one with `hours <= 0` — are
   drawn the same dashed, unfilled, state-tinted way, labelled `?` where a solid bar shows its
-  hours. They were invisible before `company-main@6c2c8fb`: `_base_queryset` starts from
+  hours. They were invisible before `master@6c2c8fb`: `_base_queryset` starts from
   `WorkloadEstimate`, so an item with no estimate row never joined the query, which made a member
   with nothing assigned and a member whose every item was unestimated render identically. On the
   busiest production workspace that hid 3,724 of 9,438 countable leaves. A dated one covers its
   real `[start_date, target_date]` span and is packed into the **same** lane set as estimated
   work — one `packTasksIntoLanes` pass, not two — so a dashed bar may share a row with
   a solid one; an undated one falls to the placeholder lanes above, since `!target_date` is the
-  predicate that routes it there. The two-band shape that shipped in `company-main@6c2c8fb` was
+  predicate that routes it there. The two-band shape that shipped in `master@6c2c8fb` was
   reverted on 2026-08-25: keeping dashed and solid on separate rows cost a row every time either
   group had a free slot the other could have filled (6 wasted rows on one measured DEVOPS
   swimlane), and dashed-versus-solid plus `?`-versus-`12h` already tell the two apart within a
@@ -640,7 +650,7 @@ upstream's changes around it. Do NOT abort the rebase for a conflict confined to
 `GLOBAL_VIEW_ISSUE_LAYOUT_OPTIONS` are both built by the same `buildWorkspaceLevelViewLayoutOptions`
 factory in `packages/views-ext/src/layout-options.ts`, parameterized only by their `group_by` field
 set (identical for both today). The GLOBAL table's evaluated output was diffed byte-for-byte
-against `origin/company-main` and is unchanged by this refactor — the factory extraction is
+against `origin/master` and is unchanged by this refactor — the factory extraction is
 internal restructuring, not a behavior change to the already-shipped Views tab feature.
 `plane-isolation-audit` already allowlists `@plane/views-ext` as fork-owned (see the Views table's
 note above); no new allowlist entry is needed.
@@ -967,7 +977,7 @@ fixed upstream, DROP our hunk.
 These are the ONLY files that may carry The1Studio edits. A rebase conflict outside this set
 means a customization leaked into core — relocate it.
 
-Verified line numbers against the live fork (branch `company-main`, tag base `v1.3.1`):
+Verified line numbers against the live fork (branch `master`, tag base `v1.3.1`):
 
 | #   | File                                                                                                         | Verified line                                                                                                         | Why touched                           | Rebase-safe approach                                                                                                                                                                                                                                                                                              |
 | --- | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1086,18 +1096,34 @@ fork workflows listed above are `custom-infra`.
 
 Two GitHub Actions workflows enforce the fork convention automatically:
 
-- `.github/workflows/company-main-ci.yml` — runs on every push/PR to `company-main`:
+- `.github/workflows/company-main-ci.yml` — runs on every push/PR to `master`:
   - `python manage.py makemigrations --check` — fails if any migration is missing after rebase.
   - `python manage.py check` — fails if Django's system check fails (import errors, url errors).
   - `pnpm install --frozen-lockfile` + `pnpm check` — fails if frontend type-check breaks.
 - `.github/workflows/upstream-sync-check.yml` — weekly cron that checks for new upstream tags
   and writes a job summary when a newer tag is available.
 
+### Upstream-workflow core-edit exceptions (no upstream seam)
+
+Renaming the production branch to `master` (2026-08-26) put it in the trigger path of two
+upstream workflows that had been dormant for as long as the branch was called `company-main`.
+Neither has a seam — the branch name is hardcoded in `on:` — so each is a documented core edit
+and a rebase-conflict surface.
+
+| Path                                  | Edit                                                                                                  | Why no seam exists                                                                                                                                                                                                                                                                                                |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.github/workflows/check-version.yml` | **Deleted.**                                                                                          | It fails any PR whose root `package.json` version equals the base branch's — correct for upstream's release flow, wrong for ours. Our `version` field is upstream's (overwritten by every rebase-on-tags), not a number the fork owns, so a mandatory per-PR bump would be busywork on a field we do not control. |
+| `.github/workflows/codeql.yml`        | Dropped `"master"` from both `push` and `pull_request` branch lists, leaving `["preview", "canary"]`. | Neither remaining name is a branch this repo has, so the workflow is dormant rather than newly firing on every push to production. Not deleted — re-enabling scanning is a one-line change if a future decision wants it.                                                                                         |
+
+**On rebase:** upstream touching either file will conflict. For `check-version.yml` the
+resolution is to **re-delete it** — do not "restore" it by reflex, that re-arms a mandatory
+version bump on every PR. For `codeql.yml`, keep our two-entry branch list.
+
 ---
 
 ## Versioning
 
-After every successful rebase-and-smoke, tag `company-main` with:
+After every successful rebase-and-smoke, tag `master` with:
 
 ```
 company-v<upstream-version>-<N>
