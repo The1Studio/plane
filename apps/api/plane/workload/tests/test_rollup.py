@@ -9,7 +9,7 @@
 # Postgres, no mocking the unit under test.
 
 import uuid
-from datetime import date, timedelta
+from datetime import date
 
 from django.test import TransactionTestCase
 from rest_framework.test import APIClient

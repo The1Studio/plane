@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2023-present Plane Software, Inc. and contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+# See the LICENSE file for details.
 """Resolve the pytest paths for fork-owned Django apps.
 
 The master CI pytest job used to carry a HARDCODED app list, so a newly

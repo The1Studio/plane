@@ -31,7 +31,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        from plane.db.models import Cycle, Issue, IssueComment, Module, Page, Project, Workspace
+        from plane.db.models import Cycle, Issue, IssueComment, Module, Page, Project
         from plane.ai_ext.models import AiEmbedding
 
         dry_run = options["dry_run"]

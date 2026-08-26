@@ -11,7 +11,7 @@ import logging
 
 from celery import shared_task
 
-from plane.ai_ext.clients.bge_client import BGE_EMBED_VERSION, BgeClient
+from plane.ai_ext.clients.bge_client import BgeClient
 from plane.ai_ext.gate import AiGateError, gate_or_raise
 
 logger = logging.getLogger("plane.ai_ext")

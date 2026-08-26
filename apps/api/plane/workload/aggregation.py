@@ -15,7 +15,7 @@ from datetime import date, timedelta
 # MAX_HOURS lives in constants.py (the leaf module) so this file can import
 # to_plane_weekday from there without creating an import cycle. Re-exported
 # here so existing importers (models.py, serializers.py) keep working.
-from .constants import MAX_HOURS, to_plane_weekday
+from .constants import to_plane_weekday
 
 ALLOWED_GRANULARITIES = ("day", "week", "month")
 

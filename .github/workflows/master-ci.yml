@@ -206,7 +206,7 @@ jobs:
     # Must stay ABOVE the pytest step's own timeout (25) plus the setup steps
     # that precede it (~12 min of install/service budget), or the job ceiling
     # fires first and the step's more specific message never appears.
-    timeout-minutes: 40
+    timeout-minutes: 50
 
     services:
       postgres:
@@ -315,10 +315,17 @@ jobs:
         # worse than a slow one, because the next person's instinct is to
         # re-run rather than read it.
         #
-        # Raise this again rather than trimming coverage to fit, but if it
-        # reaches the job's own ceiling below, the real fix is to stop paying
-        # per-test truncation — not another bump.
-        timeout-minutes: 25
+        # 35, raised from 25 on 2026-08-26 after a run crossed 25 with EVERY
+        # test passing (The1Studio/plane#91) — the second timeout kill in two
+        # days, on a PR that changed only workflow files and docs.
+        #
+        # This is the last bump this note sanctions. 22 of the 30 fork test
+        # files use TransactionTestCase, which truncates every table between
+        # tests; runtime therefore scales with test count and cannot be
+        # parallelised away. The real fix is to convert the suites that do not
+        # genuinely need cross-transaction visibility to plain TestCase, which
+        # rolls back instead of truncating. Do that before raising this again.
+        timeout-minutes: 35
 
   # ---------------------------------------------------------------------------
   # Job 4 — Smoke placeholder (Phase 5)

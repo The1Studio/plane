@@ -336,7 +336,7 @@ class TestRagAccessFilter(TransactionTestCase):
 # Security primitives (no DB needed — SimpleTestCase)
 # ---------------------------------------------------------------------------
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase  # noqa: E402  (section-local import, see header above)
 
 
 class TestAnthropicClientSecurity(SimpleTestCase):

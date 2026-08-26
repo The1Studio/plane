@@ -174,7 +174,7 @@ def _connect_project():
             return
 
         from django.db import transaction
-        from plane.ai_ext.bgtasks.embed_task import embed_entity, restamp_project_embeddings
+        from plane.ai_ext.bgtasks.embed_task import embed_entity
 
         _workspace_id = str(instance.workspace_id)
         _project_id = str(instance.id)

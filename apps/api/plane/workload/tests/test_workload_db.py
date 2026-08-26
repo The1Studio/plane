@@ -33,7 +33,7 @@ WIN_TO = date(2026, 12, 31)
 
 
 def _ws(slug=None):
-    from plane.db.models import User, Workspace
+    from plane.db.models import Workspace
 
     slug = slug or f"ws-{uuid.uuid4().hex[:8]}"
     owner = _user()

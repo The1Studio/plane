@@ -118,7 +118,6 @@ def _html_to_prosemirror(html: str) -> dict:
       horizontal_rule → {type: "horizontalRule"}
     """
     try:
-        from html.parser import HTMLParser as _HP
         return _html_to_prosemirror_impl(html)
     except Exception as exc:
         logger.warning("HTML→ProseMirror conversion failed: %s", exc)

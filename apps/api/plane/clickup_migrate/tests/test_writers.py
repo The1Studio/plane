@@ -11,7 +11,6 @@
 
 import json
 import uuid
-from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase, TestCase
 
@@ -240,7 +239,6 @@ class TestMappingCache(TestCase):
         return MigrationRun.objects.create(status="pending")
 
     def test_status_group_from_approved_row(self):
-        import json
         from plane.clickup_migrate.models import MappingTable
         run = self._make_run()
         key = make_status_key("list-1", "Doing")
@@ -274,7 +272,6 @@ class TestMappingCache(TestCase):
         self.assertEqual(cache.priority("urgent"), "urgent")
 
     def test_unapproved_row_ignored(self):
-        import json
         from plane.clickup_migrate.models import MappingTable
         run = self._make_run()
         key = make_status_key("list-2", "Review")
@@ -432,7 +429,6 @@ class TestWriteIssueRelationDirection(TestCase):
         """ClickUp: A (blocker) blocking B (blocked).
         Plane must store: issue=B, related_issue=A, type=blocked_by.
         """
-        from plane.clickup_migrate.writers import write_issue_relation
         from plane.db.models import IssueRelation
 
         source_id = f"cu-src-{uuid.uuid4().hex[:8]}"  # A = blocker
@@ -463,7 +459,6 @@ class TestWriteIssueRelationDirection(TestCase):
         """ClickUp: A waiting_on B → Plane: issue=A, related_issue=B, type=blocked_by.
         No ID swap for waiting_on (only 'blocking' swaps).
         """
-        from plane.clickup_migrate.writers import write_issue_relation
         from plane.db.models import IssueRelation
 
         source_id = f"cu-w-src-{uuid.uuid4().hex[:8]}"
@@ -540,7 +535,7 @@ class TestWriterIdempotency(TestCase):
         ).count()
 
         # Second write — must be a no-op.
-        issue2 = write_issue(
+        write_issue(
             self.run, self.project, self.workspace,
             task, self.state, mapping_cache, user_cache, dry_run=False,
         )

@@ -17,7 +17,7 @@
 # capacity, and the exclusions.
 
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date
 
 from django.test import TransactionTestCase
 

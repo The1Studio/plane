@@ -13,7 +13,6 @@
 
 import logging
 
-from django.db import connection
 from rest_framework import status
 from rest_framework.response import Response
 
@@ -215,7 +214,6 @@ def _get_accessible_entity_ids(user, workspace_id: str) -> set[str]:
         ProjectPage,
         Cycle,
         Module,
-        Project,
         ProjectMember,
     )
 
@@ -362,9 +360,7 @@ def _tsv_search(
         return []
 
     from plane.ai_ext.models import AiEmbedding
-    from django.contrib.postgres.search import SearchQuery, SearchRank
 
-    search_query = SearchQuery(query, config="simple")
     qs = (
         AiEmbedding.objects.filter(
             workspace_id=workspace_id,
@@ -441,7 +437,7 @@ def _rrf_fuse(
 # Citation extraction
 # ------------------------------------------------------------------
 
-import re as _re
+import re as _re  # noqa: E402  (section-local import, see header above)
 
 # Context blocks are formatted as "[entity_type:uuid]" (see context_blocks above).
 # The LLM therefore cites as "[issue:abc123…]" or "[page:abc123…]".

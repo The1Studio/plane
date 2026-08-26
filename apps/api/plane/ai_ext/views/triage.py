@@ -5,7 +5,6 @@
 # SP2 P2 — AI auto-create / triage endpoint.
 # POST /api/ai/<slug>/projects/<project_id>/auto-create/ → 202.
 
-import hashlib
 
 from rest_framework import status
 from rest_framework.response import Response

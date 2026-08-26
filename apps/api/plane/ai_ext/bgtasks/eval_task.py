@@ -8,7 +8,6 @@
 # RAG: precision@k + citation-faithfulness + cross-project-leak red-team.
 
 import logging
-import uuid
 
 from celery import shared_task
 
@@ -46,7 +45,6 @@ def run_rag_eval(self, workspace_id: str, golden_set: list[dict]):
 
         # Import search function (live-filtered retrieval).
         from plane.ai_ext.views.search import (
-            _get_accessible_entity_ids,
             _ann_search,
             _tsv_search,
             _rrf_fuse,
