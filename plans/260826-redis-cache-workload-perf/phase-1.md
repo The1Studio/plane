@@ -8,6 +8,10 @@ for persistence nothing depends on. Config only — no application code changes.
 **Owns:** `deployments/selfhost/deploy.sh`, `deployments/cli/community/docker-compose.yml`
 (fork-side override only), staging and production run-dir config on `server`.
 
+**Status: implemented 2026-08-27.** The override block in `deploy.sh` now writes the
+`plane-redis` command **unconditionally** — previously it was written only when `LOCAL_DB=0` or
+`LOCAL_STORAGE=0`, and the cache config must not depend on unrelated gate flags.
+
 ---
 
 ## Why
@@ -94,6 +98,35 @@ blind spot.
 5. Apply to **production** as a separate, explicit step after staging verifies (D4). Production
    holds 3 keys / 1.10 MB, so the change is not disruptive, but it restarts the container — confirm
    the API reconnects (`docker logs plane-fork-app-api-1 --tail 20`).
+
+## Verified 2026-08-27, before touching either stack
+
+Proven against throwaway Valkey containers rather than asserted.
+
+**The compose string splits correctly.** `command:` folds to a single string, which Compose splits
+shell-style, and `--save ""` is exactly the shape that silently half-works. It does not:
+
+```
+docker inspect -> ["valkey-server","--maxmemory","1gb","--maxmemory-policy","allkeys-lru","--save",""]
+maxmemory 1073741824 | maxmemory-policy allkeys-lru | save (empty) | appendonly no
+```
+
+**Eviction fires, and the old config genuinely failed.** Same 32 MB cap, same ~160 MB of writes:
+
+| Policy              | Keys stored     | Evicted    | Benchmark                                                     |
+| ------------------- | --------------- | ---------- | ------------------------------------------------------------- |
+| `noeviction` (old)  | 6,133 of 40,000 | 0          | **errored out, no throughput summary** — ~34k writes rejected |
+| `allkeys-lru` (new) | 6,132 of 40,000 | **28,206** | completed, 206,185 req/s                                      |
+
+Both held at 31.35 M. The ceiling is identical; the difference is entirely whether the application's
+writes succeed. That is the failure this phase removes.
+
+**RDB is off:** `/data` stays empty and `rdb_changes_since_last_save` climbs with no bgsave.
+
+_An earlier probe in this session appeared to show `noeviction` accepting a write under pressure and
+was inconclusive, not a disproof — `noeviction` rejects writes only while `used_memory > maxmemory`,
+so it hovers at the boundary and a tiny `SET` still fits. The table above writes enough to make the
+rejection unambiguous._
 
 ## Success criteria
 
