@@ -262,6 +262,37 @@ modified. Workspace `cocos` (57 projects, 6,906 issues), median of 9 runs.
 **The miss path is unchanged at 97.5 ms and that is expected** — Phase 4 is the phase that
 addresses it and has not been implemented. Recorded as not met rather than quietly rescoped.
 
+### Final measured state — all five phases on staging, 2026-08-27
+
+Produced by the committed harness (`deployments/selfhost/bench/redis_cache_bench.py`) against the
+deployed stack, not by an ad-hoc script.
+
+| Endpoint                          | Miss         | **Warm**    | Payload |                    |
+| --------------------------------- | ------------ | ----------- | ------- | ------------------ |
+| `workload` week/90d               | 87.9 ms      | **3.39 ms** | 478 KB  | 26x                |
+| `workload` day/30d                | 136.7 ms     | **3.42 ms** | 490 KB  | 40x                |
+| `workload` month/365d             | 110.3 ms     | **4.04 ms** | 841 KB  | 27x                |
+| `views_ext` ungrouped             | 67.4 ms      | **2.64 ms** | 81 KB   | 26x                |
+| **`views_ext` group_by=state_id** | **685.4 ms** | **5.80 ms** | 1900 KB | **118x**           |
+| `views_ext` +search               | 46.4 ms      | 47.62 ms    | 64 KB   | uncached by design |
+
+Every cached row: `hits 20 misses 1`, `identical True`, HTTP 200. The `+search` row showing
+warm ≈ miss with `hits 0 misses 0` is the bypass working, not a failure.
+
+**A finding the harness surfaced that this plan never knew about.** `views_ext` with `group_by`
+costs **685 ms and returns 1.9 MB** — ten times the ungrouped endpoint and by a wide margin the
+slowest path measured in this whole effort. It was invisible until now because the original probe
+used `group_by=state`, which is not in `ALLOWED_GROUP_BY_FIELDS` and 400s; a 400 renders as a very
+fast 2.6 ms / 0 KB row, so it read as the _cheapest_ endpoint rather than the most expensive. The
+harness now flags any non-200 row loudly for exactly that reason.
+
+This is the Views tab's default grouped layout, so it is a real user-facing path — and it gets the
+largest win here, 118x.
+
+**`slowlog len: 1`** is this session's own `FLUSHDB` (67 ms clearing 112,784 keys after the
+criterion-5 fill), and `evicted_keys: 112784` is that same test's cumulative count. Neither is
+application behaviour; both are recorded so a future reader does not chase them.
+
 ### A regression the bytes optimization caused, and the fix
 
 Returning a bare `HttpResponse` for pre-rendered bytes broke **18 views_ext tests** with
