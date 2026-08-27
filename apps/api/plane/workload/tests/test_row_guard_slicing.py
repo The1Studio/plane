@@ -11,7 +11,7 @@
 # Rationale and the equivalence argument: plane/workload/service.py, the
 # "Row guard" comment in compute_workload.
 
-from datetime import date, timedelta
+from datetime import date
 from unittest import mock
 
 from django.test import TransactionTestCase
