@@ -247,8 +247,14 @@ class DateRangeTests(_EndpointTestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data["results"]), 1)
-        # response.data holds native Python objects pre-render (a `date`, not a str)
-        self.assertEqual(response.data["results"][0]["target_date"], date(2026, 6, 15))
+        # This endpoint is response-cached (plane/workload_cache), so `.data` is
+        # decoded from the cached JSON rather than held pre-render: a `date`
+        # arrives as its ISO string. That is inherent to caching a rendered
+        # response — a date cannot round-trip through JSON and come back a date —
+        # and it is an IN-PROCESS difference only. The HTTP body is byte-identical
+        # to the uncached one, so no client sees a change.
+        # See plans/260826-redis-cache-workload-perf/plan.md § Measured outcome.
+        self.assertEqual(response.data["results"][0]["target_date"], date(2026, 6, 15).isoformat())
 
 
 class GuestVisibilityTests(_EndpointTestCase):

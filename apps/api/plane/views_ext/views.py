@@ -39,6 +39,13 @@ from rest_framework.response import Response
 # Module imports
 from plane.app.permissions import WorkspaceViewerPermission
 from plane.app.views.base import BaseAPIView
+from plane.workload_cache.cache import (
+    CachedJSONResponse,
+    get_cached_bytes,
+    render_json,
+    set_cached,
+)
+from plane.workload_cache.keys import SURFACE_VIEWSEXT
 from plane.db.models import (
     CycleIssue,
     FileAsset,
@@ -239,6 +246,34 @@ class GroupedWorkspaceViewIssuesEndpoint(BaseAPIView):
         return apply_issue_annotations(issues)
 
     def get(self, request, slug):
+        """Cache wrapper. All logic lives in _get_uncached.
+
+        Wrapping the whole method rather than its three paginate() return paths
+        keeps one cache-write site instead of three, so a future branch added to
+        _get_uncached cannot silently skip caching.
+
+        `search` is ephemeral free text (CLAUDE.md). It changes the response, so
+        it cannot simply be dropped from the key — but it is high-cardinality
+        and every entry would be read once, so the cache is skipped entirely
+        while it is set. Empty/absent search returns everything and is the
+        common, cacheable case.
+        """
+        cacheable = not (request.GET.get("search") or "").strip()
+        if cacheable:
+            cached = get_cached_bytes(SURFACE_VIEWSEXT, slug, request.user.id, request.GET)
+            if cached is not None:
+                return CachedJSONResponse(cached, status=status.HTTP_200_OK)
+
+        response = self._get_uncached(request, slug)
+
+        # 200 only. A cached 400 would outlive the condition that produced it.
+        if cacheable and response.status_code == status.HTTP_200_OK:
+            body = render_json(response.data)
+            set_cached(SURFACE_VIEWSEXT, slug, request.user.id, request.GET, body)
+            return CachedJSONResponse(body, status=status.HTTP_200_OK)
+        return response
+
+    def _get_uncached(self, request, slug):
         group_by = request.GET.get("group_by") or None
         sub_group_by = request.GET.get("sub_group_by") or None
 

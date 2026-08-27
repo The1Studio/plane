@@ -420,6 +420,31 @@ New backend code lives in **new Django apps**:
   `plane.api.views.user` / `plane.api.urls.user` are not touch-points, so the endpoint lives
   here. Returns only workspaces the caller is an _active_ member of. Model-less (read-only over
   core models), so it ships no `migrations/`.
+- `apps/api/plane/workload_cache/` — versioned-key response caching for the workload timeline and
+  the views-ext issue list. Model-less and endpoint-less: no `migrations/`, no `urls.py`, no
+  touch-point 2 entry — a library plus signal receivers, registered via touch-point 1 only.
+
+  **It targets Redis db1, and that separation is load-bearing rather than cosmetic.** Core's
+  `invalidate_cache(..., multiple=True)` (`plane/utils/cache.py`) issues a blocking `KEYS` sweep,
+  and `KEYS` is scoped **per database**. Core's own cache sits on db0 — `plane/settings/redis.py`
+  pins `db=0` explicitly — so keeping fork entries on db1 means those sweeps never traverse them
+  however large this keyspace grows. Measured: `KEYS` over a 20,000-key space stalls the
+  single-threaded server for 21.1 ms, and this cache adds entries of ~320 KB each.
+
+  The alternative — a `CACHES` alias in `settings/common.py` — was rejected because it would be a
+  core edit outside the seven touch-points. The fork app builds its own client from `REDIS_URL`
+  instead, so `common.py` is touched only for `INSTALLED_APPS`.
+
+  **Two caveats a future reader needs.** `maxmemory` is instance-wide, not per-database, so a db1
+  fill _can_ evict core's db0 keys — reproduced on staging, and mild, because db0 holds
+  TTL-bearing `cache_response` entries that rebuild on the next request. And the core `KEYS`
+  hazard is **contained, not fixed**: it remains for core endpoints, and fixing it would be a
+  core-file edit.
+
+  Freshness, the random-token version key, the no-TTL reclamation model, and the two param-hashing
+  modes: `CLAUDE.md` § "Custom features (fork-owned)" and
+  `plans/260826-redis-cache-workload-perf/references/cache-contract.md`.
+
 - `apps/api/plane/issue_defaults_ext/` — creation defaults for work items: an absent assignee
   field falls back to the creator, an absent `target_date` becomes today. Model-less (read-only
   over core models), so it ships no `migrations/`, and endpoint-less, so it takes no touch-point 2
