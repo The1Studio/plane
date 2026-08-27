@@ -10,8 +10,12 @@ phase: a missed bump does not fail loudly, it silently serves stale data that lo
 coverage).
 
 **Contract:** [`references/cache-contract.md`](references/cache-contract.md). Call only
-`get_cached` / `set_cached` / `bump_workspace`. Do **not** construct a key, touch the client, or
-read the version counter directly.
+`get_cached_bytes` / `render_json` / `set_cached` / `bump_workspace` and return
+`CachedJSONResponse`. Do **not** construct a key, touch the client, or read the version counter
+directly.
+
+**Status: implemented 2026-08-27** (commit `ff8edbdf3b`). Where the guidance below was disproved by
+measurement, the correction is marked inline rather than the original being quietly deleted.
 
 ---
 
@@ -49,24 +53,36 @@ design.
 Derived from the 13 queries `compute_workload` actually runs (`plan.md` § query breakdown) — each
 model below is read by the endpoint, so a change to it can change the response:
 
-| Model              | Why it affects output                                                               | Slug resolution                 |
-| ------------------ | ----------------------------------------------------------------------------------- | ------------------------------- |
-| `WorkloadEstimate` | hours per issue (queries 7, 9, 11)                                                  | `instance.issue.workspace.slug` |
-| `Issue`            | `start_date`, `target_date`, `name`, state (queries 8, 10)                          | `instance.workspace.slug`       |
-| `IssueAssignee`    | which swimlane a bar sits in (query 12)                                             | `instance.issue.workspace.slug` |
-| `WorkloadSettings` | `max_daily_hours`, workdays, week start (query 3)                                   | `instance.workspace.slug`       |
-| `ProjectMember`    | which rows exist at all — every active member gets a row (queries 2, 6, 13)         | `instance.workspace.slug`       |
-| `State`            | `state_name` / `state_color` on every bar                                           | `instance.workspace.slug`       |
-| `Workspace`        | `timezone`, which sets the workspace-local "today" and the `overdue` flag (query 4) | `instance.slug`                 |
+| Model              | Why it affects output                                                               | Slug resolution         |
+| ------------------ | ----------------------------------------------------------------------------------- | ----------------------- |
+| `WorkloadEstimate` | hours per issue (queries 7, 9, 11)                                                  | `instance.workspace_id` |
+| `Issue`            | `start_date`, `target_date`, `name`, state (queries 8, 10)                          | `instance.workspace_id` |
+| `IssueAssignee`    | which swimlane a bar sits in (query 12)                                             | `instance.workspace_id` |
+| `WorkloadSettings` | `max_daily_hours`, workdays, week start (query 3)                                   | `instance.workspace_id` |
+| `ProjectMember`    | which rows exist at all — every active member gets a row (queries 2, 6, 13)         | `instance.workspace_id` |
+| `State`            | `state_name` / `state_color` on every bar                                           | `instance.workspace_id` |
+| `Workspace`        | `timezone`, which sets the workspace-local "today" and the `overdue` flag (query 4) | `instance.slug`         |
 
 `Project` is deliberately **absent**: a project rename does not appear in the response
 (`tasks[].project_id` is a UUID). If Phase 4 or a later change surfaces a project name, this table
 gains a row — note that dependency rather than leaving it implicit.
 
-**Resolve the slug without an extra query per write.** Several of these need a join to reach the
-workspace slug; use `values_list` on the FK id or a cached slug lookup rather than
-`instance.issue.workspace.slug`, which is three dereferences and a query on every issue save. A
-bump that costs a DB round-trip on the hot write path trades one problem for another.
+**Slug resolution — this guidance was WRONG and is corrected.** The original text called for a memo
+to avoid a per-write slug lookup. Two things were found on implementing it:
+
+1. **Every one of these models carries `workspace_id` directly** — the four `ProjectBaseModel`
+   subclasses inherit it, and both workload models declare it explicitly. So the "three
+   dereferences" the original feared never existed; the `instance.issue.workspace.slug` column in
+   the table above was wrong for `WorkloadEstimate` and `IssueAssignee` alike.
+2. **The remaining `workspace_id` -> slug lookup costs 0.367 ms**, against a 0.717 ms bare
+   `Issue.save()`, at a measured ~58 writes/hour across all workspaces — about **21 ms of database
+   time per hour** in total. Building machinery to save that is the premature optimization the
+   guidance itself warns against elsewhere.
+
+A memo is also _incorrect_, not merely unnecessary: signals are in-process, so a workspace rename
+handled by one worker leaves every other worker's memo stale, bumping the old slug forever while
+reads under the new one are never invalidated. Reading fresh is simpler and is the only variant
+that cannot silently serve stale data.
 
 ## Steps
 

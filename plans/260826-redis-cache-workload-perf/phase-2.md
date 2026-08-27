@@ -8,6 +8,11 @@ exactly the three functions Phase 3 consumes.
 **Owns:** `apps/api/plane/workload_cache/` (new, exclusive), plus the two registration lines in
 `settings/common.py` `INSTALLED_APPS` (touch-point 1) — no other core file.
 
+**Status: implemented 2026-08-27** (commit `ff8edbdf3b`). The public interface below was amended
+during implementation — entries store pre-rendered JSON bytes, not dicts, and the module also
+exports `render_json` and `CachedJSONResponse`. See `plan.md` § Measured outcome for why (an ~11 ms
+decode/re-encode round-trip per hit) and the contract file for the amended shape.
+
 **Contract:** [`references/cache-contract.md`](references/cache-contract.md) is the SSOT for the key
 format, reclamation semantics, connection, and public interface. **Read it before writing any code; do not re-derive
 any of it here.** Phase 3 codes against that file, not against this one.
@@ -100,8 +105,8 @@ Unit tests, no live Redis required beyond the containerized instance already run
 - `python manage.py makemigrations --check --dry-run` reports **no** new migrations (the app is
   model-less; a migration appearing means a model was added by mistake).
 - `python manage.py check` clean.
-- The three public functions are importable and nothing else is exported —
-  `from plane.workload_cache.cache import get_cached, set_cached, bump_workspace`.
+- The public surface is importable —
+  `from plane.workload_cache.cache import get_cached_bytes, render_json, set_cached, bump_workspace, CachedJSONResponse`.
 
 ## Out of scope
 
