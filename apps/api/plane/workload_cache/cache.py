@@ -15,6 +15,7 @@
 
 import json
 import logging
+import uuid
 
 from django.http import HttpResponse
 from rest_framework.renderers import JSONRenderer
@@ -27,23 +28,62 @@ _renderer = JSONRenderer()
 logger = logging.getLogger(__name__)
 
 
-def _get_version(client, slug):
-    """Current version for a workspace. A missing counter reads as 0.
+def _read_version(client, slug):
+    """Current version TOKEN for a workspace, or None when the key is ABSENT.
 
-    Deliberately does NOT write the counter on read: a read that writes turns
-    every cache miss into a Redis write, and the counter's absence already means
-    exactly what 0 means.
+    None is not "version zero", and the distinction is load-bearing. `allkeys-lru`
+    can evict this key: observed 2026-08-27 on staging, filling db1 to its 1 GB
+    bound evicted 112,784 keys including every `wlc:ver:*`. A reader that treated
+    absence as a default version would look for entries under that version — and
+    if any survived the same sweep, it would serve data superseded long ago as
+    though fresh. Absence therefore means "do not serve", which degrades to a
+    recompute.
+
+    Deliberately does NOT write on read: a read that writes turns every cache
+    miss into a Redis write.
     """
     raw = client.get(version_key(slug))
     if raw is None:
-        return 0
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        # A corrupt counter must not wedge the cache permanently. Treating it
-        # as 0 costs one generation of misses and self-heals on the next bump.
-        logger.warning("workload_cache: non-integer version for %s — treating as 0", slug)
-        return 0
+        return None
+    if isinstance(raw, (bytes, bytearray)):
+        raw = raw.decode("utf-8", "replace")
+    return raw or None
+
+
+def _new_version():
+    """A fresh, unguessable version token.
+
+    A RANDOM TOKEN, not an incrementing counter — and this is the second design
+    here, not the first. A counter is the obvious choice and has a failure mode
+    that only shows up once the key can be evicted: after eviction the counter
+    has to restart from something, and anything it restarts from can re-enter a
+    range that entries surviving the same eviction were written under, making
+    superseded data reachable again.
+
+    Seeding the restart from the server clock narrows that window but does not
+    close it — a burst of bumps can outrun the clock, and
+    `test_reseed_cannot_re_reach_surviving_entries` failed on exactly that
+    (reseed 1800000000 against versions already at 1800000002). A random token
+    closes it outright: a new token cannot collide with any token ever used, so
+    old entries are unreachable forever regardless of what survived, what the
+    clock says, or how fast writes arrive.
+
+    It also removes the need for ordering entirely — nothing compares two
+    versions, so there is no monotonicity to preserve.
+    """
+    return uuid.uuid4().hex
+
+
+def _ensure_version(client, slug):
+    """Return the current token, creating one if absent."""
+    version = _read_version(client, slug)
+    if version is not None:
+        return version
+    token = _new_version()
+    # nx=True so two workers racing to recreate an evicted key cannot clobber
+    # each other; whichever lands first wins and the other adopts it.
+    client.set(version_key(slug), token, nx=True)
+    return _read_version(client, slug) or token
 
 
 def get_cached_bytes(surface, slug, user_id, params):
@@ -67,7 +107,12 @@ def get_cached_bytes(surface, slug, user_id, params):
     if client is None:
         return None
     try:
-        version = _get_version(client, slug)
+        version = _read_version(client, slug)
+        if version is None:
+            # Token gone (evicted, or never written). Do NOT substitute a
+            # default — see _read_version. A miss is always safe; a wrong
+            # version is not.
+            return None
         return client.get(entry_key(surface, slug, user_id, version, params))
     except Exception:
         logger.warning("workload_cache: read failed for %s/%s — serving uncached", surface, slug, exc_info=True)
@@ -95,7 +140,7 @@ def set_cached(surface, slug, user_id, params, value):
     if client is None:
         return
     try:
-        version = _get_version(client, slug)
+        version = _ensure_version(client, slug)
         client.set(
             entry_key(surface, slug, user_id, version, params),
             value if isinstance(value, (bytes, bytearray)) else render_json(value),
@@ -117,7 +162,11 @@ def bump_workspace(slug):
         # No client at all means nothing was ever cached, so there is nothing
         # stale to serve. This is not the swallowed-error case above.
         return
-    client.incr(version_key(slug))
+    # A plain SET of a fresh token. Every prior entry for this workspace becomes
+    # unreachable at once — O(1), no key scanning, and no ordering to preserve.
+    # Two concurrent bumps both write fresh tokens and both invalidate; whichever
+    # lands last simply wins.
+    client.set(version_key(slug), _new_version())
 
 
 class CachedJSONResponse(HttpResponse):

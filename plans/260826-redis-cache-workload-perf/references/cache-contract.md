@@ -35,17 +35,33 @@ wlc:v{version}:{surface}:{workspace_slug}:{user_id}:{params_hash}
 `state_groups`. Unrecognized params are excluded, not hashed, so a tracking param cannot fragment
 the cache.
 
-## Version counter
+## Version token
 
 ```
-wlc:ver:{workspace_slug}   ->  integer
+wlc:ver:{workspace_slug}   ->  random hex token (uuid4)
 ```
 
-- Read with `GET`; a missing counter reads as `0` and is **not** written on read.
-- Bumped with `INCR` — atomic, O(1), no key scanning.
-- Never expires.
-- A bump does not delete anything. Superseded entries become unreachable and are reclaimed only by
-  `allkeys-lru` eviction — see § Reclamation.
+- Read with `GET`. **Absent means "do not serve"** — never a default version.
+- Bumped with a plain `SET` of a fresh token. O(1), no key scanning, no ordering.
+- Carries no expiry, like every other key.
+
+**A random token, not an incrementing counter — amended 2026-08-27.** The
+original design used `INCR`. That is the obvious choice and it has a failure mode
+that only appears once the key can be evicted, which it can: filling staging's
+db1 to its 1 GB bound evicted 112,784 keys including _every_ `wlc:ver:*`. A
+counter then has to restart from something, and anything it restarts from can
+re-enter a range that entries surviving the same sweep were written under —
+making superseded data reachable again.
+
+Seeding the restart from the server clock narrows the window and does not close
+it: a burst of bumps outruns the clock.
+`test_recreated_version_cannot_re_reach_surviving_entries` failed on exactly
+that, with a reseed of `1800000000` against versions already at `1800000002`.
+
+A random token closes it outright — a new token cannot collide with any token
+ever used, so old entries stay unreachable regardless of what survived, what the
+clock reads, or how fast writes arrive. It also removes ordering entirely:
+nothing compares two versions, so there is no monotonicity to preserve.
 
 ## Invalidation semantics
 

@@ -6,7 +6,16 @@ next person does not rebuild it (`rules/search-before-you-build.md`).
 **Depends on:** Phases 1, 3 and 4. **Serial terminal wave** — it drives one staging stack, a
 single-instance resource that cannot be exercised by concurrent lanes.
 
-**Owns:** `scripts/bench/`, `docs/FORK.md`, `CLAUDE.md`.
+**Owns:** `deployments/selfhost/bench/`, `docs/FORK.md`, `CLAUDE.md`.
+
+**Status: implemented 2026-08-27.** Script names follow the repo's own convention rather than this
+file's original suggestion — `.py` snake_case, `.sh` kebab-case, enforced by a naming validator:
+`redis_cache_bench.py` and `redis-server-bench.sh`.
+
+**Criterion 5 FAILED and is recorded as failed.** See `plan.md` § "The evicted-version-key risk".
+The db1 fill evicted core's db0 key _and_ every `wlc:ver:*`, which reproduced a staleness path
+previously filed as "unlikely, not mitigated". It is now closed — absence means do-not-serve, and
+the version is a random token rather than a counter.
 
 ---
 
@@ -16,11 +25,16 @@ The measurements behind this plan were ad-hoc scripts copied into a container. C
 before/after is reproducible:
 
 ```
-scripts/bench/
-  redis_cache_bench.py     # endpoint medians, query counts, payload sizes
-  redis_server_bench.sh    # valkey-benchmark + INFO capture
+deployments/selfhost/bench/
+  redis_cache_bench.py     # endpoint medians, query counts, payload sizes, HIT RATE
+  redis-server-bench.sh    # valkey-benchmark + INFO capture + eviction proof
   README.md                # how to run against staging, and what each number means
 ```
+
+**Not** under a top-level `scripts/` as this file originally said: `scripts/` is gitignored in this
+repo (`.gitignore:112`), and an untracked benchmark is one nobody else can run. `deployments/selfhost/`
+is the tracked home for ops tooling that drives a live stack — `deploy.sh` and
+`clone-prod-db-to-staging.sh` already live there.
 
 `redis_cache_bench.py` must report, for each endpoint: median / min / max over N runs, query count,
 SQL ms, payload KB, **and the cache hit rate for the run**. The hit rate is not decoration — without
@@ -80,7 +94,11 @@ the present).
 
 Per the CLAUDE.md standing rule:
 
-- **`CLAUDE.md` § "Custom features (fork-owned)"** — add a `workload_cache/` entry: versioned-key
+- **`docs/FORK.md`** is the DURABLE record. `CLAUDE.md` is gitignored by design (its own header
+  says so — it is local operator state, and `docs/FORK.md` is the version-controlled SSOT), so a
+  `CLAUDE.md`-only entry ships to nobody. Write the substance into `docs/FORK.md` and mirror it
+  locally into `CLAUDE.md`.
+- **`CLAUDE.md` § "Custom features (fork-owned)"** — mirror the `workload_cache/` entry: versioned-key
   response caching for the workload and views-ext endpoints, db1, zero-staleness via `INCR` on a
   per-workspace counter, model-less and endpoint-less (no migrations, no touch-point 2 entry).
 - **`docs/FORK.md`** — record the db1 convention and _why_ (core's `KEYS *` is per-database, so
