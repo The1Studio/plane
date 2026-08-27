@@ -133,9 +133,11 @@ that. Versioned keys do, at O(1).
 
 - RDB persistence is on (`save 3600 1 300 100 60 10000`) for a pure cache — a periodic background
   fork and disk write nothing depends on. Addressed in Phase 1.
-- `SESSION_ENGINE = "plane.db.models.session"` — sessions are in Postgres at **0.389 ms per
-  authenticated request**. Real but small, and the model carries a custom `device_info` column that
-  a naive move to Redis would break. **Not in scope**; recorded for a future decision.
+- `SESSION_ENGINE = "plane.db.models.session"` — sessions are in Postgres. **0.389 ms per
+  authenticated request on staging, but 47 ms in production** (Neon is remote). See
+  "Production, 2026-08-27" above: this is NOT the minor item this line originally called it. The
+  model carries a custom `device_info` column that a naive move to Redis would break, so it still
+  needs design work — but it is now the largest known lever, not a footnote.
 - `mem_fragmentation_ratio: 12.47` is **not** a finding. It is 1.10 MB live against 13.25 MB
   baseline RSS on an almost-empty instance, not fragmentation. Do not act on it.
 - The Valkey container has no CPU or memory limit. Given 23 G available on the host and a 1 G cache
@@ -261,6 +263,48 @@ modified. Workspace `cocos` (57 projects, 6,906 issues), median of 9 runs.
 
 **The miss path is unchanged at 97.5 ms and that is expected** — Phase 4 is the phase that
 addresses it and has not been implemented. Recorded as not met rather than quietly rescoped.
+
+### Production, 2026-08-27 — a 10x win, and a floor that is NOT this endpoint
+
+Promoted to `master` and deployed. Verified read-only against production (no user row was
+modified; invalidation was proven with a cache-only version bump).
+
+|                          | Staging | **Production** |
+| ------------------------ | ------- | -------------- |
+| `workload` week/90d MISS | 87.9 ms | **1442.9 ms**  |
+| `workload` week/90d WARM | 3.39 ms | **141.7 ms**   |
+| speedup                  | 26x     | **10.2x**      |
+
+The win is real and large. It is **not** the staging number, and the reason matters more than the
+gap.
+
+**138 ms of that 141.7 ms warm path is three database round-trips that happen BEFORE the cache is
+ever consulted:**
+
+| Query on a cache HIT                   | ms        |
+| -------------------------------------- | --------- |
+| session lookup                         | 47.0      |
+| user lookup                            | 46.0      |
+| permission check (`workspace_members`) | 45.0      |
+| **total SQL on a hit**                 | **138.0** |
+
+Production's database is **Neon, and it is remote**: a bare `SELECT 1` costs **62.75 ms**, against a
+local Redis `PING` of 0.11 ms. Staging runs a Postgres container on the same host, where those same
+three queries are sub-millisecond — which is the entire difference between 3.39 ms and 141.7 ms.
+
+**What this means for the roadmap.** The cache did its job: it removed the 11 workload queries and
+the aggregation, which is the ~1300 ms. What is left is a per-request auth floor that this endpoint
+does not own and cannot fix, and that **every authenticated endpoint in production pays**. Phase 4's
+remaining < 75 ms miss-path target is now beside the point in production — 138 ms of auth is
+already double it.
+
+**A correction to this plan's own earlier note.** The "lower-priority findings" section recorded
+sessions-in-Postgres at **0.389 ms per authenticated request** and dismissed it as "real but small".
+That number was measured on staging. In production it is **47 ms — roughly 120x more expensive** —
+and it is joined by a user lookup and a permission check of the same magnitude. Session and
+permission caching is therefore not a minor cleanup in production; on this evidence it is the
+single largest remaining lever, worth more than anything left in Phase 4. Recorded here rather than
+left as a stale "low priority" line that was only ever true of staging.
 
 ### Final measured state — all five phases on staging, 2026-08-27
 
