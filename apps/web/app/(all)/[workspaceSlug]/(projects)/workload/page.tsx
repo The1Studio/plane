@@ -17,9 +17,10 @@
 "use client";
 import { useCallback, useEffect, useRef } from "react";
 import { observer } from "mobx-react";
-import { useParams } from "react-router";
+import { useParams, useSearchParams } from "react-router";
 import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
-import { wlt, WorkloadToolbar } from "@plane/workload-ext";
+import type { TWorkloadFilterSelection } from "@plane/workload-ext";
+import { parseWorkloadFilterParams, wlt, WorkloadToolbar, writeWorkloadFilterParams } from "@plane/workload-ext";
 import { PageHead } from "@/components/core/page-title";
 import { MemberDropdown } from "@/components/dropdowns/member/dropdown";
 import { ProjectDropdown } from "@/components/dropdowns/project/dropdown";
@@ -30,8 +31,14 @@ import { useIssueDetail } from "@/hooks/store/use-issue-detail";
 import { useUserPermissions } from "@/hooks/store/user";
 import { useWorkload } from "@/hooks/store/use-workload";
 
+/** Order-sensitive compare — the selections are read back in the order they were written. */
+function sameSelection(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
 export default observer(function WorkloadPage() {
   const { workspaceSlug = "" } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const workloadStore = useWorkload();
   const { allowPermissions } = useUserPermissions();
   const { peekIssue } = useIssueDetail();
@@ -74,18 +81,64 @@ export default observer(function WorkloadPage() {
     hadPeekRef.current = isOpen;
   }, [peekIssue, workloadStore, workspaceSlug]);
 
+  // ── Filter persistence (The1Studio/plane#55) ───────────────────────────────
+  // The filters live on a SINGLETON store with no persistence of its own, so
+  // before this every reload dropped them and the reader re-picked all three.
+  // They are mirrored into the URL rather than localStorage: a filtered board
+  // is then shareable and bookmarkable, which is the report's "another device
+  // or session" case, and there is no stale key to migrate later. Encoding is
+  // `packages/workload-ext/src/filterParams.ts` — the same param names the
+  // request already carries.
+
+  const applyFilterParams = useCallback(
+    (patch: Partial<TWorkloadFilterSelection>) => {
+      // `replace`, not push: a filter change is a change of view, not a
+      // destination, and pushing would make Back walk every dropdown click.
+      setSearchParams((prev) => writeWorkloadFilterParams(prev, patch), { replace: true });
+    },
+    [setSearchParams]
+  );
+
+  // Seeds the store from the URL once per workspace. The ref starts `null`
+  // rather than at the current slug, which is what makes it correct on BOTH
+  // paths the comment above describes: a fresh mount (workspace switch through
+  // an intermediate route) seeds because `null !== workspaceSlug`, and an
+  // in-place slug change seeds because the previous slug !== the new one. It
+  // is deliberately NOT the "did the prop change" comparison that failed here
+  // before — that one had to DETECT a change on a fresh mount, and a ref
+  // seeded from the current value never can.
+  //
+  // Seeding a workspace whose URL carries no filters clears whatever the
+  // singleton is still holding from the previous one, so filters cannot bleed
+  // across a switch. Each setter is called only when the value actually
+  // differs, so the common no-filters visit costs no `resetCoverage` at all.
+  const seededWorkspaceRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!workspaceSlug || seededWorkspaceRef.current === workspaceSlug) return;
+    seededWorkspaceRef.current = workspaceSlug;
+    const seeded = parseWorkloadFilterParams(searchParams);
+    if (!sameSelection(seeded.projectIds, workloadStore.selectedProjectIds))
+      workloadStore.setProjectIds(seeded.projectIds);
+    if (!sameSelection(seeded.assigneeIds, workloadStore.selectedAssigneeIds))
+      workloadStore.setAssigneeIds(seeded.assigneeIds);
+    if (!sameSelection(seeded.stateGroups, workloadStore.selectedStateGroups))
+      workloadStore.setStateGroups(seeded.stateGroups);
+  }, [workspaceSlug, searchParams, workloadStore]);
+
   const handleMemberChange = useCallback(
     (ids: string[]) => {
       workloadStore.setAssigneeIds(ids);
+      applyFilterParams({ assigneeIds: ids });
     },
-    [workloadStore]
+    [workloadStore, applyFilterParams]
   );
 
   const handleProjectChange = useCallback(
     (ids: string[]) => {
       workloadStore.setProjectIds(ids);
+      applyFilterParams({ projectIds: ids });
     },
-    [workloadStore]
+    [workloadStore, applyFilterParams]
   );
 
   // Same setter the state-group chips used to call. An EMPTY selection means
@@ -94,9 +147,17 @@ export default observer(function WorkloadPage() {
   const handleStateGroupChange = useCallback(
     (keys: string[]) => {
       workloadStore.setStateGroups(keys);
+      applyFilterParams({ stateGroups: keys });
     },
-    [workloadStore]
+    [workloadStore, applyFilterParams]
   );
+
+  // "Clear filters" empties the store inside the toolbar; this strips the
+  // params it left behind. Without it the board clears and the next reload
+  // restores exactly the filters that were just cleared.
+  const handleFiltersCleared = useCallback(() => {
+    applyFilterParams({ projectIds: [], assigneeIds: [], stateGroups: [] });
+  }, [applyFilterParams]);
 
   return (
     <>
@@ -106,6 +167,7 @@ export default observer(function WorkloadPage() {
           store={workloadStore}
           workspaceSlug={workspaceSlug}
           isAdmin={isAdmin}
+          onFiltersCleared={handleFiltersCleared}
           memberFilterSlot={
             <MemberDropdown
               multiple

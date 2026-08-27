@@ -139,5 +139,8 @@ Phases 1 and 2 own disjoint file sets, but Phase 2 cannot start before the Phase
 - Backend changes — none needed.
 - First test file for `workload-ext` — worth doing, but not part of this change.
 - The workspace page shell (`page.tsx` renders a bare `<h1>` instead of Plane's `AppHeader` / `ContentWrapper`) — a separate polish item.
-- Saved/persisted filter state (URL params or localStorage) — filters reset on reload.
+- ~~Saved/persisted filter state (URL params or localStorage) — filters reset on reload.~~
+  **Shipped later, out of this plan** — the reset was reported as a bug (The1Studio/plane#55) and
+  the selection is now mirrored into the URL search params. See
+  `packages/workload-ext/src/filterParams.ts` and the workload `page.tsx` seeding effect.
 - Feature propagation (`docs/FORK.md` §Feature propagation): this ships **no new endpoint, field, or behavior** — it renders filters the API already supports. No MCP/SDK/plugin propagation required. Confirm during review.
