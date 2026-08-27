@@ -331,6 +331,30 @@ a red for the wrong reason is exactly as untrustworthy as a false green.
 failing with `No post_save version-bump receiver for: ['State']` before being restored. A gate
 never seen failing is unproven (`rules/green-that-proves-nothing.md`).
 
+### Known risk found during cleanup — an evicted version counter
+
+`wlc:ver:{slug}` counters carry no expiry, like every other key (D6), and are therefore **eligible
+for `allkeys-lru` eviction**. If a counter is evicted it reads as `0` again, and any surviving
+`v0` entry for that workspace — written before its first bump and not yet evicted itself — would
+be served as though fresh. That is a genuine silent-staleness path, the one this design otherwise
+closes.
+
+**Why it is unlikely rather than theoretical:** the counter is read on _every_ request for its
+workspace, making it that workspace's hottest key, while payload entries are read far less often
+and are ~320 KB each. LRU should evict payloads long before counters. Unlikely is not impossible,
+though, and the failure is silent, so it is recorded rather than reasoned away.
+
+**Not yet mitigated.** Options for Phase 5 or a follow-up, in rough order of preference: have
+`get_cached_bytes` treat a _missing_ counter as "do not serve" rather than as version 0 (turning
+the failure into a miss, which is the safe direction); or persist counters outside the LRU
+keyspace. Do not reach for `volatile-lru` — it would make the no-TTL entries entirely unevictable,
+which is the failure Phase 1 exists to remove.
+
+**Operational note:** running the test suite against a shared Redis leaves one counter per
+throwaway workspace behind, and they never expire. A verification run on 2026-08-27 left 725 such
+keys (8.12 MB) in staging's db1; they were flushed after confirming db1 held no non-`wlc:` keys.
+Phase 5's harness should use a dedicated db index or clean up after itself.
+
 ### Corrections to the plan made during implementation
 
 1. **`views_ext` cannot use a closed allow-list.** The contract prescribed hashing an allow-list of
