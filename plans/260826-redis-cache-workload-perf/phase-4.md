@@ -10,6 +10,64 @@ existing; this phase must stand on its own with caching disabled.
 
 ---
 
+## STATUS 2026-08-27 — partially implemented, target NOT met
+
+The ROW_GUARD counts are gone (95 → 87 ms, output byte-identical). **The < 75 ms target is not
+reached and is not claimed.** What follows is the corrected picture; the original analysis below it
+was wrong in an important way and is kept so the error is legible.
+
+### The original attribution in this file was WRONG
+
+This phase was scoped on `connection.queries` timing, which reported 38 ms of SQL against a 99 ms
+wall — from which it concluded "~61 ms (62%) is Python aggregation plus DRF serialization."
+
+**`connection.queries` measures cursor execute time only. It excludes ORM row materialization.**
+Profiling showed `JSONRenderer.render` costs **3.5 ms**, not tens of ms — serialization was never
+the problem, and a phase spent optimizing it would have optimized nothing.
+
+### The real breakdown (unprofiled, per-helper timing, workspace `cocos`)
+
+| Phase                                      | ms/run    |                          |
+| ------------------------------------------ | --------- | ------------------------ |
+| `_resolve_owners`                          | 29.47     | at its floor — see below |
+| aggregation loop (`spread_estimate` ×1937) | 28.26     | not attempted, see below |
+| row materialization (est + unest)          | 17.44     |                          |
+| **ROW_GUARD counts**                       | **11.42** | **removed**              |
+| everything else                            | ~8.8      |                          |
+| **total**                                  | **95.44** |                          |
+
+### `_resolve_owners` is already the fastest shape — two alternatives tested, both slower
+
+| Variant                                                   | ms        |
+| --------------------------------------------------------- | --------- |
+| current (single query, `Exists` subquery + name join)     | **19.24** |
+| membership resolved once, filtered in Python              | 27.31     |
+| `display_name` resolved separately from a 22-row user set | 24.48     |
+
+All three returned identical results. The `Exists` correlated subquery _looks_ like the obvious
+bottleneck and is not. Recorded so the next reader does not re-test the same two ideas.
+
+### The aggregation loop was deliberately not touched
+
+`spread_estimate` runs ~1937 times at ~14 µs/call — the cost is volume, not inefficiency. Its
+docstring documents a real clobber incident (a member's July total reading 193.5 h then 25 h across
+scrolls) and explicitly says _"Do NOT 'fix' this asymmetry."_ Reaching < 75 ms requires cutting into
+this ~28 ms, and that must not happen without the golden-fixture matrix this phase specifies. It is
+the remaining work, not a gap in the analysis.
+
+### Measured result of what WAS done
+
+| Request        | Before    | After         | Queries |
+| -------------- | --------- | ------------- | ------- |
+| `week`, 90 d   | 94.87 ms  | **86.96 ms**  | 13 → 11 |
+| `day`, 30 d    | 94.41 ms  | **83.36 ms**  | 13 → 11 |
+| `month`, 365 d | 117.24 ms | **103.26 ms** | 13 → 11 |
+
+Output **byte-identical** at all three granularities — the guard's rewrite is provably
+behaviour-neutral, not merely believed to be.
+
+---
+
 ## The measured budget, and a correction to carry
 
 `compute_workload` at `granularity=week`, 90-day span, workspace `cocos`:
