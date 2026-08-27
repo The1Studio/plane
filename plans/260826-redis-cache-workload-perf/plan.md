@@ -190,7 +190,7 @@ Two consequences to hold in mind, neither blocking:
 | [2](phase-2.md) | Versioned-key cache layer in a fork app                    | `plane/workload_cache/` (new)                 | —          |
 | [3](phase-3.md) | Wire workload + views_ext endpoints and version-bump hooks | `plane/workload/`, `plane/views_ext/`         | 2          |
 | [4](phase-4.md) | Miss-path optimization — queries and serialization         | `plane/workload/service.py`, `aggregation.py` | —          |
-| [5](phase-5.md) | Benchmark harness, verification, propagation               | `scripts/bench/`, `docs/`, `CLAUDE.md`        | 1,3,4      |
+| [5](phase-5.md) | Benchmark harness, verification, propagation               | `deployments/selfhost/bench/`, `docs/`        | 1,3,4      |
 
 Phases **1, 2 and 4 are mutually independent** and may run in parallel — disjoint file sets, no
 shared declarations. Phase 3 consumes the module Phase 2 declares, so the cache-key format and the
@@ -331,7 +331,45 @@ a red for the wrong reason is exactly as untrustworthy as a false green.
 failing with `No post_save version-bump receiver for: ['State']` before being restored. A gate
 never seen failing is unproven (`rules/green-that-proves-nothing.md`).
 
-### Known risk found during cleanup — an evicted version counter
+### The evicted-version-key risk — found, then REPRODUCED, then closed
+
+An earlier revision of this section recorded this as "unlikely rather than
+theoretical" and left it unmitigated. **Phase 5's criterion 5 reproduced it.**
+
+Filling staging's db1 to its 1 GB bound (2026-08-27) evicted **112,784 keys —
+including every `wlc:ver:*`**, and also evicted core's single db0 key. The
+"unlikely" reasoning had been that the version key is each workspace's hottest
+key and LRU evicts coldest-first; that holds in steady state and does not hold
+under a bulk sweep, where 300k newer keys make everything pre-existing look cold.
+
+Two things followed.
+
+**1. Absence now means "do not serve", never a default version.** A reader that
+substituted a default would look for entries under it and serve anything that
+survived the same sweep as though fresh. A miss is always safe; a wrong version
+is not.
+
+**2. The version became a random token instead of an `INCR` counter.** Absence
+handling alone was not enough: a counter has to restart from _something_ after
+eviction, and anything it restarts from can re-enter a range that surviving
+entries were written under. Seeding the restart from the server clock narrows
+that and does not close it — a burst of bumps outruns the clock, and
+`test_recreated_version_cannot_re_reach_surviving_entries` failed on precisely
+that, reseeding to `1800000000` while versions already used had reached
+`1800000002`. A random token cannot collide with any token ever used, so the
+class of problem disappears rather than becoming improbable.
+
+That test was written to pin the fix and instead **failed against the fix**,
+which is what caught the clock-seeding flaw before it shipped.
+
+**Criterion 5 is recorded as FAILED, not adjusted.** Core's db0 key _was_
+evicted under fork pressure, so D5's containment claim ("core keys should always
+rank hot") is wrong under a bulk fill. The consequence is mild — db0 holds
+TTL-bearing `cache_response` entries that rebuild on the next request, verified
+by `/api/instances/` returning 200 and db0 repopulating immediately — but the
+claim was wrong and is corrected rather than re-scoped.
+
+### Superseded: the original note on this risk
 
 `wlc:ver:{slug}` counters carry no expiry, like every other key (D6), and are therefore **eligible
 for `allkeys-lru` eviction**. If a counter is evicted it reads as `0` again, and any surviving
