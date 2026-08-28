@@ -76,3 +76,10 @@ Entries written by `plane-scaffold-feature` / `plane-propagate`; processed entri
   - `docs` + `developer-docs` — the `reason` enum, the 400 shapes, and the pruning behavior change.
   - `plane-deploy` / `helm-charts` — NOT applicable; no new env var, no new service. The cap is a
     hardcoded constant on purpose.
+- Propagated: 2026-08-28
+  - The1Studio/plane-mcp-server#39 — https://github.com/The1Studio/plane-mcp-server/issues/39
+  - The1Studio/plane-node-sdk#11 — https://github.com/The1Studio/plane-node-sdk/issues/11
+  - The1Studio/plane-python-sdk#11 — https://github.com/The1Studio/plane-python-sdk/issues/11
+  - The1Studio/plane-claude-plugin#8 — https://github.com/The1Studio/plane-claude-plugin/issues/8
+  - The1Studio/docs#8 — https://github.com/The1Studio/docs/issues/8
+  - The1Studio/developer-docs#8 — https://github.com/The1Studio/developer-docs/issues/8
