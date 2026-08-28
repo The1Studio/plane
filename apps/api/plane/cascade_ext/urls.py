@@ -7,10 +7,17 @@
 #
 #   GET  /api/cascade-ext/workspaces/<slug>/projects/<project_id>/issues/<issue_id>/cascade-preview/
 #   POST /api/cascade-ext/workspaces/<slug>/projects/<project_id>/issues/<issue_id>/cascade-apply/
+#   GET  /api/cascade-ext/workspaces/<slug>/projects/<project_id>/modules/<module_id>/cascade-preview/
+#   POST /api/cascade-ext/workspaces/<slug>/projects/<project_id>/modules/<module_id>/cascade-apply/
 
 from django.urls import path
 
-from .views import CascadeApplyEndpoint, CascadePreviewEndpoint
+from .views import (
+    CascadeApplyEndpoint,
+    CascadePreviewEndpoint,
+    ModuleCascadeApplyEndpoint,
+    ModuleCascadePreviewEndpoint,
+)
 
 urlpatterns = [
     path(
@@ -22,5 +29,15 @@ urlpatterns = [
         "workspaces/<str:slug>/projects/<uuid:project_id>/issues/<uuid:issue_id>/cascade-apply/",
         CascadeApplyEndpoint.as_view(),
         name="cascade-ext-apply",
+    ),
+    path(
+        "workspaces/<str:slug>/projects/<uuid:project_id>/modules/<uuid:module_id>/cascade-preview/",
+        ModuleCascadePreviewEndpoint.as_view(),
+        name="cascade-ext-module-preview",
+    ),
+    path(
+        "workspaces/<str:slug>/projects/<uuid:project_id>/modules/<uuid:module_id>/cascade-apply/",
+        ModuleCascadeApplyEndpoint.as_view(),
+        name="cascade-ext-module-apply",
     ),
 ]

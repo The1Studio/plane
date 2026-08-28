@@ -16,6 +16,12 @@ import { updateDistribution, orderModules, shouldFilterModule } from "@plane/uti
 import { ModuleService } from "@/services/module.service";
 import { ModuleArchiveService } from "@/services/module_archive.service";
 import { ProjectService } from "@/services/project";
+// The1Studio fork (module-cascade) — see docs/FORK.md § "Cascade a module's terminal status".
+// The `cascadeConfirmStore` singleton lives in `@plane/cascade-ext`, NOT here, for the same reason
+// `base-issues.store.ts` records: creating it in a store module closes an import cycle and crashes
+// the SSR prerender. The modal host is already mounted once in `apps/web/app/root.tsx`.
+import { cascadeService, cascadeConfirmStore, shouldPromptModuleCascade } from "@plane/cascade-ext";
+// end The1Studio fork (module-cascade)
 // store
 import type { CoreRootStore } from "./root.store";
 
@@ -429,6 +435,49 @@ export class ModulesStore implements IModuleStore {
    * @returns IModule
    */
   updateModuleDetails = async (workspaceSlug: string, projectId: string, moduleId: string, data: Partial<IModule>) => {
+    // The1Studio fork (module-cascade) — every module status write funnels through this method
+    // (list row, grid card, analytics sidebar, create/update modal, power-K), so one guard here
+    // covers all five entry points with no duplicate fence anywhere else. The gantt layout calls
+    // this method too but only ever with sort_order/start_date/target_date, which the `data.status`
+    // guard turns into a no-op for free.
+    const cascadeModule = this.getModuleById(moduleId);
+    const cascadeStatus = shouldPromptModuleCascade({
+      data,
+      totalIssues: cascadeModule?.total_issues ?? 0,
+    });
+    if (cascadeStatus) {
+      try {
+        const preview = await cascadeService.getModulePreview(workspaceSlug, projectId, moduleId, cascadeStatus);
+        // `over_cap ||` is load-bearing: over the cap the server returns an EMPTY items array, so an
+        // eligible-only condition would skip the refusal modal and silently complete the module's
+        // status with no explanation of why nothing cascaded.
+        if (preview.over_cap || preview.items.some((item) => item.eligible)) {
+          const choice = await cascadeConfirmStore.requestModuleCascade({
+            moduleName: cascadeModule?.name ?? moduleId,
+            targetGroup: preview.target_group,
+            items: preview.items,
+            summary: preview.summary,
+            overCap: preview.over_cap,
+            cap: preview.cap,
+          });
+          if (choice.cascade && choice.childIds.length > 0) {
+            // applyModuleCascade writes the module's status INSIDE its own transaction — falling
+            // through to the plain patchModule below would write it a second time, outside it.
+            await cascadeService.applyModuleCascade(workspaceSlug, projectId, moduleId, cascadeStatus, choice.childIds);
+            // total_issues / completed_issues / cancelled_issues drive the progress ring rendered
+            // right beside the status control, and the cascade moved them server-side.
+            return await this.fetchModuleDetails(workspaceSlug, projectId, moduleId);
+          }
+        }
+      } catch (error) {
+        // A fork add-on being unreachable (older server, deploy skew) must never break a core
+        // action — log and fall through to the plain PATCH below.
+        console.error("Failed to resolve module cascade, falling back to a plain update", error);
+      }
+    }
+    // Every other case — no cascade status, an empty or all-ineligible preview, "only change this
+    // module", zero ticked items, or a cascade-ext failure — falls through unchanged.
+    // end The1Studio fork (module-cascade)
     const originalModuleDetails = this.getModuleById(moduleId);
     try {
       runInAction(() => {

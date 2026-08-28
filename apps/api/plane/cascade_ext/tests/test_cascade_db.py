@@ -190,7 +190,13 @@ class TestCollectDescendants(TransactionTestCase):
 
         self.assertEqual(result["descendants"][0]["target_state_id"], str(st_cancelled.id))
 
-    def test_cancelled_child_excluded_but_its_own_children_still_listed(self):
+    def test_cancelled_child_excluded_and_prunes_its_subtree(self):
+        # INVERTED 2026-08-28 by plans/260828-module-cascade-terminal-status
+        # Phase 0: a terminal node now PRUNES its subtree — the grandchild is
+        # NOT listed. This is a deliberate, user-directed reversal of the
+        # shipped rule (260822 Decision 5, "still traversed through"); do not
+        # "fix" it back. A live sub-item under a cancelled parent is now left
+        # live where it used to be swept.
         ws, proj, user = self._setup()
         st_started = _state(ws, proj, "started")
         st_cancelled = _state(ws, proj, "cancelled")
@@ -203,10 +209,12 @@ class TestCollectDescendants(TransactionTestCase):
         ids = {d["id"] for d in result["descendants"]}
 
         self.assertNotIn(str(cancelled_child.id), ids)
-        self.assertIn(str(grandchild.id), ids)
+        self.assertNotIn(str(grandchild.id), ids)
         self.assertIn(str(cancelled_child.id), result["traversed_ids"])
 
-    def test_completed_child_excluded_mirrored_for_cancel_target(self):
+    def test_completed_child_excluded_mirrored_for_cancel_target_and_prunes_its_subtree(self):
+        # INVERTED 2026-08-28 by plans/260828-module-cascade-terminal-status
+        # Phase 0 — see the cancelled-child mirror above for the full note.
         ws, proj, user = self._setup()
         st_started = _state(ws, proj, "started")
         st_completed = _state(ws, proj, "completed")
@@ -219,6 +227,66 @@ class TestCollectDescendants(TransactionTestCase):
         ids = {d["id"] for d in result["descendants"]}
 
         self.assertNotIn(str(completed_child.id), ids)
+        self.assertNotIn(str(grandchild.id), ids)
+
+    # Phase 0 (plans/260828-module-cascade-terminal-status, 2026-08-28) —
+    # prune-at-terminal coverage beyond the two inversions above.
+
+    def test_terminal_node_prunes_a_two_level_live_subtree(self):
+        # Case A: nothing beneath a terminal node is listed OR visited.
+        ws, proj, user = self._setup()
+        st_started = _state(ws, proj, "started")
+        st_completed = _state(ws, proj, "completed")
+        root = _issue(ws, proj, user, state=st_started)
+        terminal_child = _issue(ws, proj, user, state=st_completed, parent=root)
+        grandchild = _issue(ws, proj, user, state=st_started, parent=terminal_child)
+        great_grandchild = _issue(ws, proj, user, state=st_started, parent=grandchild)
+
+        result = collect_descendants(root_issue=root, target_group="completed", actor_id=user.id)
+        ids = {d["id"] for d in result["descendants"]}
+
+        self.assertNotIn(str(terminal_child.id), ids)
+        self.assertNotIn(str(grandchild.id), ids)
+        self.assertNotIn(str(great_grandchild.id), ids)
+        # traversed_ids holds the terminal node itself and NOTHING below it —
+        # nothing beneath a terminal node is even visited.
+        self.assertIn(str(terminal_child.id), result["traversed_ids"])
+        self.assertNotIn(str(grandchild.id), result["traversed_ids"])
+        self.assertNotIn(str(great_grandchild.id), result["traversed_ids"])
+
+    def test_pruning_applies_at_any_depth_not_just_level_one(self):
+        # Case B: live child -> terminal grandchild -> live great-grandchild.
+        ws, proj, user = self._setup()
+        st_started = _state(ws, proj, "started")
+        st_completed = _state(ws, proj, "completed")
+        root = _issue(ws, proj, user, state=st_started)
+        child = _issue(ws, proj, user, state=st_started, parent=root)
+        terminal_grandchild = _issue(ws, proj, user, state=st_completed, parent=child)
+        great_grandchild = _issue(ws, proj, user, state=st_started, parent=terminal_grandchild)
+
+        result = collect_descendants(root_issue=root, target_group="completed", actor_id=user.id)
+        ids = {d["id"] for d in result["descendants"]}
+
+        self.assertIn(str(child.id), ids)
+        self.assertNotIn(str(terminal_grandchild.id), ids)
+        self.assertNotIn(str(great_grandchild.id), ids)
+        self.assertIn(str(terminal_grandchild.id), result["traversed_ids"])
+
+    def test_stateless_child_is_not_terminal_and_keeps_being_walked(self):
+        # Case C: `child.state is None` is NOT terminal (its group reads as
+        # None, which is not in TERMINAL_GROUPS) — both it and its live
+        # grandchild stay listed.
+        ws, proj, user = self._setup()
+        st_started = _state(ws, proj, "started")
+        _state(ws, proj, "completed")
+        root = _issue(ws, proj, user, state=st_started)
+        stateless_child = _issue(ws, proj, user, state=None, parent=root)
+        grandchild = _issue(ws, proj, user, state=st_started, parent=stateless_child)
+
+        result = collect_descendants(root_issue=root, target_group="completed", actor_id=user.id)
+        ids = {d["id"] for d in result["descendants"]}
+
+        self.assertIn(str(stateless_child.id), ids)
         self.assertIn(str(grandchild.id), ids)
 
     def test_cross_project_child_resolves_its_own_project_state(self):
@@ -389,6 +457,41 @@ class TestApplyCascade(TransactionTestCase):
 
         stranger.refresh_from_db()
         self.assertNotEqual(stranger.state_id, st_completed.id)
+
+    @mock.patch("plane.cascade_ext.service.model_activity")
+    @mock.patch("plane.cascade_ext.service.issue_activity")
+    def test_posted_id_beneath_a_terminal_ancestor_is_rejected_and_not_written(
+        self, mock_issue_activity, mock_model_activity
+    ):
+        # Phase 0 case D (2026-08-28): a live grandchild under a terminal
+        # child is genuinely a descendant but sits behind a pruned branch, so
+        # the rejection reason is `under_terminal_ancestor` — NOT
+        # `not_a_descendant`, which would falsely deny tree membership.
+        ws, proj, user = self._setup()
+        st_started = _state(ws, proj, "started")
+        st_completed = _state(ws, proj, "completed")
+        st_cancelled = _state(ws, proj, "cancelled")
+        root = _issue(ws, proj, user, state=st_started)
+        c1 = _issue(ws, proj, user, state=st_started, parent=root)
+        terminal_child = _issue(ws, proj, user, state=st_cancelled, parent=root)
+        hidden_grandchild = _issue(ws, proj, user, state=st_started, parent=terminal_child)
+
+        result = apply_cascade(
+            root_issue=root,
+            state=st_completed,
+            child_ids=[str(c1.id), str(hidden_grandchild.id)],
+            actor_id=user.id,
+            slug=ws.slug,
+            origin="",
+        )
+
+        self.assertEqual(result["updated"], [str(c1.id)])
+        self.assertEqual(len(result["rejected"]), 1)
+        self.assertEqual(result["rejected"][0]["id"], str(hidden_grandchild.id))
+        self.assertEqual(result["rejected"][0]["reason"], "under_terminal_ancestor")
+
+        hidden_grandchild.refresh_from_db()
+        self.assertEqual(hidden_grandchild.state_id, st_started.id)  # NOT written
 
     @mock.patch("plane.cascade_ext.service.model_activity")
     @mock.patch("plane.cascade_ext.service.issue_activity")
