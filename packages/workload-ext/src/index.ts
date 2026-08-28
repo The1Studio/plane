@@ -15,4 +15,5 @@ export * from "./stateColor";
 export * from "./merge";
 export * from "./WorkloadToolbar";
 export * from "./estimateInput";
+export * from "./filterParams";
 export * from "./PendingEstimate";

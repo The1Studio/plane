@@ -44,6 +44,13 @@ export type WorkloadToolbarProps = {
    */
   stateFilterSlot?: React.ReactNode;
   dateRangeSlot?: React.ReactNode;
+  /**
+   * Called after "Clear filters" has emptied the store, so the host can drop
+   * whatever it mirrors the selection into. Without it the board clears but a
+   * reload restores the old filters from the URL (The1Studio/plane#55).
+   * Optional — a standalone host that mirrors nothing passes nothing.
+   */
+  onFiltersCleared?: () => void;
 };
 
 /** EStartOfTheWeek numbering (@plane/types) — SUNDAY = 0 .. SATURDAY = 6. */
@@ -76,6 +83,7 @@ export const WorkloadToolbar = observer(function WorkloadToolbar({
   projectFilterSlot,
   stateFilterSlot,
   dateRangeSlot,
+  onFiltersCleared,
 }: WorkloadToolbarProps) {
   const hasActiveFilters =
     store.selectedProjectIds.length > 0 || store.selectedAssigneeIds.length > 0 || store.selectedStateGroups.length > 0;
@@ -84,6 +92,7 @@ export const WorkloadToolbar = observer(function WorkloadToolbar({
     store.setProjectIds([]);
     store.setAssigneeIds([]);
     store.setStateGroups([]);
+    onFiltersCleared?.();
   }
 
   const settingsHref = joinUrlPath(workspaceSlug, "settings/workload");
