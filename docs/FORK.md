@@ -918,6 +918,26 @@ endpoints, **zero core backend edits** (mounts via touch-point 2 only). Frontend
 `packages/cascade-ext/` package (store, modal, API client, the pure `shouldPromptCascade` guard)
 plus the fenced core delegations below.
 
+**Behavior change 2026-08-28 — terminal nodes prune their subtrees.** A descendant already in a
+terminal group is never listed or touched, AND nothing beneath it is listed, walked, or changed
+(`plans/260828-module-cascade-terminal-status/` Phase 0 reversed the shipped "skipped but still
+traversed through" rule so the issue cascade and the module cascade share one rule on the same
+`Issue.parent` tree). Stated cost: a live sub-item under a cancelled parent is now left live where
+it used to be swept. Apply rejects a posted id behind a pruned branch with
+`under_terminal_ancestor` rather than the false `not_a_descendant`.
+
+**Module cascade (2026-08-28, `plans/260828-module-cascade-terminal-status/`).** The same app
+carries a second endpoint pair one level up:
+`GET/POST .../projects/<project_id>/modules/<module_id>/cascade-preview|cascade-apply/` cascade a
+module's `completed`/`cancelled` status onto every live module member plus each member's full
+descendant subtree. The apply writes the module's own status and the issue states in ONE
+transaction and fires one `model_activity(model_name="module")`; cascaded issues get
+`notification=False`. A plain module `PATCH {status}` never cascades, from any client. Hard cap:
+`MAX_MODULE_CASCADE_ITEMS = 100` live (post-pruning) nodes — over it, preview returns
+`over_cap: true` with empty `items` and apply 400s without writing anything, module status
+included. Archived modules refuse both endpoints with 400. No new app, model, migration, or
+touch-point edit.
+
 **One choke point, not two.** The plan's own seam table names two entry points —
 `issue-details/issue.store.ts:181` `updateIssue` (detail dropdown) and
 `helpers/base-issues.store.ts` `updateIssue` (list/spreadsheet/kanban) — as if they needed
@@ -935,10 +955,11 @@ in exactly one place, `issueUpdate`, which structurally covers all three of #54'
 points (detail dropdown, list/spreadsheet dropdown, kanban drag-drop) at once.
 `issue-details/issue.store.ts` carries no cascade-confirm edit at all.
 
-| File                                                     | What                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Why no seam                                                                                                                                                                                                                      |
-| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/web/core/store/issue/helpers/base-issues.store.ts` | Module-level `cascadeConfirmStore` singleton (`@plane/cascade-ext` ships only the class), and — at the top of `issueUpdate` — `shouldPromptCascade` guard → `cascadeService.getPreview` → (if any row is eligible) `cascadeConfirmStore.requestCascade` → on a cascade choice with ticked children, `cascadeService.apply` and an early `return` so the plain PATCH below never double-writes the parent. Every other case (no target group, empty/all-ineligible preview, "only this item", zero ticked children) falls through unchanged | No upstream pre-update hook on the issue stores, and `issueUpdate` is the one method every list/spreadsheet/kanban/detail state write funnels through — see "One choke point" above                                              |
-| `apps/web/app/root.tsx`                                  | Mounts `<CascadeConfirmModal store={cascadeConfirmStore} />` inside `<AppProvider>`, importing the singleton back from `base-issues.store.ts`                                                                                                                                                                                                                                                                                                                                                                                              | No global modal-host seam exists for a fork-owned dialog; this widens touch-point 7 beyond its documented white-label-branding purpose (`VITE_APP_TITLE` etc.) — noted here rather than left for a future reader to wonder about |
+| File                                                     | What                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Why no seam                                                                                                                                                                                                                                                                                                                                            |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `apps/web/core/store/issue/helpers/base-issues.store.ts` | Module-level `cascadeConfirmStore` singleton (`@plane/cascade-ext` ships only the class), and — at the top of `issueUpdate` — `shouldPromptCascade` guard → `cascadeService.getPreview` → (if any row is eligible) `cascadeConfirmStore.requestCascade` → on a cascade choice with ticked children, `cascadeService.apply` and an early `return` so the plain PATCH below never double-writes the parent. Every other case (no target group, empty/all-ineligible preview, "only this item", zero ticked children) falls through unchanged                                                                                     | No upstream pre-update hook on the issue stores, and `issueUpdate` is the one method every list/spreadsheet/kanban/detail state write funnels through — see "One choke point" above                                                                                                                                                                    |
+| `apps/web/app/root.tsx`                                  | Mounts `<CascadeConfirmModal store={cascadeConfirmStore} />` inside `<AppProvider>`, importing the singleton back from `base-issues.store.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | No global modal-host seam exists for a fork-owned dialog; this widens touch-point 7 beyond its documented white-label-branding purpose (`VITE_APP_TITLE` etc.) — noted here rather than left for a future reader to wonder about                                                                                                                       |
+| `apps/web/core/store/module.store.ts`                    | At the top of `updateModuleDetails` — `shouldPromptModuleCascade` guard → `cascadeService.getModulePreview` → (if any row is eligible **or** the preview is over cap) `cascadeConfirmStore.requestModuleCascade` → on a cascade choice with ticked items, `cascadeService.applyModuleCascade`, a `fetchModuleDetails` refetch, and an early `return` so the plain `patchModule` below never double-writes the module. The whole block is wrapped so a cascade-ext failure logs and falls through to the plain PATCH — a fork add-on being unreachable must never break a core action. Every other case falls through unchanged | No upstream pre-update hook on the module store, and `updateModuleDetails` is the one method all five status entry points funnel through (list row, grid card, analytics sidebar, create/update modal, power-K). The gantt layout calls it too but only with `sort_order`/`start_date`/`target_date`, which the `data.status` guard makes a free no-op |
 
 **`plane-isolation-audit` / fork-ownership note:** `packages/cascade-ext` uses the `@plane/` npm
 scope but is **fork-owned** (not upstream) — same clarification as `@plane/workload-ext` /
@@ -947,8 +968,14 @@ sealed-package edit.
 
 **Rebase handling:** these files ARE expected conflict points (unlike the abort-on-conflict rule
 for everything else). On conflict, re-apply the fork block — each is fenced by a
-`The1Studio fork (cascade-confirm)` comment — and keep upstream's changes around it. Do NOT abort
+`The1Studio fork (cascade-confirm)` comment, except `module.store.ts` whose fence reads
+`The1Studio fork (module-cascade)` — and keep upstream's changes around it. Do NOT abort
 the rebase for a conflict confined to this set.
+
+**Why `module.store.ts` needs no `root.tsx` change of its own:** the module cascade reuses the
+single `<CascadeConfirmModal>` already mounted there, and widens the existing
+`cascadeConfirmStore` rather than adding a second store. A second store would need a second mount
+point, which is why the store was widened in place.
 
 ### Work-item creation defaults — fenced `The1Studio fork (work-item creation defaults)`
 
