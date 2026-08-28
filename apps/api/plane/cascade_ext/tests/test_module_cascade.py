@@ -557,7 +557,7 @@ class TestApplyModuleCascade(TransactionTestCase):
         # Case 14.
         ws, proj, user = self._setup()
         st_started = _state(ws, proj, "started")
-        st_completed = _state(ws, proj, "completed")
+        _state(ws, proj, "completed")
         module = _module(ws, proj)
         other_module = _module(ws, proj)
         a = _issue(ws, proj, user, state=st_started)
@@ -622,7 +622,7 @@ class TestApplyModuleCascade(TransactionTestCase):
         # share ONE transaction.
         ws, proj, user = self._setup()
         st_started = _state(ws, proj, "started")
-        st_completed = _state(ws, proj, "completed")
+        _state(ws, proj, "completed")
         module = _module(ws, proj)
         a = _issue(ws, proj, user, state=st_started)
         _module_issue(module, a)
