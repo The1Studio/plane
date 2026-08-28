@@ -3,7 +3,14 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  * See the LICENSE file for details.
  */
-import type { TCascadeApplyResponse, TCascadePreviewResponse, TCascadeStateGroup } from "./types";
+import type {
+  TCascadeApplyResponse,
+  TCascadePreviewResponse,
+  TCascadeStateGroup,
+  TModuleCascadeApplyResponse,
+  TModuleCascadePreviewResponse,
+  TModuleCascadeStatus,
+} from "./types";
 
 const API_BASE = "/api/cascade-ext";
 
@@ -67,6 +74,52 @@ export class CascadeService {
     });
     if (!res.ok) throw new CascadeApiError(await res.text(), res.status);
     return res.json() as Promise<TCascadeApplyResponse>;
+  }
+
+  /**
+   * `GET …/modules/<module_id>/cascade-preview/?status=<completed|cancelled>` — the module
+   * equivalent of `getPreview`. The query param is `status` (a MODULE status), NOT `group` — the
+   * two endpoints intentionally use different param names so they can never be confused
+   * (phase-1 § Endpoint contract). Read-only; safe to call speculatively, guarded first by
+   * `shouldPromptModuleCascade`.
+   */
+  async getModulePreview(
+    workspaceSlug: string,
+    projectId: string,
+    moduleId: string,
+    status: TModuleCascadeStatus
+  ): Promise<TModuleCascadePreviewResponse> {
+    const url = `${API_BASE}/workspaces/${workspaceSlug}/projects/${projectId}/modules/${moduleId}/cascade-preview/?status=${status}`;
+    const res = await fetch(url, { credentials: "include" });
+    if (!res.ok) throw new CascadeApiError(await res.text(), res.status);
+    return res.json() as Promise<TModuleCascadePreviewResponse>;
+  }
+
+  /**
+   * `POST …/modules/<module_id>/cascade-apply/` — applies the module's new `status` and the
+   * caller-selected item ids in one server-side transaction (M5). Unlike the issue path's
+   * `apply`, `itemIds` is always an explicit array here, never `null` — the UI must never request
+   * "every eligible item" implicitly (phase-2 § Implementation item 3); a headless/MCP caller that
+   * wants that behavior omits the key at the HTTP layer directly rather than through this method.
+   * The server re-derives eligibility itself and never trusts this list as authorization
+   * (mirrors the issue path's risk-15 mitigation).
+   */
+  async applyModuleCascade(
+    workspaceSlug: string,
+    projectId: string,
+    moduleId: string,
+    status: TModuleCascadeStatus,
+    itemIds: string[]
+  ): Promise<TModuleCascadeApplyResponse> {
+    const url = `${API_BASE}/workspaces/${workspaceSlug}/projects/${projectId}/modules/${moduleId}/cascade-apply/`;
+    const res = await fetch(url, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status, item_ids: itemIds }),
+    });
+    if (!res.ok) throw new CascadeApiError(await res.text(), res.status);
+    return res.json() as Promise<TModuleCascadeApplyResponse>;
   }
 }
 
