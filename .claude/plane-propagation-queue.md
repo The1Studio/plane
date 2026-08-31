@@ -39,3 +39,47 @@ Entries written by `plane-scaffold-feature` / `plane-propagate`; processed entri
 - Propagation needed: MCP tool in `plane-mcp-server` (DONE locally — `set_project_visibility`,
   `get_project_visibility`, `set_projects_visibility_bulk`), SDK bindings in `plane-node-sdk` +
   `plane-python-sdk`, docs update.
+
+## cascade_ext module cascade + terminal-subtree pruning — 2026-08-28
+
+- Feature: two things shipped together in the existing `cascade_ext` app
+  (`plans/260828-module-cascade-terminal-status/`, Plane PLANE-189).
+  1. **Module cascade** — a module moving to `completed`/`cancelled` cascades that terminal group
+     onto every live module member PLUS each member's full descendant subtree, behind the same
+     confirmation modal the per-issue cascade uses. Apply writes the module's own `status` and the
+     issue states in ONE transaction. `MAX_MODULE_CASCADE_ITEMS = 100` is a **refusal, not a
+     truncation**: over it, preview returns `over_cap: true` with an EMPTY `items` array and apply
+     returns 400 having written nothing (module status included).
+  2. **BEHAVIOR CHANGE to the shipped per-issue cascade** — a descendant already in a terminal group
+     now PRUNES its entire subtree instead of being traversed through. A live sub-item under a
+     cancelled parent is left live where it used to be swept. New rejection reason
+     `under_terminal_ancestor` (the old `not_a_descendant` would be a false label for a live id
+     behind a pruned branch).
+- New endpoints:
+  - `GET /api/cascade-ext/workspaces/<slug>/projects/<project_id>/modules/<module_id>/cascade-preview/?status=<completed|cancelled>`
+    — note the query param is `status` (a MODULE status), **not** `group` as on the issue routes.
+    Returns `{target_group, depth_capped, over_cap, cap, summary{total_live,eligible,ineligible,already_terminal}, items[]}`.
+  - `POST /api/cascade-ext/workspaces/<slug>/projects/<project_id>/modules/<module_id>/cascade-apply/`
+    — body `{status, item_ids}`; `item_ids` omitted/null = every eligible item, `[]` = none.
+    Returns `{module, status, updated[], rejected[{id, reason}]}`. Archived module → 400.
+- New fields: none on core models — no migration, no new app, no touch-point edit.
+- Propagation needed:
+  - `plane-mcp-server` — `preview_module_cascade` tool, `update_module(..., cascade=False)`
+    mirroring `update_work_item`. TRAP: `update_module` coerces an unrecognized `status` to `None`
+    (`plane_mcp/tools/modules.py:166-176`), so the cascade branch must key off the VALIDATED value,
+    never the raw argument. ALSO: `plane_mcp/tools/cascade_ext.py`'s module docstring and
+    `update_work_item`'s help still state the old "still traversed through" rule, which item 2 above
+    made false — correct them in the same PR.
+  - `plane-node-sdk` + `plane-python-sdk` — bindings for both routes.
+  - `plane-claude-plugin` — user-facing "complete a module and everything in it", naming the
+    100-item refusal.
+  - `docs` + `developer-docs` — the `reason` enum, the 400 shapes, and the pruning behavior change.
+  - `plane-deploy` / `helm-charts` — NOT applicable; no new env var, no new service. The cap is a
+    hardcoded constant on purpose.
+- Propagated: 2026-08-28
+  - The1Studio/plane-mcp-server#39 — https://github.com/The1Studio/plane-mcp-server/issues/39
+  - The1Studio/plane-node-sdk#11 — https://github.com/The1Studio/plane-node-sdk/issues/11
+  - The1Studio/plane-python-sdk#11 — https://github.com/The1Studio/plane-python-sdk/issues/11
+  - The1Studio/plane-claude-plugin#8 — https://github.com/The1Studio/plane-claude-plugin/issues/8
+  - The1Studio/docs#8 — https://github.com/The1Studio/docs/issues/8
+  - The1Studio/developer-docs#8 — https://github.com/The1Studio/developer-docs/issues/8
