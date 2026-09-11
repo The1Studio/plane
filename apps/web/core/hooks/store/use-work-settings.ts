@@ -59,6 +59,13 @@ export interface IUseWorkSettings {
   workSettings: TWorkSettings;
   /** True only for the initial GET; a subsequent PUT does not toggle this. */
   isLoading: boolean;
+  /**
+   * True once the first GET for the current workspace has resolved
+   * successfully. `isLoading` alone cannot distinguish "not started yet"
+   * from "finished" (it starts `false`), so forms that copy `workSettings`
+   * into local draft state must gate on this instead.
+   */
+  hasLoaded: boolean;
   /** Set when the GET fails; cleared on the next successful GET. */
   error: string | null;
   /**
@@ -83,6 +90,7 @@ export interface IUseWorkSettings {
 export function useWorkSettings(workspaceSlug: string | undefined): IUseWorkSettings {
   const [workSettings, setWorkSettings] = useState<TWorkSettings>(DEFAULT_WORK_SETTINGS);
   const [isLoading, setIsLoading] = useState(false);
+  const [hasLoaded, setHasLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
   // Mirrors the latest workSettings without adding it as an effect dependency,
@@ -93,6 +101,7 @@ export function useWorkSettings(workspaceSlug: string | undefined): IUseWorkSett
   useEffect(() => {
     if (!workspaceSlug) return;
     let cancelled = false;
+    setHasLoaded(false);
 
     async function load() {
       setIsLoading(true);
@@ -103,6 +112,7 @@ export function useWorkSettings(workspaceSlug: string | undefined): IUseWorkSett
         const data = (await res.json()) as TWorkSettings;
         if (cancelled) return;
         setWorkSettings(data);
+        setHasLoaded(true);
       } catch (err: unknown) {
         if (cancelled) return;
         // GET never 404s (phase-0.md contract) — a rejection here is a real
@@ -148,5 +158,5 @@ export function useWorkSettings(workspaceSlug: string | undefined): IUseWorkSett
     [workspaceSlug]
   );
 
-  return { workSettings, isLoading, error, updateWorkSettings, isUpdating };
+  return { workSettings, isLoading, hasLoaded, error, updateWorkSettings, isUpdating };
 }
