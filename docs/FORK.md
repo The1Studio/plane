@@ -412,14 +412,57 @@ New backend code lives in **new Django apps**:
   project cannot add anyone to it, including themselves, so a workspace ADMIN has no
   workspace-level path to grant themselves access to a private project they administer. These
   two endpoints are that bootstrap path.
-- `apps/api/plane/workspace_ext/` — workspace discovery over the public API
-  (`GET /api/v1/users/me/workspaces/`). Every workspace-scoped route takes the slug as a path
-  segment, but no core `/api/v1/` route returns the slugs a caller can access, so an API-key
-  client cannot bootstrap itself. Guessing does not work either: an unknown slug and a real
-  workspace the caller lacks access to both answer `403` with byte-identical bodies. Core's
-  `plane.api.views.user` / `plane.api.urls.user` are not touch-points, so the endpoint lives
-  here. Returns only workspaces the caller is an _active_ member of. Model-less (read-only over
-  core models), so it ships no `migrations/`.
+- `apps/api/plane/workspace_ext/` — workspace discovery and creation over the public API
+  (`GET /api/v1/users/me/workspaces/`, `POST /api/v1/workspaces/`). Every workspace-scoped route
+  takes the slug as a path segment, but no core `/api/v1/` route returns the slugs a caller can
+  access — and none can mint one — so an API-key client cannot bootstrap itself. Guessing does not
+  work either: an unknown slug and a real workspace the caller lacks access to both answer `403`
+  with byte-identical bodies. Core's `plane.api.views.user` / `plane.api.urls.user` are not
+  touch-points, so the endpoints live here. The read side returns only workspaces the caller is an
+  _active_ member of. Model-less (read-only over core models), so it ships no `migrations/`.
+
+  The write side is instance-admin only, and that is a deliberate departure from upstream. Upstream
+  is SaaS and lets any authenticated user create a workspace, because a workspace there is a tenant
+  scoped to the caller's own account. On a self-hosted single-tenant instance there is no such
+  boundary: an API key belongs to a person on the instance, not to a tenant, so "any key may mint a
+  workspace" would let a key for a workspace _member_ create sibling workspaces at will. Matching
+  what the UI already enforces (god-mode → Workspaces is instance-admin gated) is the option the
+  issue recommended, and it is the one implemented — `InstanceAdminPermission`, the same check
+  `github_ext/views/config.py` uses for its instance-global config.
+
+  **Contract** (also carried verbatim in the view's `@extend_schema` description):
+
+  ```
+  POST /api/v1/workspaces/
+  Auth: X-API-Key (BaseAPIView). Permission: InstanceAdminPermission -> 403 {"error": "...", "error_code": "INSTANCE_ADMIN_REQUIRED"} otherwise.
+  403 {"error": "...", "error_code": "WORKSPACE_CREATION_DISABLED"} when instance config DISABLE_WORKSPACE_CREATION is on (same gate as the web app).
+  Body: {"name": str (required, <=80, no URL), "slug": str (required, <=48, ^[a-zA-Z0-9_-]+$, not a restricted slug), "organization_size": str|null (optional, <=20, pass-through)}
+  201: WorkSpaceSerializer output (id, name, slug, owner, organization_size, logo_url, created_at, updated_at, ...) plus {"role": 20, "total_members": 1}
+  400: {"error": "...", "error_code": "UNEXPECTED_FIELDS"} when the body carries a key other than the three above; otherwise serializer/field errors (DRF shape) or {"error": "...", "error_code": "..."} for the manual caps
+  409: {"slug": "The workspace with the slug already exists", "error_code": "WORKSPACE_SLUG_EXISTS"}
+  Side effects: caller becomes Owner (WorkspaceMember role=20); workspace_seed Celery task queued; WORKSPACE_CREATED event tracked.
+  ```
+
+  Behaviour mirrors the web app's `WorkSpaceViewSet.create` (`plane/app/views/workspace/base.py`)
+  so API- and UI-created workspaces are indistinguishable — same serializer (slug regex,
+  `RESTRICTED_WORKSPACE_SLUGS`, no-URL-in-name), same name/slug caps, same
+  `DISABLE_WORKSPACE_CREATION` gate, same owner membership row, same seed and analytics side
+  effects. The body is duplicated rather than extracted from the app view on purpose: `base.py` is
+  core, and a fork that refactors core to share a method pays for it on every upstream sync.
+
+  Two places where the public endpoint is stricter than core's, both because a machine consumer
+  cannot act on what core returns:
+
+  - A duplicate slug is a real `409`. Core documents that status but its serializer's
+    `UniqueValidator` rejects duplicates first with a `400`, so core's `IntegrityError` branch only
+    ever fires on a race. This endpoint checks for the collision explicitly and keeps the
+    `IntegrityError` branch as the race backstop.
+  - The `403` bodies carry an `error_code` (`INSTANCE_ADMIN_REQUIRED` /
+    `WORKSPACE_CREATION_DISABLED`) instead of DRF's opaque
+    `{"detail": "You do not have permission to perform this action."}`, which a client cannot
+    branch on. The permission class raises `PermissionDenied` rather than returning `False` to get
+    that body — except for anonymous callers, where returning `False` is what lets DRF run the
+    authenticator's own `401`/`403` negotiation.
 - `apps/api/plane/workload_cache/` — versioned-key response caching for the workload timeline and
   the views-ext issue list. Model-less and endpoint-less: no `migrations/`, no `urls.py`, no
   touch-point 2 entry — a library plus signal receivers, registered via touch-point 1 only.
