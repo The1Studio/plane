@@ -43,7 +43,7 @@ function WorkloadWorkSettingsPage() {
   // store hooks
   const { allowPermissions, workspaceUserInfo } = useUserPermissions();
   const { currentWorkspace } = useWorkspace();
-  const { workSettings, isLoading, error, updateWorkSettings, isUpdating } = useWorkSettings(slug);
+  const { workSettings, hasLoaded, error, updateWorkSettings, isUpdating } = useWorkSettings(slug);
 
   // derived values
   const isAdmin = allowPermissions([EUserPermissions.ADMIN], EUserPermissionsLevel.WORKSPACE);
@@ -54,15 +54,24 @@ function WorkloadWorkSettingsPage() {
   const [hasHydrated, setHasHydrated] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
+  // Re-arm hydration when the workspace changes so the form never shows a
+  // previous workspace's values.
   useEffect(() => {
-    if (!isLoading && !hasHydrated) {
+    setHasHydrated(false);
+  }, [slug]);
+
+  useEffect(() => {
+    // Gate on `hasLoaded`, not `!isLoading`: `isLoading` starts false, so an
+    // `!isLoading` check runs in the same commit pass as the hook's fetch
+    // effect and latches DEFAULT_WORK_SETTINGS before the GET resolves.
+    if (hasLoaded && !hasHydrated) {
       setDraft(workSettings);
       setHasHydrated(true);
     }
-    // Only re-hydrate once — after that, the draft is form-owned so the admin's
-    // in-progress edits are never clobbered by a background re-render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoading, hasHydrated]);
+    // Only re-hydrate once per workspace — after that, the draft is form-owned
+    // so the admin's in-progress edits are never clobbered by a background
+    // re-render.
+  }, [hasLoaded, hasHydrated, workSettings]);
 
   // validation — mirrors WorkloadSettingsSerializer (apps/api/plane/workload/serializers.py) verbatim.
   const isValidMaxHours =
@@ -72,6 +81,9 @@ function WorkloadWorkSettingsPage() {
     draft.max_daily_hours <= MAX_DAILY_HOURS_CEILING;
   const isValidWorkdays = draft.workdays.length > 0;
   const isValid = isValidMaxHours && isValidWorkdays;
+  // Until the GET has hydrated the draft it still holds DEFAULT_WORK_SETTINGS;
+  // a save in that window would overwrite the workspace's real settings.
+  const isFormLocked = isUpdating || !hasHydrated;
 
   function toggleWorkday(day: number) {
     setSaveError(null);
@@ -85,7 +97,7 @@ function WorkloadWorkSettingsPage() {
   }
 
   async function handleSave() {
-    if (!isValid || !slug) return;
+    if (!isValid || isFormLocked || !slug) return;
     setSaveError(null);
     try {
       const saved = await updateWorkSettings(draft);
@@ -108,7 +120,7 @@ function WorkloadWorkSettingsPage() {
   return (
     <SettingsContentWrapper header={<WorkloadWorkSettingsHeader />}>
       <PageHead title={pageTitle} />
-      <div className={cn("flex w-full flex-col gap-y-6", { "opacity-60": isLoading })}>
+      <div className={cn("flex w-full flex-col gap-y-6", { "opacity-60": !hasHydrated })}>
         <SettingsHeading
           title="Work settings"
           description="Configure the daily hour cap, workdays, and first day of the week used by workload capacity and the calendar across this workspace."
@@ -125,7 +137,7 @@ function WorkloadWorkSettingsPage() {
             value={draft.max_daily_hours}
             onChange={(e) => setDraft((prev) => ({ ...prev, max_daily_hours: Number(e.target.value) }))}
             className="w-32"
-            disabled={isUpdating}
+            disabled={isFormLocked}
             hasError={!isValidMaxHours}
           />
           {!isValidMaxHours && (
@@ -145,7 +157,7 @@ function WorkloadWorkSettingsPage() {
                   key={day}
                   type="button"
                   aria-pressed={isSelected}
-                  disabled={isUpdating}
+                  disabled={isFormLocked}
                   onClick={() => toggleWorkday(day)}
                   className={cn(
                     "rounded-md border px-2.5 py-1 text-13 transition-colors",
@@ -170,7 +182,7 @@ function WorkloadWorkSettingsPage() {
             label={DAY_LABELS_FULL[draft.week_start_day] ?? DAY_LABELS_FULL[0]}
             buttonClassName="border border-subtle bg-layer-2 !shadow-none !rounded-md w-48"
             input
-            disabled={isUpdating}
+            disabled={isFormLocked}
           >
             {DAY_LABELS_FULL.map((label, day) => (
               <CustomSelect.Option key={label} value={day}>
@@ -185,7 +197,7 @@ function WorkloadWorkSettingsPage() {
         )}
 
         <div>
-          <Button variant="primary" onClick={handleSave} disabled={!isValid || isUpdating} loading={isUpdating}>
+          <Button variant="primary" onClick={handleSave} disabled={!isValid || isFormLocked} loading={isUpdating}>
             Save changes
           </Button>
         </div>
