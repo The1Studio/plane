@@ -438,7 +438,7 @@ New backend code lives in **new Django apps**:
   403 {"error": "...", "error_code": "WORKSPACE_CREATION_DISABLED"} when instance config DISABLE_WORKSPACE_CREATION is on (same gate as the web app).
   Body: {"name": str (required, <=80, no URL), "slug": str (required, <=48, ^[a-zA-Z0-9_-]+$, not a restricted slug), "organization_size": str|null (optional, <=20, pass-through)}
   201: WorkSpaceSerializer output (id, name, slug, owner, organization_size, logo_url, created_at, updated_at, ...) plus {"role": 20, "total_members": 1}
-  400: serializer/field errors (DRF shape) or {"error": "...", "error_code": "..."} for the manual caps
+  400: {"error": "...", "error_code": "UNEXPECTED_FIELDS"} when the body carries a key other than the three above; otherwise serializer/field errors (DRF shape) or {"error": "...", "error_code": "..."} for the manual caps
   409: {"slug": "The workspace with the slug already exists", "error_code": "WORKSPACE_SLUG_EXISTS"}
   Side effects: caller becomes Owner (WorkspaceMember role=20); workspace_seed Celery task queued; WORKSPACE_CREATED event tracked.
   ```
