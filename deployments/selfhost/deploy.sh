@@ -394,10 +394,12 @@ prune_git_tags() {
     done <<< "$git_rows"
   done
 
-  # Dangling images only. Untagging above is what orphans them, and this is what
-  # reclaims the layers — `-a` would also take TAGGED images, which on this host
-  # means images the other environment still deploys from.
-  docker image prune -f >/dev/null 2>&1 || true
+  # Nothing sweeps the dangling layers this untagging orphans, deliberately.
+  # Untagging is what makes them dangling, and leaving them dangling is
+  # harmless; a daemon-wide sweep is NOT scoped to this deploy. sv-2 shares its
+  # docker daemon with Jenkins and Unity builds, so a global dangling sweep
+  # deletes their layers too — out of scope for a Plane deploy, and unnecessary
+  # besides: `docker rmi` of an image's last tag already removes the image.
 
   echo "==> pruned $removed old git-* tags"
 }
