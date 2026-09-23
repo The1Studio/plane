@@ -14,6 +14,13 @@
 #   LOCAL_DB          1                         run the bundled postgres container
 #   LOCAL_STORAGE     1                         run the bundled minio container
 #   PG_IMAGE          pgvector/pgvector:pg15    image for the bundled postgres
+#   KEEP_GIT_TAGS     5                         newest :git-* tags kept per repo
+#
+# KEEP_GIT_TAGS bounds step 6's prune of the :git-<sha> tags every deploy adds.
+# Nothing removed them before, so they accumulated one full set per deploy —
+# ~100 stale tags on sv-2, whose root disk reached 86%. The newest N are kept so
+# a rollback to a recent build still needs no rebuild; raise it on a host with
+# room, lower it on a host without.
 #
 # LOCAL_DB / LOCAL_STORAGE exist because production does NOT use the bundled
 # services: its DATABASE_URL points at Neon (pg17) and its uploads go to
@@ -67,9 +74,22 @@ LOCAL_STORAGE="${LOCAL_STORAGE:-1}"
 # match production's Neon server version (17.11).
 PG_IMAGE="${PG_IMAGE:-pgvector/pgvector:pg15}"
 
+# Newest :git-* tags kept per repository by the step-6 prune. Guarded because a
+# non-numeric value makes every `-le` comparison in there fail, and the prune is
+# best-effort — so a typo would silently prune nothing, forever, while the log
+# said the step ran.
+KEEP_GIT_TAGS="${KEEP_GIT_TAGS:-5}"
+case "$KEEP_GIT_TAGS" in
+  ''|*[!0-9]*)
+    echo "WARN: KEEP_GIT_TAGS='$KEEP_GIT_TAGS' is not a number; using 5"
+    KEEP_GIT_TAGS=5
+    ;;
+esac
+
 echo "==> Repo:      $WORKSPACE"
 echo "==> Commit:    $SHA"
 echo "==> Image tag: $NS/plane-*:$TAG (+ :git-$SHA)"
+echo "==> Keep tags: $KEEP_GIT_TAGS newest :git-* per repo"
 echo "==> Run dir:   $RUN_DIR"
 echo "==> Project:   $COMPOSE_PROJECT"
 echo "==> Health:    $HEALTH_BASE"
@@ -273,5 +293,115 @@ fi
 # 5) Bounded cache prune (keep some for fast rebuilds; server disk is tight).
 # ---------------------------------------------------------------------------
 docker builder prune -f --keep-storage=20GB >/dev/null 2>&1 || true
+
+# ---------------------------------------------------------------------------
+# 6) Prune old :git-* image tags. Bounded, best-effort, never fails the deploy.
+#
+# Every deploy tags all 6 images twice: :$TAG (the tag APP_RELEASE points at) and
+# :git-$SHA (the immutable record of that build). Nothing ever removed the
+# :git-* half, so each deploy added a permanent set — ~100 stale tags had built
+# up on sv-2, whose root disk reached 86%. Step 5 does not help here: these are
+# TAGGED images, not builder cache.
+#
+# Staging (:staging) and production (:companymain) deploy on the SAME host and
+# share these repositories, so the prune must never take out something the other
+# environment still points at. Four rules, cheapest first:
+#
+#   1. Only :git-* tags are candidates. Every other tag — :$TAG, :staging,
+#      :companymain, :latest — is out of scope by construction.
+#   2. An image referenced by ANY container, running OR stopped, in ANY compose
+#      project is skipped. Stopped ones count: `docker compose up -d` recreates
+#      from the image already on disk, and `docker start` fails on a pruned one.
+#   3. An image that a NON-:git- tag of the SAME repo resolves to is skipped, so
+#      the :staging / :companymain images survive even while no container
+#      references them (between deploys, or after `docker compose down`).
+#   4. The newest $KEEP_GIT_TAGS tags per repo are skipped, so rolling back to a
+#      recent build needs no rebuild.
+#
+# `docker rmi` WITHOUT -f is the backstop under all four: if any rule above
+# missed a case, the daemon refuses rather than yanking an image out from under a
+# live container. A refusal is logged and never retried with -f.
+#
+# The whole step is best-effort — a prune that cannot run is a disk problem to
+# solve later, never a reason to fail a deploy that just went green.
+# ---------------------------------------------------------------------------
+
+# Image IDs referenced by any container, running or stopped, any project.
+#
+# Resolved via `docker inspect` on the container rather than `docker ps --format
+# {{.Image}}`: the latter reports the reference the container was STARTED with (a
+# tag, a short id, or a full sha), while `.Image` from the container's own config
+# is always the canonical sha256. It also keeps resolving after the tag that
+# started the container is gone — the exact situation this prune creates.
+container_image_ids() {
+  local cids cid
+  cids="$(docker ps -aq 2>/dev/null || true)"
+  while IFS= read -r cid; do
+    [ -n "$cid" ] || continue
+    docker inspect --format '{{.Image}}' "$cid" 2>/dev/null || true
+  done <<< "$cids"
+  return 0
+}
+
+prune_git_tags() {
+  local repo keep="${KEEP_GIT_TAGS:-5}" rows in_use protected git_rows
+  local idx id ref removed=0
+
+  # ONE snapshot of the image list, shared by all 6 repos. A `docker images`
+  # re-read inside the loop would observe a list this function is itself
+  # mutating as it untags images.
+  rows="$(docker images --no-trunc --format '{{.ID}}|{{.Repository}}:{{.Tag}}|{{.CreatedAt}}' 2>/dev/null || true)"
+
+  # Membership sets are flattened to space-delimited strings so a lookup is a
+  # single `case` glob — no associative arrays, nothing past bash-3 builtins.
+  in_use=" $(container_image_ids | sort -u | tr '\n' ' ')"
+
+  for repo in plane-frontend plane-space plane-admin plane-live plane-backend plane-proxy; do
+    # Rule 3, scoped to THIS repo by the "repo:" prefix — plane-backend's
+    # :staging must not protect a plane-frontend tag that shares an image ID.
+    protected="$(printf '%s\n' "$rows" | awk -F'|' -v p="$NS/$repo:" '
+      index($2, p) == 1 && substr($2, length(p) + 1, 4) != "git-" { print $1 }
+    ' | sort -u | tr '\n' ' ')"
+
+    # Candidate tags, newest image first. CreatedAt is ISO-8601 UTC, so a
+    # reverse lexical sort over the "created|id|ref" record is a correct
+    # newest-first sort; the id/ref tail only breaks ties.
+    git_rows="$(printf '%s\n' "$rows" | awk -F'|' -v p="$NS/$repo:" '
+      index($2, p) == 1 && substr($2, length(p) + 1, 4) == "git-" { print $3"|"$1"|"$2 }
+    ' | sort -r)"
+
+    idx=0
+    while IFS='|' read -r _ id ref; do
+      [ -n "$ref" ] || continue
+      # Plain assignment, not `((idx++))`: the arithmetic form returns 1 when
+      # the result is 0, which under `set -e` aborts on the first iteration.
+      idx=$((idx + 1))
+      if [ "$idx" -le "$keep" ]; then
+        continue                                   # rule 4
+      fi
+      case " $in_use " in
+        *" $id "*) continue ;;                     # rule 2
+      esac
+      case " $protected " in
+        *" $id "*) continue ;;                     # rule 3
+      esac
+      if docker rmi "$ref" >/dev/null 2>&1; then
+        removed=$((removed + 1))
+        echo "==>   removed $ref"
+      else
+        echo "==>   kept    $ref (in use)"
+      fi
+    done <<< "$git_rows"
+  done
+
+  # Dangling images only. Untagging above is what orphans them, and this is what
+  # reclaims the layers — `-a` would also take TAGGED images, which on this host
+  # means images the other environment still deploys from.
+  docker image prune -f >/dev/null 2>&1 || true
+
+  echo "==> pruned $removed old git-* tags"
+}
+
+prune_git_tags || true
 
 echo "==> Deploy OK  (commit $SHA, tag $TAG, project $COMPOSE_PROJECT)"
