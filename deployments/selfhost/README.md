@@ -14,7 +14,7 @@ governance SSOT.
 | Run dir           | `/opt/plane-fork-app`                       | `/opt/plane-staging-app`                       |
 | Compose project   | `plane-fork-app`                            | `plane-staging-app`                            |
 | Image tag         | `companymain`                               | `staging`                                      |
-| HTTP / HTTPS port | `80` / `8443`                               | `81` / `8543`                                  |
+| HTTP / HTTPS port | `8081` / `8443`                             | `81` / `8543`                                  |
 | Domain            | `plane.the1studio.org`                      | `plane-staging.the1studio.org`                 |
 | Uploads           | Cloudflare R2 via worker proxy              | bundled MinIO container                        |
 | Database          | **Neon** (managed, pg17.11)                 | bundled `pgvector/pgvector:pg17`, starts empty |
