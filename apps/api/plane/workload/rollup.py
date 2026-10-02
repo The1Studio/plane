@@ -27,7 +27,7 @@ from plane.db.models.state import StateGroup
 
 from .aggregation import from_cents, to_cents
 from .models import WorkloadEstimate
-from .service import resolve_guest_scope, resolve_project_scope
+from .service import resolve_request_scope
 
 MAX_DEPTH = 10
 ROW_GUARD = 10_000
@@ -174,7 +174,7 @@ def _build_cte_sql(cols):
     """
 
 
-def compute_rollups(user, slug, issue_ids):
+def compute_rollups(user, slug, issue_ids, is_admin=None):
     """Return {str(issue_id): rollup_dict} for every requested id the caller
     may access. Ids outside the caller's project scope (or, for a flag-off
     guest, not the guest's own issue) are OMITTED from the result entirely —
@@ -194,18 +194,20 @@ def compute_rollups(user, slug, issue_ids):
     is_parent() / parent_issue_ids() BEFORE calling this — compute_rollups
     itself does not filter out non-parent roots (an accessible root with zero
     countable children legitimately returns a zero rollup, not an omission).
+    `is_admin` lets a caller that already resolved the workspace-admin flag for
+    its own gate (`estimate_get`) skip the identical `workspace_members` EXISTS.
     """
     root_ids = list({rid for rid in issue_ids})
     if not root_ids:
         return {}
 
-    scope = resolve_project_scope(user, slug, requested_ids=None)
+    scope, restricted_project_ids, own_issue_ids = resolve_request_scope(
+        user, slug, is_admin=is_admin
+    )
     if not scope:
         return {}
 
-    full_project_ids, restricted_project_ids, own_issue_ids = resolve_guest_scope(
-        user, slug, scope
-    )
+    full_project_ids = set(scope) - set(restricted_project_ids)
     full_list = list(full_project_ids)
     restricted_list = list(restricted_project_ids)
     own_list = list(own_issue_ids)

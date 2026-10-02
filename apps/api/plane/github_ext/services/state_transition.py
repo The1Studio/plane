@@ -35,6 +35,31 @@ DEFAULT_RULES = {
 EVENT_KEYS = tuple(DEFAULT_RULES.keys())
 
 
+def _tier_rules(*, workspace_id=None, project_id=None) -> dict:
+    """The rules rows that apply to one resolution, read in a SINGLE query.
+
+    The three-tier resolution used to issue one SELECT per tier per call
+    (global, then workspace, then project); all three tiers live in one table,
+    so one scoped query returns them together. Rows are read in primary-key
+    order and the first row per scope wins, which is exactly what `.first()`
+    returned before for each tier.
+    """
+    from django.db.models import Q
+
+    from plane.github_ext.models import StateTransitionConfig
+
+    scope_filter = Q(scope="global")
+    if workspace_id is not None:
+        scope_filter |= Q(scope="workspace", workspace_id=workspace_id)
+    if project_id is not None:
+        scope_filter |= Q(scope="project", project_id=project_id)
+
+    rules_by_scope = {}
+    for row in StateTransitionConfig.objects.filter(scope_filter).order_by("pk"):
+        rules_by_scope.setdefault(row.scope, row.rules or {})
+    return rules_by_scope
+
+
 def resolve_workspace_config(workspace_id):
     """Return the effective event→state-name rules for a workspace, before any
     per-project override.
@@ -43,20 +68,11 @@ def resolve_workspace_config(workspace_id):
     row → the `scope="workspace"` row for this workspace. Each partial rules
     dict is merged over the lower tier.
     """
-    from plane.github_ext.models import StateTransitionConfig
-
     rules = dict(DEFAULT_RULES)
-
-    global_row = StateTransitionConfig.objects.filter(scope="global").first()
-    if global_row and global_row.rules:
-        rules.update(global_row.rules)
-
-    workspace_row = StateTransitionConfig.objects.filter(
-        scope="workspace", workspace_id=workspace_id
-    ).first()
-    if workspace_row and workspace_row.rules:
-        rules.update(workspace_row.rules)
-
+    tiers = _tier_rules(workspace_id=workspace_id)
+    for scope in ("global", "workspace"):
+        if tiers.get(scope):
+            rules.update(tiers[scope])
     return rules
 
 
@@ -69,16 +85,11 @@ def resolve_config(project):
     partial rules dict is merged over the lower tiers, so an override need only
     specify the events it changes.
     """
-    from plane.github_ext.models import StateTransitionConfig
-
-    rules = resolve_workspace_config(project.workspace_id)
-
-    project_row = StateTransitionConfig.objects.filter(
-        scope="project", project_id=project.id
-    ).first()
-    if project_row and project_row.rules:
-        rules.update(project_row.rules)
-
+    rules = dict(DEFAULT_RULES)
+    tiers = _tier_rules(workspace_id=project.workspace_id, project_id=project.id)
+    for scope in ("global", "workspace", "project"):
+        if tiers.get(scope):
+            rules.update(tiers[scope])
     return rules
 
 

@@ -155,8 +155,16 @@ def project_config_put(project, rules_payload):
     if error:
         return None, error
 
+    # One read of every stored state name for the project instead of one
+    # EXISTS per rule key (the payload carries one key per lifecycle event).
+    known_state_names = {
+        name.lower()
+        for name in State.objects.filter(project_id=project.id).values_list(
+            "name", flat=True
+        )
+    }
     for key, value in rules_payload.items():
-        if not State.objects.filter(project_id=project.id, name__iexact=value).exists():
+        if value.lower() not in known_state_names:
             return None, f"state '{value}' not found in project"
 
     row = StateTransitionConfig.objects.filter(

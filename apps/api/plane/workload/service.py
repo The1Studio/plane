@@ -70,7 +70,9 @@ def _accessible_project_ids(user, slug):
     )
 
 
-def resolve_project_scope(user, slug, requested_ids, route_project_id=None):
+def resolve_project_scope(
+    user, slug, requested_ids, route_project_id=None, is_admin=None
+):
     """The set of project ids the query may read — the CRITICAL access boundary.
 
     - Workspace admin → all projects in the workspace.
@@ -79,7 +81,9 @@ def resolve_project_scope(user, slug, requested_ids, route_project_id=None):
       (never trusted outright — prevents cross-project workload leakage).
     - `route_project_id` (project route) further narrows to that one project.
     """
-    if _is_workspace_admin(user, slug):
+    if is_admin is None:
+        is_admin = _is_workspace_admin(user, slug)
+    if is_admin:
         accessible = set(
             Project.objects.filter(workspace__slug=slug).values_list("id", flat=True)
         )
@@ -100,10 +104,12 @@ def resolve_project_scope(user, slug, requested_ids, route_project_id=None):
 # the guest. Workspace admins are never restricted (core admin bypass).
 
 
-def is_guest_restricted(user, slug, project_id) -> bool:
+def is_guest_restricted(user, slug, project_id, is_admin=None) -> bool:
     """True if `user` is a GUEST in this project AND the project hides team-wide
     data (guest_view_all_features=False). Workspace admins are never restricted."""
-    if _is_workspace_admin(user, slug):
+    if is_admin is None:
+        is_admin = _is_workspace_admin(user, slug)
+    if is_admin:
         return False
     return ProjectMember.objects.filter(
         member=user,
@@ -125,9 +131,13 @@ def is_issue_assignee(user, project_id, issue_id) -> bool:
     ).exists()
 
 
-def _guest_restricted_projects(user, slug, scope):
+def _guest_restricted_projects(user, slug, scope, is_admin=None):
     """Subset of `scope` where `user` is a flag-off GUEST (own-data only)."""
-    if not scope or _is_workspace_admin(user, slug):
+    if not scope:
+        return set()
+    if is_admin is None:
+        is_admin = _is_workspace_admin(user, slug)
+    if is_admin:
         return set()
     return set(
         ProjectMember.objects.filter(
@@ -160,20 +170,42 @@ def _materialize_own_issue_ids(user, restricted_project_ids):
     )
 
 
-def resolve_guest_scope(user, slug, scope):
-    """Split `scope` into (full_project_ids, restricted_project_ids,
-    own_issue_ids) for raw-SQL callers (rollup.py) that cannot embed a Django
-    Q in SQL. `own_issue_ids` is materialized (see above). Mirrors the same
-    project/guest split `_scope_filter` uses for ORM queries — SSOT for guest
-    membership rules stays in this module either way.
+def resolve_request_scope(
+    user, slug, requested_ids=None, route_project_id=None, is_admin=None
+):
+    """(scope, restricted_project_ids, own_issue_ids) for one request's scope gate.
+
+    The workspace-admin flag is resolved ONCE here and threaded into
+    `resolve_project_scope` and `_guest_restricted_projects`. A caller needing
+    both previously issued the identical `workspace_members` EXISTS twice per
+    request; `own_issue_ids` is likewise materialized once for callers that
+    apply the split to more than one queryset (`_scope_filter` at two issue
+    columns). Mirrors the project/guest split `_scope_filter` uses for ORM
+    queries — SSOT for guest membership rules stays in this module either way.
+
+    A caller that has already resolved the flag for its own gate (`estimate_get`
+    checks `is_guest_restricted` before it computes rollups) passes `is_admin` so
+    the identical `workspace_members` EXISTS is not issued twice per request.
     """
-    restricted = _guest_restricted_projects(user, slug, scope)
-    full = set(scope) - restricted
+    if is_admin is None:
+        is_admin = _is_workspace_admin(user, slug)
+    scope = resolve_project_scope(
+        user,
+        slug,
+        requested_ids,
+        route_project_id=route_project_id,
+        is_admin=is_admin,
+    )
+    if not scope:
+        return set(), set(), []
+    restricted = _guest_restricted_projects(user, slug, scope, is_admin=is_admin)
     own_issue_ids = _materialize_own_issue_ids(user, restricted)
-    return full, restricted, own_issue_ids
+    return scope, restricted, own_issue_ids
 
 
-def _scope_filter(project_scope, restricted, user, issue_field="issue_id"):
+def _scope_filter(
+    project_scope, restricted, user, issue_field="issue_id", own_issue_ids=None
+):
     """Row filter Q: unrestricted projects in full; restricted (flag-off guest)
     projects narrowed to issues the user is assigned to.
 
@@ -192,7 +224,8 @@ def _scope_filter(project_scope, restricted, user, issue_field="issue_id"):
     if not restricted:
         return Q(project_id__in=project_scope)
     full = set(project_scope) - set(restricted)
-    own_issue_ids = _materialize_own_issue_ids(user, restricted)
+    if own_issue_ids is None:
+        own_issue_ids = _materialize_own_issue_ids(user, restricted)
     q = Q(**{"project_id__in": restricted, f"{issue_field}__in": own_issue_ids})
     if full:
         q |= Q(project_id__in=full)
@@ -304,7 +337,7 @@ def _unestimated_queryset(slug, scope_q_issue, state_groups, date_from, date_to)
 
 
 def _base_queryset(slug, scope_q, state_groups):
-    # Deferred import — rollup.py imports resolve_project_scope/resolve_guest_scope
+    # Deferred import — rollup.py imports resolve_request_scope
     # from THIS module at its top level; importing rollup.py at service.py's own
     # top level would create a circular import. Both modules are fully loaded by
     # the time any request handler runs, so a call-time import is safe here.
@@ -358,6 +391,17 @@ def _resolve_owners(issue_ids):
     """
     if not issue_ids:
         return {}
+    return _owners_by_issue(Q(issue_id__in=issue_ids))
+
+
+def _owners_by_issue(issue_filter):
+    """Map issue_id -> [(assignee_id, display_name), ...] for the issues matched
+    by `issue_filter`.
+
+    One query, shared by both owner lookups so the predicate — non-bot,
+    soft-delete aware, and gated on an active ProjectMember for the issue's
+    project — is written once.
+    """
     active_member = ProjectMember.objects.filter(
         project_id=OuterRef("project_id"),
         member_id=OuterRef("assignee_id"),
@@ -365,7 +409,7 @@ def _resolve_owners(issue_ids):
     )
     rows = (
         IssueAssignee.objects.filter(
-            issue_id__in=issue_ids,
+            issue_filter,
             deleted_at__isnull=True,
             assignee__is_bot=False,
         )
@@ -377,6 +421,28 @@ def _resolve_owners(issue_ids):
     for issue_id, assignee_id, name in rows:
         owners[issue_id].append((assignee_id, name))
     return dict(owners)
+
+
+def _resolve_owners_for(est_qs, unest_qs):
+    """Owner map for every issue the two row querysets cover.
+
+    `_resolve_owners` above marshals one bind parameter per issue: on the measured
+    week/90d request that was 2,731 parameters (2,729 of them UUIDs) inside a
+    25 KB statement — the single most expensive statement on the endpoint, and it
+    grows with the workspace. Passing the row querysets as subqueries keeps the
+    predicate identical by construction (they ARE the querysets the rows came
+    from) while PostgreSQL filters by semi-join instead of by thousands of
+    parameters.
+
+    The two sets coincide for every request that returns a response: the row
+    guard raises as soon as the in-scope rows exceed ROW_GUARD, so these unsliced
+    querysets and the `ROW_GUARD + 1` slices at the call site cover the same
+    issues.
+    """
+    return _owners_by_issue(
+        Q(issue_id__in=est_qs.values("issue_id"))
+        | Q(issue_id__in=unest_qs.values("id"))
+    )
 
 
 def _scope_member_ids(scope, restricted, user):
@@ -509,7 +575,7 @@ def compute_workload(
     route_project_id=None,
 ):
     """Return the workload response dict. Inputs are assumed validated by the view."""
-    scope = resolve_project_scope(
+    scope, restricted, own_issue_ids = resolve_request_scope(
         user, slug, requested_project_ids, route_project_id=route_project_id
     )
     if not scope:
@@ -526,14 +592,15 @@ def compute_workload(
     today = _resolve_today(slug)
 
     # Flag-off guests see only their own assigned workload (core parity).
-    restricted = _guest_restricted_projects(user, slug, scope)
-    scope_q = _scope_filter(scope, restricted, user)
+    scope_q = _scope_filter(scope, restricted, user, own_issue_ids=own_issue_ids)
 
     qs = _base_queryset(slug, scope_q, state_groups)
     # Same scope rule, applied to `Issue` instead of `WorkloadEstimate` — see
     # `_scope_filter`'s `issue_field` docstring for why this is a parameter and
     # not a second copy of the guest rule.
-    scope_q_issue = _scope_filter(scope, restricted, user, issue_field="id")
+    scope_q_issue = _scope_filter(
+        scope, restricted, user, issue_field="id", own_issue_ids=own_issue_ids
+    )
     unest_qs = _unestimated_queryset(slug, scope_q_issue, state_groups, date_from, date_to)
 
     # Row guard — bound memory regardless of how the request was narrowed
@@ -617,10 +684,11 @@ def compute_workload(
         .count()
     )
 
-    # ONE `_resolve_owners` call covering BOTH id sets — it is a single query,
-    # and calling it twice would make it two for no benefit.
-    issue_ids = [r[0] for r in est_rows]
-    owners = _resolve_owners(issue_ids + [r[0] for r in unest_rows])
+    # ONE owner query covering BOTH row sets: `_resolve_owners_for` filters by
+    # subqueries of the very querysets the rows came from, so the predicate is
+    # identical by construction and the statement no longer carries one bind
+    # parameter per issue (2,729 UUIDs on the busiest workspace).
+    owners = _resolve_owners_for(qs, unest_qs)
     assignee_filter = set(assignee_ids) if assignee_ids else None
 
     buckets = defaultdict(lambda: defaultdict(int))  # owner_id -> period -> cents
@@ -1036,18 +1104,17 @@ def bulk_estimates(user, slug, issue_ids):
         Any other exception propagates uncaught (→ HTTP 500 from DRF handler).
     """
     # Deferred import — see the matching note in _base_queryset (circular
-    # import: rollup.py imports resolve_project_scope/resolve_guest_scope
+    # import: rollup.py imports resolve_request_scope
     # from this module at its top level).
     from .rollup import has_countable_children
 
     validate_bulk_issue_ids(issue_ids)
 
-    scope = resolve_project_scope(user, slug, requested_ids=None, route_project_id=None)
+    scope, restricted, own_issue_ids = resolve_request_scope(user, slug)
     if not scope:
         return {}
 
-    restricted = _guest_restricted_projects(user, slug, scope)
-    scope_q = _scope_filter(scope, restricted, user)
+    scope_q = _scope_filter(scope, restricted, user, own_issue_ids=own_issue_ids)
 
     rows = (
         WorkloadEstimate.objects.filter(
