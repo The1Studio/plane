@@ -39,6 +39,16 @@ def run_rag_eval(self, workspace_id: str, golden_set: list[dict]):
     client = AnthropicClient(workspace_id=workspace_id)
     metrics = {"precision_at_k": [], "citation_faithfulness": []}
 
+    # NOTE: In eval we use all workspace entity ids (no user context). The set is
+    # workspace-wide and item-independent, so it is read once here instead of
+    # once per golden item.
+    all_entity_ids = set(
+        str(e)
+        for e in __import__("plane.ai_ext.models", fromlist=["AiEmbedding"])
+        .AiEmbedding.objects.filter(workspace_id=workspace_id)
+        .values_list("entity_id", flat=True)
+    )
+
     for item in golden_set:
         query = item["query"]
         relevant_ids = set(item.get("relevant_entity_ids", []))
@@ -56,14 +66,6 @@ def run_rag_eval(self, workspace_id: str, golden_set: list[dict]):
             embed_result = bge.embed_one(query)
         finally:
             bge.close()
-
-        # NOTE: In eval we use all workspace entity ids (no user context).
-        all_entity_ids = set(
-            str(e)
-            for e in __import__("plane.ai_ext.models", fromlist=["AiEmbedding"])
-            .AiEmbedding.objects.filter(workspace_id=workspace_id)
-            .values_list("entity_id", flat=True)
-        )
 
         ann = _ann_search(embed_result.embedding, workspace_id, all_entity_ids, k=10)
         tsv = _tsv_search(query, workspace_id, all_entity_ids, k=10)

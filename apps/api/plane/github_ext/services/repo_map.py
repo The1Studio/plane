@@ -28,11 +28,14 @@ def _infer_project(workspace, repo_name):
     zero or multiple matches."""
     from plane.db.models import Project
 
-    candidates = Project.objects.filter(workspace=workspace).filter(
-        Q(name__iexact=repo_name) | Q(identifier__iexact=repo_name)
+    # `[:2]` answers "exactly one?" in one query; count() + first() was two.
+    matches = list(
+        Project.objects.filter(workspace=workspace).filter(
+            Q(name__iexact=repo_name) | Q(identifier__iexact=repo_name)
+        )[:2]
     )
-    if candidates.count() == 1:
-        return candidates.first()
+    if len(matches) == 1:
+        return matches[0]
     return None
 
 

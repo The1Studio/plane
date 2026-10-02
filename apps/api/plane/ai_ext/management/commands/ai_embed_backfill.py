@@ -192,34 +192,43 @@ class Command(BaseCommand):
             self.stderr.write(f"  [error] BGE batch failed for {entity_type}: {exc}")
             return
 
-        to_create = []
+        wanted = {}
+        by_entity = {}
         for row, embed_result in zip(rows_valid, embed_results):
             entity_id = str(row["id"])
-            project_id = row.get("project_id")
             text = text_fn(row)
-            content_hash = hashlib.sha256(text.encode()).hexdigest()
+            wanted[entity_id] = hashlib.sha256(text.encode()).hexdigest()
+            by_entity[entity_id] = (row, embed_result, text)
 
-            # Skip if content_hash unchanged (incremental).
-            existing = AiEmbedding.objects.filter(
+        # Two batch queries replace a per-row exists()+delete(): the entities
+        # whose stored chunk already carries this content_hash are skipped, and
+        # every entity that needs a re-insert has its stale chunks removed in
+        # one DELETE instead of one statement per row.
+        present = {
+            (str(entity_id), content_hash)
+            for entity_id, content_hash in AiEmbedding.objects.filter(
                 entity_type=entity_type,
-                entity_id=entity_id,
+                entity_id__in=list(wanted),
                 chunk_idx=0,
-                content_hash=content_hash,
-            ).exists()
-            if existing:
-                continue
+            ).values_list("entity_id", "content_hash")
+        }
+        stale = [entity_id for entity_id, ch in wanted.items() if (entity_id, ch) not in present]
+        if stale:
+            AiEmbedding.objects.filter(
+                entity_type=entity_type, entity_id__in=stale
+            ).delete()
 
-            # Delete stale chunks before re-insert.
-            AiEmbedding.objects.filter(entity_type=entity_type, entity_id=entity_id).delete()
-
+        to_create = []
+        for entity_id in stale:
+            row, embed_result, text = by_entity[entity_id]
             to_create.append(
                 AiEmbedding(
                     workspace_id=workspace.id,
-                    project_id=project_id,
+                    project_id=row.get("project_id"),
                     entity_type=entity_type,
                     entity_id=entity_id,
                     chunk_idx=0,
-                    content_hash=content_hash,
+                    content_hash=wanted[entity_id],
                     content_excerpt=text[:512],
                     model_id=embed_result.model_id,
                     embed_version=embed_result.embed_version,

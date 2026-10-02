@@ -342,16 +342,25 @@ class Command(BaseCommand):
         members = client.get_team_members()
         self.stdout.write(f"Found {len(members)} workspace members")
 
+        from plane.db.models import User
+
+        # One read of every matching user instead of one SELECT per member:
+        # the member list is walked once and the map answers each email.
+        users_by_email = {
+            email.lower(): str(uid)
+            for email, uid in User.objects.filter(
+                email__in=[
+                    ((member.get("user") or {}).get("email") or "")
+                    for member in members
+                ]
+            ).values_list("email", "id")
+        }
+
         for member in members:
             email = (member.get("user") or {}).get("email") or ""
             if not email:
                 continue
-            from plane.db.models import User
-            try:
-                user = User.objects.get(email__iexact=email)
-                plane_uid = str(user.id)
-            except User.DoesNotExist:
-                plane_uid = None
+            plane_uid = users_by_email.get(email.lower())
 
             # H1: skip EmailCoverage writes entirely in dry-run.
             # auto-map signs coverage so --apply's gate passes with no manual step.
@@ -964,6 +973,17 @@ class Command(BaseCommand):
             write_state,
         )
         from plane.db.models import State
+        from plane.clickup_migrate.models import MigrationCursor
+
+        # Comment cursors are read once per list instead of once per task: the
+        # per-task get_or_create issued a SELECT for every task and an INSERT for
+        # every task new to this run. The map is keyed exactly like the lookup it
+        # replaces (run + entity_type + container_id); a miss below creates the row
+        # with the same defaults and registers it, so later tasks hit the map.
+        comment_cursors = {
+            c.container_id: c
+            for c in MigrationCursor.objects.filter(run=run, entity_type="comments")
+        }
 
         if snapshot_by_list is not None:
             task_pages = [(snapshot_by_list.get(str(list_id), []), 0)]
@@ -1061,8 +1081,7 @@ class Command(BaseCommand):
                     counts["attachment"] += 1
 
                 # Comments (with cursor resumption).
-                # H1: MigrationCursor.get_or_create only in non-dry-run.
-                from plane.clickup_migrate.models import MigrationCursor
+                # H1: the cursor row is only created in non-dry-run.
                 if dry_run:
                     # Dry-run: iterate all comments without persisting cursor state.
                     for comments, _, _ in client.iter_comments(task_id, start_id=None):
@@ -1070,12 +1089,16 @@ class Command(BaseCommand):
                         for comment in comments:
                             counts["comment"] += len(comment.get("replies") or [])
                 else:
-                    cursor_obj, _ = MigrationCursor.objects.get_or_create(
-                        run=run,
-                        entity_type="comments",
-                        container_id=task_id,
-                        defaults={"cursor_token": None, "done": False},
-                    )
+                    cursor_obj = comment_cursors.get(task_id)
+                    if cursor_obj is None:
+                        cursor_obj = MigrationCursor.objects.create(
+                            run=run,
+                            entity_type="comments",
+                            container_id=task_id,
+                            cursor_token=None,
+                            done=False,
+                        )
+                        comment_cursors[task_id] = cursor_obj
                     if cursor_obj.done:
                         continue
 
