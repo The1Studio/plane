@@ -20,6 +20,21 @@ Entries written by `plane-scaffold-feature` / `plane-propagate`; processed entri
   - The1Studio/docs#1 — https://github.com/The1Studio/docs/issues/1
   - The1Studio/developer-docs#1 — https://github.com/The1Studio/developer-docs/issues/1
 
+## page_ext — 2026-10-05
+
+- Feature: project pages over the public API. Core `/api/v1/` has no page route (`.../pages/`
+  answers the custom 404), so an API-key client could not read or edit a page. Exposed from the
+  fork-owned `page_ext` app rather than editing core.
+- New endpoints:
+  - `GET /api/v1/workspaces/<slug>/projects/<project_id>/pages/` — pages the caller may see (metadata, no body).
+  - `GET /api/v1/workspaces/<slug>/projects/<project_id>/pages/<page_id>/` — one page incl. `description_html` + `description_stripped`.
+  - `PATCH` the same URL — body `{"name"?, "description_html"?}`; 423 locked, 409 archived, unknown keys 400.
+- Behaviour that matters to consumers: PATCH clears `description_binary` + `description_json` so the
+  live server rebuilds them from the html on next open (otherwise the stale Yjs binary silently undoes the edit).
+- New fields: none on core models — `page_ext` owns no tables (no migration).
+- Propagation needed: MCP tools in `plane-mcp-server` (`list_pages` repointed, `retrieve_page`
+  repointed, `update_page` added), SDK bindings in `plane-node-sdk` + `plane-python-sdk`, docs.
+
 ## project_ext — 2026-08-12
 
 - Feature: project visibility (`Project.network`, 0 = secret/private, 2 = public) over the
