@@ -31,6 +31,10 @@ urlpatterns = [
     # before plane.api.urls so this path resolves first — FORK.md tp2). It is a
     # distinct path from core's `users/me/`, so core's endpoint is unaffected.
     path("api/v1/", include("plane.workspace_ext.api_urls")),
+    # The1Studio fork add-on: public-API project-page routes (append-only,
+    # before plane.api.urls so these paths resolve first — FORK.md tp2). Core has
+    # no v1 page route, so nothing is shadowed.
+    path("api/v1/", include("plane.page_ext.api_urls")),
     path("api/v1/", include("plane.api.urls")),
     path("auth/", include("plane.authentication.urls")),
     # The1Studio fork add-on (append-only — docs/FORK.md touch-point 2)

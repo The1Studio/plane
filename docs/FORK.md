@@ -412,6 +412,18 @@ New backend code lives in **new Django apps**:
   project cannot add anyone to it, including themselves, so a workspace ADMIN has no
   workspace-level path to grant themselves access to a private project they administer. These
   two endpoints are that bootstrap path.
+- `apps/api/plane/page_ext/` — project pages over the public API (`GET .../projects/<id>/pages/`,
+  `GET`/`PATCH .../projects/<id>/pages/<page_id>/`). Core's `/api/v1/` has no page route, so an
+  API-key client (the MCP server) could not read or edit a page at all. Authorization is the app's
+  own `ProjectPagePermission`, so the API sees nothing the UI would not (active project member
+  required, private pages owner-only). **The load-bearing rule:** a page's `description_binary`
+  (Yjs) is the live server's source of truth and it regenerates `description_html` from it on every
+  save, so a PATCH that wrote only `description_html` would be silently undone the next time the
+  page is opened. `PATCH` therefore writes the new html, clears `description_binary` and
+  `description_json`, and lets `apps/live` rebuild the binary from the html + page name on the next
+  open (`fetchDocument`'s "binary is empty → convert HTML" branch, the same path page create and
+  duplicate already use). Locked pages answer `423`, archived pages `409`; the pre-edit content is
+  snapshotted into `PageVersion` so the edit is undoable. Model-less, so it ships no `migrations/`.
 - `apps/api/plane/workspace_ext/` — workspace discovery and creation over the public API
   (`GET /api/v1/users/me/workspaces/`, `POST /api/v1/workspaces/`). Every workspace-scoped route
   takes the slug as a path segment, but no core `/api/v1/` route returns the slugs a caller can
