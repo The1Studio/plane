@@ -12,6 +12,7 @@
 # project_ext's project-members endpoint), PATCH needs Admin/Member, and a
 # private page (access=1) is reachable only by its owner (403, even for admins).
 
+from django.http import Http404
 from rest_framework import status
 from rest_framework.response import Response
 
@@ -37,6 +38,17 @@ _REFUSAL_STATUS = {
 }
 
 
+def _not_found(exc):
+    """404 body in the {"error": ...} shape every other API error here uses.
+
+    DRF renders a bare Http404 as {"detail": ...}; clients (the MCP server's
+    _send helper) read "error". The messages also differ from the custom 404
+    handler's "Page not found." — the body of an UNROUTED path — so a client
+    can tell "this server has no page endpoints" from "that page is not here".
+    """
+    return Response({"error": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+
+
 class PageListAPIEndpoint(BaseAPIView):
     """GET /api/v1/workspaces/<slug>/projects/<project_id>/pages/
 
@@ -49,7 +61,10 @@ class PageListAPIEndpoint(BaseAPIView):
     permission_classes = [ProjectPagePermission]
 
     def get(self, request, slug, project_id):
-        project = resolve_project_or_404(slug, project_id)
+        try:
+            project = resolve_project_or_404(slug, project_id)
+        except Http404 as exc:
+            return _not_found(exc)
         pages = visible_pages(project, request.user).order_by("-created_at")
         return Response([serialize_page(page) for page in pages], status=status.HTTP_200_OK)
 
@@ -67,14 +82,20 @@ class PageDetailAPIEndpoint(BaseAPIView):
     permission_classes = [ProjectPagePermission]
 
     def get(self, request, slug, project_id, page_id):
-        project = resolve_project_or_404(slug, project_id)
-        page = get_visible_page_or_404(project, request.user, page_id)
+        try:
+            project = resolve_project_or_404(slug, project_id)
+            page = get_visible_page_or_404(project, request.user, page_id)
+        except Http404 as exc:
+            return _not_found(exc)
         return Response(serialize_page(page, include_content=True), status=status.HTTP_200_OK)
 
     def patch(self, request, slug, project_id, page_id):
-        project = resolve_project_or_404(slug, project_id)
         # 404 before any write if the page is not in this project / not visible.
-        get_visible_page_or_404(project, request.user, page_id)
+        try:
+            project = resolve_project_or_404(slug, project_id)
+            get_visible_page_or_404(project, request.user, page_id)
+        except Http404 as exc:
+            return _not_found(exc)
 
         parsed, error = parse_patch(request.data)
         if error:

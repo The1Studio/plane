@@ -244,11 +244,29 @@ class RetrievePageTests(_Scenario):
 
         self.assertEqual(self.client_member.get(self.page_url(page)).status_code, 404)
 
-    def test_unknown_page_is_404(self):
+    def test_unknown_page_is_404_with_an_error_body_distinct_from_the_unrouted_404(self):
         class Ghost:
             id = uuid.uuid4()
 
-        self.assertEqual(self.client_member.get(self.page_url(Ghost)).status_code, 404)
+        response = self.client_member.get(self.page_url(Ghost))
+
+        self.assertEqual(response.status_code, 404)
+        # "Page not found." is the custom 404 handler's body for a path no route
+        # matches (a server WITHOUT these endpoints); a missing page must not
+        # be mistaken for that.
+        self.assertIn("error", response.json())
+        self.assertNotEqual(response.json()["error"], "Page not found.")
+
+    def test_page_in_another_project_uses_the_error_key(self):
+        other = _project(self.ws)
+        _project_member(other, self.owner, ROLE_MEMBER)
+        _project_member(other, self.member, ROLE_MEMBER)
+        elsewhere = _page(other, self.owner)
+
+        wrong_project = self.client_member.get(self.page_url(elsewhere))
+
+        self.assertEqual(wrong_project.status_code, 404)
+        self.assertEqual(wrong_project.json(), {"error": "Page does not exist in this project"})
 
 
 # ---------------------------------------------------------------------------
