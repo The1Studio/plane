@@ -101,6 +101,8 @@ INSTALLED_APPS = [
     "plane.github_ext",
     # The1Studio fork (project_ext) — docs/FORK.md touch-point 1
     "plane.project_ext",
+    # The1Studio fork (page_ext) — docs/FORK.md touch-point 1
+    "plane.page_ext",
     # The1Studio fork (workspace_ext) — docs/FORK.md touch-point 1
     "plane.workspace_ext",
     # The1Studio fork (views_ext) — docs/FORK.md touch-point 1
