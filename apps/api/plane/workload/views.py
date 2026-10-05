@@ -29,6 +29,7 @@ from .models import WorkloadEstimate, WorkloadSettings
 from .rollup import RollupTooLarge, compute_rollups, is_parent, parent_issue_ids
 from .serializers import WorkloadEstimateSerializer, WorkloadSettingsSerializer
 from .service import (
+    _is_workspace_admin,
     VALID_STATE_GROUPS,
     BulkEstimatesError,
     WorkloadTooLarge,
@@ -149,10 +150,14 @@ def _run(request, slug, route_project_id=None):
 
 def estimate_get(request, slug, project_id, issue_id):
     # Flag-off guests may read an estimate only for issues assigned to them
-    # (mirrors core's per-issue guest gate in app/views/issue/base.py).
-    if is_guest_restricted(request.user, slug, project_id) and not is_issue_assignee(
-        request.user, project_id, issue_id
-    ):
+    # (mirrors core's per-issue guest gate in app/views/issue/base.py). The
+    # workspace-admin flag is resolved once here and threaded into the rollup
+    # scope resolution below, so a parent estimate read issues that EXISTS
+    # once instead of once per gate.
+    is_admin = _is_workspace_admin(request.user, slug)
+    if is_guest_restricted(
+        request.user, slug, project_id, is_admin=is_admin
+    ) and not is_issue_assignee(request.user, project_id, issue_id):
         return Response(
             {"error": "You are not allowed to view this estimate"},
             status=status.HTTP_403_FORBIDDEN,
@@ -165,7 +170,7 @@ def estimate_get(request, slug, project_id, issue_id):
         # Stored legacy value (if any) never leaks to the UI once an issue
         # has countable children — estimates live on the sub-items instead.
         data["hours"] = None
-        rollups = compute_rollups(request.user, slug, [issue_id])
+        rollups = compute_rollups(request.user, slug, [issue_id], is_admin=is_admin)
         data["rollup"] = rollups.get(str(issue_id))
     return Response(data, status=status.HTTP_200_OK)
 

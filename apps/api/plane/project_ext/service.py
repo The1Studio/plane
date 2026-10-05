@@ -109,8 +109,12 @@ def set_visibility_bulk(slug, project_ids, network):
     if not isinstance(project_ids, (list, tuple)):
         return None, "project_ids must be a list of project UUIDs"
 
-    projects = Project.objects.filter(workspace__slug=slug, pk__in=project_ids)
-    found = {str(p.id) for p in projects}
+    found = {
+        str(pid)
+        for pid in Project.objects.filter(
+            workspace__slug=slug, pk__in=project_ids
+        ).values_list("id", flat=True)
+    }
     missing = [str(pid) for pid in project_ids if str(pid) not in found]
     if missing:
         return None, f"project_ids not found in workspace {slug}: {', '.join(missing)}"
