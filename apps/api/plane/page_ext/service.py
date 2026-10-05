@@ -181,7 +181,8 @@ def apply_page_update(page_id, user, name=None, description_html=None):
     stale by the time the write lands).
     """
     with transaction.atomic():
-        page = Page.objects.select_for_update().select_related("owned_by").get(pk=page_id)
+        # of=("self",): lock the page row only, not the joined owner's user row.
+        page = Page.objects.select_for_update(of=("self",)).select_related("owned_by").get(pk=page_id)
 
         if page.is_locked:
             raise PageUpdateRefused("PAGE_LOCKED")
