@@ -32,7 +32,7 @@ jobs:
   # ---------------------------------------------------------------------------
   backend-isolation-check:
     name: Backend — migration check + Django system check
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, arc, the1studio, org]
     timeout-minutes: 10
 
     services:
@@ -100,7 +100,7 @@ jobs:
   # ---------------------------------------------------------------------------
   frontend-check:
     name: Frontend — lockfile + type-check
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, arc, the1studio, org]
     timeout-minutes: 10
 
     steps:
@@ -204,7 +204,7 @@ jobs:
   # ---------------------------------------------------------------------------
   backend-pytest:
     name: Backend — pytest (fork-owned apps)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, arc, the1studio, org]
     # Must stay ABOVE the pytest step's own timeout (25) plus the setup steps
     # that precede it (~12 min of install/service budget), or the job ceiling
     # fires first and the step's more specific message never appears.
