@@ -16,7 +16,7 @@ on:
 jobs:
     license-check:
         name: Copy Right Check
-        runs-on: ubuntu-latest
+        runs-on: [self-hosted, linux, x64, arc, the1studio, org]
         steps:
             - name: Checkout repository
               uses: actions/checkout@v6
