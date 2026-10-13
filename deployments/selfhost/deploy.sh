@@ -45,7 +45,11 @@ SHA="$(git rev-parse --short HEAD)"
 WORKSPACE="$(pwd)"
 
 # Host port the post-deploy health checks probe. MUST match LISTEN_HTTP_PORT in
-# this environment's plane.env. Defaulting to 80 reproduces production exactly.
+# this environment's plane.env. NOTE: 80 is NOT what production runs —
+# production's plane.env sets LISTEN_HTTP_PORT=8081, supplied explicitly by
+# deploy-master.yml. This default only applies when HEALTH_HTTP_PORT is unset,
+# and it assumes the compose proxy's host port is 80. Verify against plane.env
+# before relying on it.
 #
 # This is not cosmetic. Until 2026-08-26 the checks below hardcoded
 # `http://localhost/`, so a SECOND stack on another port would have probed
