@@ -542,6 +542,16 @@ CELERY_TASK_ROUTES = {
     "plane.ai_ext.bgtasks.*": {"queue": "ai"},
 }
 
+# Neon CU-hr: beat's DatabaseScheduler re-reads the PeriodicTask table every
+# `beat_max_loop_interval` seconds (Celery's default is 5) to detect schedule
+# changes. The Neon compute suspends after 5 minutes of inactivity, so a 5 s
+# poll wakes it ~17k times/day and keeps it billable around the clock
+# regardless of how little work there is. 86400 makes beat sleep until the
+# next due entry instead; with only `*/6h` and the daily cleanup tasks left,
+# the compute can suspend between jobs. This is an upper bound on the idle
+# sleep, not a delay added to every job.
+CELERY_BEAT_MAX_LOOP_INTERVAL = 86400
+
 
 # --- Fork: accept any attachment MIME type (whitelist disabled) ---
 class _AllowAllMimeTypes(list):

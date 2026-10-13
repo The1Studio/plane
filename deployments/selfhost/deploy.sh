@@ -290,7 +290,29 @@ if [ "$web" != "200" ] || [ "$api" != "200" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 5) Bounded cache prune (keep some for fast rebuilds; server disk is tight).
+# 5) CU-hr: disable the schedule entries that keep the Neon compute awake.
+# ---------------------------------------------------------------------------
+# The Neon compute suspends after 5 minutes of inactivity. Beat's own poll loop
+# is capped by CELERY_BEAT_MAX_LOOP_INTERVAL (settings/common.py); the remaining
+# frequent STATIC entry — the */5 email batch, whose first statement reads
+# EmailNotificationLog whether or not there is anything to send — is disabled
+# here. It is a database row, not a celery.py edit: touch-point 3 is zero-edit,
+# and `update_from_dict` re-applies a static entry's schedule columns on every
+# boot while never writing `enabled`, which is what makes disabling the row
+# durable. See the command's docstring for the full reasoning.
+#
+# Best-effort by design: if this cannot run, the deploy still succeeds and the
+# cron simply stays enabled — exactly the pre-existing behaviour — but it says so
+# loudly, because a silent no-op here means the compute keep-awake was not fixed.
+if docker compose -p "$COMPOSE_PROJECT" "${COMPOSE_FILES[@]}" --env-file=plane.env \
+     exec -T api python manage.py ai_disable_email_cron; then
+  echo "==> periodic tasks: */5 email batch disabled (compute can suspend)"
+else
+  echo "WARN: could not disable the */5 email batch — the Neon compute will NOT suspend."
+fi
+
+# ---------------------------------------------------------------------------
+# 6) Bounded cache prune (keep some for fast rebuilds; server disk is tight).
 # ---------------------------------------------------------------------------
 docker builder prune -f --keep-storage=20GB >/dev/null 2>&1 || true
 
