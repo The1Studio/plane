@@ -36,15 +36,32 @@
 # back on. django-celery-beat also short-circuits a disabled entry in
 # `is_due()`, so it stays out of the built schedule even if it lingers in it.
 #
+# The lookup gotcha — the reason this command once shipped a false green.
+# `update_from_dict` is handed the beat_schedule DICT, so its upsert is
+# `PeriodicTask.objects.update_or_create(name=<dict KEY>, ...)`. Therefore
+# `PeriodicTask.name` holds the beat_schedule KEY (e.g.
+# "check-every-five-minutes-to-send-email-notifications") and the task path
+# lives in the SEPARATE `task` column ("plane.bgtasks.email_notification_task.
+# stack_email_notification"). Filtering by the task path — as this command
+# first did — matches ZERO rows: it took its "no row yet" branch, printed
+# success and exited 0 while every cron stayed enabled. Look the row up by the
+# schedule key, and treat "no row" as the failure it is.
+#
 # Lives in ai_ext because this app already owns PeriodicTask management
 # (ai_schedule_digests) and therefore the django_celery_beat dependency.
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 
 
-# The beat_schedule keys declared statically in plane/celery.py, mapped to the
-# PeriodicTask `task` name that `update_from_dict` keys the DB row on. Edit
-# celery.py to add one — it is touch-point 3, zero-edit.
+# Each value is the tuple (schedule_key, task_path, note):
+#   [0] schedule_key — the beat_schedule dict KEY in plane/celery.py. This is
+#       the value `PeriodicTask.name` holds (`update_from_dict` upserts the row
+#       keyed by it), so it is what the row is looked up BY.
+#   [1] task_path — the `task` value of that same beat_schedule entry, i.e. the
+#       value you find in the row's `task` column. Informational; it is NOT the
+#       lookup key and filtering on it matches nothing.
+#   [2] note — why this job keeps the Neon compute awake.
+# Edit celery.py to add one — it is touch-point 3, zero-edit.
 #
 # The deploy step disables BOTH entries below, not just the default. Each is a
 # recurring database touch that never lets the Neon compute's 5-minute idle
@@ -93,27 +110,31 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         from django_celery_beat.models import PeriodicTask  # type: ignore
 
-        _, task_name, note = JOBS[options["job"]]
+        # `row_name` is the beat_schedule KEY — what `PeriodicTask.name` holds —
+        # NOT the task path (element [1], which lives in the `task` column).
+        row_name, _, note = JOBS[options["job"]]
         enable = options["enable"]
-        rows = PeriodicTask.objects.filter(name=task_name)
+        rows = PeriodicTask.objects.filter(name=row_name)
 
         if not rows.exists():
-            # Not an error: the row is created by beat's first boot after a
-            # fresh database, and by `update_from_dict` on the next one. Say so
-            # rather than reporting a success that changed nothing.
-            self.stdout.write(
-                self.style.WARNING(
-                    f"No PeriodicTask named '{task_name}' exists yet. Nothing to "
-                    f"change. Re-run this after beat has booted once against this "
-                    f"database and it will act on the row beat creates."
-                )
+            # HARD FAILURE, not a warning. A missing row means the disable did
+            # not happen: beat creates the row on its first boot against this
+            # database (`update_from_dict` upserts it from the celery.py
+            # beat_schedule), so there is nothing to disable before then.
+            # Raising exits non-zero — which is what lets deploy.sh step 7 take
+            # its `else` branch and print the WARN line. The old silent success
+            # here was the false green that let the crons stay enabled.
+            raise CommandError(
+                f"No PeriodicTask named '{row_name}' exists yet, so nothing was "
+                f"disabled. That row is created by beat's first boot against this "
+                f"database (celery.py's beat_schedule, upserted by "
+                f"`update_from_dict`). Re-run this once beat has booted."
             )
-            return
 
         if enable:
             changed = rows.filter(enabled=False).update(enabled=True)
             self.stdout.write(
-                self.style.SUCCESS(f"Re-enabled '{task_name}' ({changed} row(s)).")
+                self.style.SUCCESS(f"Re-enabled '{row_name}' ({changed} row(s)).")
             )
             return
 
@@ -121,11 +142,11 @@ class Command(BaseCommand):
         if changed:
             self.stdout.write(
                 self.style.SUCCESS(
-                    f"Disabled '{task_name}' ({changed} row(s); {note}). The compute "
+                    f"Disabled '{row_name}' ({changed} row(s); {note}). The compute "
                     f"can now suspend between the remaining jobs."
                 )
             )
         else:
             self.stdout.write(
-                self.style.SUCCESS(f"'{task_name}' was already disabled. No change.")
+                self.style.SUCCESS(f"'{row_name}' was already disabled. No change.")
             )
