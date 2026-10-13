@@ -12,6 +12,14 @@
 # interval means the timer never expires and the compute is billed around the
 # clock. This fork runs no mail server, so the job is dead weight.
 #
+# The other frequent STATIC entry is `instance_traces`, scheduled at
+# `crontab(hour="*/6", minute=0)` in the same celery.py block. It reports
+# instance telemetry upstream and emits ~9 `count()` queries covering every
+# core table. Disabling it is the same problem and the same mechanism as the
+# email job — a recurring database touch that never lets the compute's
+# 5-minute idle timer expire — and the only difference between the two is
+# cadence (every 6 hours against every 5 minutes), not how they are turned off.
+#
 # Why this is a DB row and not a celery.py edit: `DatabaseScheduler`
 # (`beat_scheduler` in celery.py) builds its schedule from PeriodicTask rows and
 # merges the static `app.conf.beat_schedule` into them at every boot via
@@ -37,9 +45,14 @@ from django.core.management.base import BaseCommand
 # The beat_schedule keys declared statically in plane/celery.py, mapped to the
 # PeriodicTask `task` name that `update_from_dict` keys the DB row on. Edit
 # celery.py to add one — it is touch-point 3, zero-edit.
-# Default is the every-5-minutes email batch: its first statement is an
-# unconditional read of EmailNotificationLog, so it touches the database every
-# 5 minutes forever and never lets the Neon compute suspend.
+#
+# The deploy step disables BOTH entries below, not just the default. Each is a
+# recurring database touch that never lets the Neon compute's 5-minute idle
+# timer expire: `email` fires every 5 minutes and reads EmailNotificationLog
+# unconditionally (this fork runs no mail server, so it is dead weight), and
+# `instance-trace` fires every 6 hours to report instance telemetry upstream,
+# emitting ~9 `count()` queries covering every core table. Only the cadence
+# differs; the mechanics are identical.
 JOBS = {
     "email": (
         "check-every-five-minutes-to-send-email-notifications",
@@ -65,7 +78,11 @@ class Command(BaseCommand):
             "--job",
             choices=sorted(JOBS),
             default="email",
-            help="Which scheduled job to act on (default: email).",
+            help=(
+                "Which frequent scheduled job to act on — 'email' (every 5 min) "
+                "or 'instance-trace' (every 6 h). Both are disabled by the deploy "
+                "step; default: email."
+            ),
         )
         parser.add_argument(
             "--enable",
