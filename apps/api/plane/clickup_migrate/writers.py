@@ -230,7 +230,11 @@ class MappingCache:
         self._priority: dict[str, str] = {}
         self._fields: dict[str, str] = {}
 
-        for row in MappingTable.objects.filter(run=run, approved=True):
+        # Streaming iterator: a large approved mapping table is consumed row by
+        # row instead of being materialised into memory in one query result.
+        for row in MappingTable.objects.filter(run=run, approved=True).iterator(
+            chunk_size=1000
+        ):
             if row.kind == MappingTable.KIND_STATUS:
                 self._status[row.source_key] = row.target_value
             elif row.kind == MappingTable.KIND_PRIORITY:

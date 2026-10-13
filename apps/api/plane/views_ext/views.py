@@ -26,7 +26,6 @@
 # endpoints it and GroupedWorkspaceViewIssuesEndpoint mirror have different
 # permission models (see each class's docstring) and must not be conflated.
 
-import copy
 from datetime import datetime
 
 # Django imports
@@ -337,8 +336,10 @@ class GroupedWorkspaceViewIssuesEndpoint(BaseAPIView):
         issue_queryset = apply_issue_search(issue_queryset, request)
 
         # Total count queryset (pre-annotation, cheap — mirrors
-        # WorkspaceViewIssuesViewSet.list)
-        total_issue_queryset = copy.deepcopy(issue_queryset).only("id")
+        # WorkspaceViewIssuesViewSet.list). `.only()` already returns an
+        # independent clone, so deep-copying the queryset object (and its
+        # annotations) on every request was pure Python overhead.
+        total_issue_queryset = issue_queryset.only("id")
 
         # Apply annotations to the issue queryset
         issue_queryset = self.apply_annotations(issue_queryset)
@@ -506,7 +507,6 @@ class GroupedWorkspaceUserProfileIssuesEndpoint(BaseAPIView):
         type_filter = self._profile_type_filter(profile_type, user_id)
         issue_queryset = Issue.issue_objects.filter(
             id__in=Issue.issue_objects.filter(type_filter, workspace__slug=slug).values_list("id", flat=True),
-            workspace__slug=slug,
             project__project_projectmember__member=request.user,
             project__project_projectmember__is_active=True,
         )
@@ -530,8 +530,10 @@ class GroupedWorkspaceUserProfileIssuesEndpoint(BaseAPIView):
             issue_queryset = issue_queryset.filter(target_date__lte=before)
 
         # Total count queryset (pre-annotation, cheap — mirrors
-        # GroupedWorkspaceViewIssuesEndpoint.get())
-        total_issue_queryset = copy.deepcopy(issue_queryset).only("id")
+        # GroupedWorkspaceViewIssuesEndpoint.get()). `.only()` already returns
+        # an independent clone, so deep-copying the queryset object (and its
+        # annotations) on every request was pure Python overhead.
+        total_issue_queryset = issue_queryset.only("id")
 
         # Apply annotations to the issue queryset
         issue_queryset = apply_issue_annotations(issue_queryset)
