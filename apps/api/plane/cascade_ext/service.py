@@ -81,41 +81,55 @@ def resolve_target_group(old_state, new_state) -> str | None:
     return new_state.group
 
 
-def _has_terminal_ancestor_to_root(*, issue_id, traversed_ids) -> bool:
-    """Is a posted-but-rejected id sitting under a pruned terminal branch?
+def _terminal_ancestor_ids(*, issue_ids, traversed_ids) -> set:
+    """Which of `issue_ids` sit under a pruned terminal branch?
 
     Phase 0 § 2: after pruning, a live id beneath a terminal node is in
     neither the eligible set nor `traversed_ids`, and `not_a_descendant`
     (or `not_in_module_tree`) would be a FALSE label — the id genuinely is
     a descendant, it is just behind a branch the walk refused to follow.
 
-    This helper walks the id's parent chain (bounded by MAX_DEPTH, the same
-    bound as the walk itself) and returns True only when it reaches a
-    terminal node the cascade itself ENCOUNTERED (recorded in
-    `traversed_ids`) — which is the proof that the branch connects to this
-    cascade's root rather than being some unrelated terminal ancestor. A
-    chain that ends without one (or a chain that leaves the tree entirely)
-    returns False, preserving `not_a_descendant` / `not_in_module_tree` for
-    genuinely foreign ids. Runs only for ids that were already going to be
-    rejected, so it costs nothing on the normal path.
+    An id qualifies when its parent chain (bounded by MAX_DEPTH, the same
+    bound as the walk itself) reaches a terminal node the cascade itself
+    ENCOUNTERED (recorded in `traversed_ids`) — the proof that the branch
+    connects to this cascade's root rather than to some unrelated terminal
+    ancestor. A chain that ends without one (or leaves the tree) does not
+    qualify, preserving `not_a_descendant` / `not_in_module_tree` for
+    genuinely foreign ids.
+
+    Batched across the whole set: the per-id walk this replaces issued one
+    SELECT per ancestor per id, so an apply with M rejected ids cost up to
+    MAX_DEPTH * M queries. Walking every requested id one level at a time
+    costs at most MAX_DEPTH queries for the request, whatever M is. Chains
+    are followed through `issue_objects`, so a soft-deleted or archived
+    ancestor ends its chain exactly as a missing row did before.
     """
     traversed_uuids = {uuid.UUID(x) for x in traversed_ids}
-    current = issue_id
+    carriers = {}
+    for issue_id in issue_ids:
+        carriers.setdefault(uuid.UUID(issue_id), set()).add(issue_id)
+    winners = set()
     for _ in range(MAX_DEPTH):
-        row = (
-            Issue.issue_objects.filter(pk=current)
-            .values("parent_id", "state__group")
-            .first()
+        if not carriers:
+            break
+        parents = dict(
+            Issue.issue_objects.filter(pk__in=list(carriers)).values_list(
+                "id", "parent_id"
+            )
         )
-        if row is None or row["parent_id"] is None:
-            # The chain ended inside this cascade's subject (or left the tree).
-            return False
-        parent_id = row["parent_id"]
-        if parent_id in traversed_uuids:
-            # Parent is a terminal node this cascade actually encountered.
-            return True
-        current = parent_id
-    return False
+        next_level = {}
+        for node, carrying in carriers.items():
+            parent_id = parents.get(node)
+            if parent_id is None:
+                # The chain ended inside this cascade's subject (or left the tree).
+                continue
+            if parent_id in traversed_uuids:
+                # Parent is a terminal node this cascade actually encountered.
+                winners.update(carrying)
+                continue
+            next_level.setdefault(parent_id, set()).update(carrying)
+        carriers = next_level
+    return winners
 
 
 def _collect_from_seeds(
@@ -427,6 +441,15 @@ def apply_module_cascade(
 
     accepted_ids = requested_ids & eligible_ids
 
+    under_terminal = _terminal_ancestor_ids(
+        issue_ids=[
+            cid
+            for cid in sorted(requested_ids - accepted_ids)
+            if by_id.get(cid) is None and cid not in traversed_ids
+        ],
+        traversed_ids=traversed_ids,
+    )
+
     rejected = []
     for cid in sorted(requested_ids - accepted_ids):
         node = by_id.get(cid)
@@ -435,9 +458,7 @@ def apply_module_cascade(
         elif cid in traversed_ids:
             # A terminal node the walk encountered but never emitted.
             reason = "already_terminal"
-        elif _has_terminal_ancestor_to_root(
-            issue_id=cid, traversed_ids=traversed_ids
-        ):
+        elif cid in under_terminal:
             # Phase 0's reason, reused verbatim: a live id the walk refused
             # to reach because a terminal node prunes its branch.
             reason = "under_terminal_ancestor"
@@ -550,6 +571,15 @@ def apply_cascade(*, root_issue, state, child_ids, actor_id, slug, origin) -> di
     accepted_ids = requested_ids & eligible_ids
 
     traversed_ids = collected["traversed_ids"]
+    under_terminal = _terminal_ancestor_ids(
+        issue_ids=[
+            cid
+            for cid in sorted(requested_ids - accepted_ids)
+            if by_id.get(cid) is None and cid not in traversed_ids
+        ],
+        traversed_ids=traversed_ids,
+    )
+
     rejected = []
     for cid in sorted(requested_ids - accepted_ids):
         node = by_id.get(cid)
@@ -557,9 +587,7 @@ def apply_cascade(*, root_issue, state, child_ids, actor_id, slug, origin) -> di
             reason = node["reason"] or "not_eligible"
         elif cid in traversed_ids:
             reason = "already_terminal"
-        elif _has_terminal_ancestor_to_root(
-            issue_id=cid, traversed_ids=traversed_ids
-        ):
+        elif cid in under_terminal:
             # Phase 0: a live descendant beneath a pruned terminal branch.
             reason = "under_terminal_ancestor"
         else:
