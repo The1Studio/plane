@@ -185,6 +185,38 @@ rm -f "$OVERRIDE"          # never leave a stale override behind when flags flip
       --maxmemory-policy allkeys-lru
       --save ""
 YAML
+  # NetBird-internal HTTPS exposure. When TRAEFIK_HOST is set, the proxy joins
+  # the traefik network (theone-vpn_netbird on sv-2) and carries router labels:
+  # traefik terminates the wildcard cert and the ipAllowList middleware scopes
+  # access to the netbird mesh + site-A LAN. TRAEFIK_ROUTER namespaces the
+  # router/middleware/service names so prod and staging can both register
+  # against the same traefik without colliding. Both values come from the
+  # environment-specific plane.env (like LISTEN_HTTP_PORT) so workflows stay
+  # untouched; an env var overrides the file for one-off runs. Unset = previous
+  # behaviour.
+  TRAEFIK_HOST="${TRAEFIK_HOST:-$(grep -E '^TRAEFIK_HOST=' "$RUN_DIR/plane.env" 2>/dev/null | head -n1 | cut -d= -f2-)}"
+  TRAEFIK_ROUTER="${TRAEFIK_ROUTER:-$(grep -E '^TRAEFIK_ROUTER=' "$RUN_DIR/plane.env" 2>/dev/null | head -n1 | cut -d= -f2-)}"
+  if [ -n "${TRAEFIK_HOST:-}" ]; then
+    # NOTE: only the service stanza here. The top-level `networks:` key MUST be
+    # emitted AFTER the LOCAL_DB/LOCAL_STORAGE gates below — those append more
+    # service stanzas, and a `networks:` block mid-file would swallow them as
+    # network definitions (compose hard error on prod, which gates both).
+    cat <<YAML
+  proxy:
+    networks: [default, netbird]
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: theone-vpn_netbird
+      traefik.http.routers.${TRAEFIK_ROUTER:-plane}.rule: Host(\`${TRAEFIK_HOST}\`)
+      traefik.http.routers.${TRAEFIK_ROUTER:-plane}.entrypoints: websecure
+      traefik.http.routers.${TRAEFIK_ROUTER:-plane}.tls: "true"
+      traefik.http.routers.${TRAEFIK_ROUTER:-plane}.tls.certresolver: letsencrypt-dns
+      traefik.http.routers.${TRAEFIK_ROUTER:-plane}.tls.domains[0].main: "*.the1studio.org"
+      traefik.http.routers.${TRAEFIK_ROUTER:-plane}.middlewares: ${TRAEFIK_ROUTER:-plane}-allowlist
+      traefik.http.middlewares.${TRAEFIK_ROUTER:-plane}-allowlist.ipallowlist.sourcerange: 10.100.0.0/16,192.168.1.0/24
+      traefik.http.services.${TRAEFIK_ROUTER:-plane}.loadbalancer.server.port: "80"
+YAML
+  fi
   if [ "$LOCAL_DB" = "0" ]; then
     cat <<'YAML'
   plane-db:
@@ -203,6 +235,16 @@ YAML
     cat <<'YAML'
   plane-minio:
     profiles: ["local-storage"]
+YAML
+  fi
+  # Top-level keys LAST: the gates above append service stanzas, and anything
+  # emitted before them would swallow those stanzas into its own mapping.
+  if [ -n "${TRAEFIK_HOST:-}" ]; then
+    cat <<'YAML'
+networks:
+  netbird:
+    external: true
+    name: theone-vpn_netbird
 YAML
   fi
 } > "$OVERRIDE"
