@@ -18,7 +18,6 @@ const DEFAULT_SWR_CONFIG = {
   revalidateIfStale: false,
   revalidateOnFocus: false,
   revalidateOnMount: true,
-  refreshInterval: 600_000,
   errorRetryCount: 3,
 };
 
