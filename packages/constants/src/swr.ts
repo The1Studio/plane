@@ -9,7 +9,6 @@ export const DEFAULT_SWR_CONFIG = {
   revalidateIfStale: false,
   revalidateOnFocus: false,
   revalidateOnMount: true,
-  refreshInterval: 600000,
   errorRetryCount: 3,
 };
 
