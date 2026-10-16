@@ -542,6 +542,27 @@ CELERY_TASK_ROUTES = {
     "plane.ai_ext.bgtasks.*": {"queue": "ai"},
 }
 
+# Register this fork's own task modules the worker must know about.
+#
+# `plane.bgtasks.logger_task.process_logs` is enqueued on every API-key request
+# by `plane.middleware.logger`, but was registered nowhere: the core
+# `CELERY_IMPORTS` tuple above is upstream's, and `autodiscover_tasks()` cannot
+# cover it — Celery's Django fixup returns every INSTALLED_APPS name, and
+# `autodiscover_tasks` then looks for `<app>.tasks` in each, while this
+# codebase has no `tasks.py` module at all (upstream registers explicitly here
+# and relies on `autodiscover_tasks()` only for third-party apps that do ship
+# one). The worker therefore discarded every message with "Received
+# unregistered task of type 'plane.bgtasks.logger_task.process_logs'", each
+# one carrying a full multi-KB traceback and the request's headers and
+# response body.
+#
+# This is the fork's own append-only block (docs/FORK.md) — the same seam
+# already used below for CELERY_TASK_ROUTES — so no core line is edited and no
+# touch-point is widened. `+=` is deliberate: if upstream later adds this
+# module to the core tuple above, the import here becomes a harmless duplicate
+# instead of shadowing whatever else upstream registered.
+CELERY_IMPORTS += ("plane.bgtasks.logger_task",)
+
 # Neon CU-hr: beat's DatabaseScheduler re-reads the PeriodicTask table every
 # `beat_max_loop_interval` seconds (Celery's default is 5) to detect schedule
 # changes. The Neon compute suspends after 5 minutes of inactivity, so a 5 s
