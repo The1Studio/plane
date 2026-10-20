@@ -206,7 +206,7 @@ YAML
   proxy:
     networks: [default, netbird]
     # Traefik is the only ingress: publish nothing on the host. The upstream
-    # compose maps ${LISTEN_HTTP_PORT}/${LISTEN_HTTPS_PORT}; !reset drops both
+    # compose maps LISTEN_HTTP_PORT/LISTEN_HTTPS_PORT; !reset drops both
     # (Compose >= 2.24 — the !override below already requires it).
     ports: !reset []
     labels:
