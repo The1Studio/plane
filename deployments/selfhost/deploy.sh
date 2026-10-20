@@ -49,7 +49,8 @@ WORKSPACE="$(pwd)"
 # production's plane.env sets LISTEN_HTTP_PORT=8081, supplied explicitly by
 # deploy-master.yml. This default only applies when HEALTH_HTTP_PORT is unset,
 # and it assumes the compose proxy's host port is 80. Verify against plane.env
-# before relying on it.
+# before relying on it. Environments with TRAEFIK_HOST set ignore this: the
+# override resets the published ports and the checks go through Traefik instead.
 #
 # This is not cosmetic. Until 2026-08-26 the checks below hardcoded
 # `http://localhost/`, so a SECOND stack on another port would have probed
@@ -204,6 +205,10 @@ YAML
     cat <<YAML
   proxy:
     networks: [default, netbird]
+    # Traefik is the only ingress: publish nothing on the host. The upstream
+    # compose maps ${LISTEN_HTTP_PORT}/${LISTEN_HTTPS_PORT}; !reset drops both
+    # (Compose >= 2.24 — the !override below already requires it).
+    ports: !reset []
     labels:
       traefik.enable: "true"
       traefik.docker.network: theone-vpn_netbird
@@ -315,12 +320,27 @@ fi
 # pass and the lone `web` probe fired 16ms after the container started, returning a
 # transient 502 and failing an otherwise healthy deploy. Observed 2026-08-22, run
 # 32561842827.
+#
+# Traefik deployments publish no host port (the override resets them), so probe
+# through the router. The public name is resolved to this box's NetBird address:
+# the request then arrives from 10.100.0.0/16, which the ipAllowList admits.
+PROBE_CURL=(curl -s)
+if [ -n "${TRAEFIK_HOST:-}" ]; then
+  PROBE_IP="${TRAEFIK_PROBE_IP:-$(ip -4 -o addr show wt0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1)}"
+  if [ -z "$PROBE_IP" ]; then
+    echo "ERROR: TRAEFIK_HOST is set but this host has no NetBird wt0 address; set TRAEFIK_PROBE_IP"
+    exit 1
+  fi
+  HEALTH_BASE="https://$TRAEFIK_HOST"
+  PROBE_CURL=(curl -s --resolve "$TRAEFIK_HOST:443:$PROBE_IP")
+fi
+
 echo "==> Waiting for API and web to become healthy at $HEALTH_BASE ..."
 api=""
 web=""
 for _ in $(seq 1 60); do          # up to ~5 min
-  api="$(curl -s -o /dev/null -w '%{http_code}' "$HEALTH_BASE/api/instances/" || true)"
-  web="$(curl -s -o /dev/null -w '%{http_code}' "$HEALTH_BASE/" || true)"
+  api="$("${PROBE_CURL[@]}" -o /dev/null -w '%{http_code}' "$HEALTH_BASE/api/instances/" || true)"
+  web="$("${PROBE_CURL[@]}" -o /dev/null -w '%{http_code}' "$HEALTH_BASE/" || true)"
   [ "$api" = "200" ] && [ "$web" = "200" ] && break
   sleep 5
 done
