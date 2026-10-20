@@ -22,7 +22,7 @@ concurrency:
 jobs:
   lint-api:
     name: Lint API
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, arc, the1studio, org]
     timeout-minutes: 25
     if: |
       github.event.pull_request.draft == false &&

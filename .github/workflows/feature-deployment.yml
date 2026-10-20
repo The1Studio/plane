@@ -14,7 +14,7 @@ env:
 jobs:
   branch_build_setup:
     name: Build Setup
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, arc, the1studio, org]
     outputs:
       gh_branch_name: ${{ steps.set_env_variables.outputs.TARGET_BRANCH }}
       flat_branch_name: ${{ steps.set_env_variables.outputs.FLAT_BRANCH_NAME }}
@@ -51,7 +51,7 @@ jobs:
         uses: actions/checkout@v6
 
   full_build_push:
-    runs-on: ubuntu-22.04
+    runs-on: [self-hosted, linux, x64, arc, the1studio, org]
     needs: [branch_build_setup]
     env:
       BUILD_TYPE: full
@@ -101,7 +101,7 @@ jobs:
   feature-deploy:
     needs: [branch_build_setup, full_build_push]
     name: Feature Deploy
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, arc, the1studio, org]
     env:
       KUBE_CONFIG_FILE: ${{ secrets.FEATURE_PREVIEW_KUBE_CONFIG }}
       DEPLOYMENT_NAME: ${{ needs.branch_build_setup.outputs.flat_branch_name }}
