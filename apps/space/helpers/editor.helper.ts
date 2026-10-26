@@ -50,7 +50,11 @@ export const getEditorFileHandlers = (args: TArgs): TFileHandler => {
     getAssetSrc: getAssetSrc,
     upload: uploadFile,
     delete: async (src: string) => {
-      if (src?.startsWith("http")) {
+      if (src?.includes("/api/public/assets/v2/")) {
+        // v2 srcs are absolute http URLs; routing them by startsWith("http")
+        // sent the bare asset id to the v1 endpoint, which expects a full S3 key and always 404s
+        await sitesFileService.deleteNewAsset(src);
+      } else if (src?.startsWith("http")) {
         await sitesFileService.deleteOldEditorAsset(workspaceId, src);
       } else {
         await sitesFileService.deleteNewAsset(getEditorAssetSrc(anchor, src) ?? "");
@@ -58,7 +62,9 @@ export const getEditorFileHandlers = (args: TArgs): TFileHandler => {
     },
     cancel: sitesFileService.cancelUpload,
     restore: async (src: string) => {
-      if (src?.startsWith("http")) {
+      if (src?.includes("/api/public/assets/v2/")) {
+        await sitesFileService.restoreNewAsset(anchor, src);
+      } else if (src?.startsWith("http")) {
         await sitesFileService.restoreOldEditorAsset(workspaceId, src);
       } else {
         await sitesFileService.restoreNewAsset(anchor, src);
