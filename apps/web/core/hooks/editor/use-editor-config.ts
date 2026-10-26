@@ -44,7 +44,10 @@ export const useEditorConfig = () => {
           return res?.exists ?? false;
         },
         delete: async (src: string) => {
-          if (src?.startsWith("http")) {
+          if (src?.includes("/api/assets/v2/")) {
+            // same routing fix as restore: v2 srcs are absolute http URLs
+            await fileService.deleteNewAsset(src);
+          } else if (src?.startsWith("http")) {
             await fileService.deleteOldWorkspaceAsset(workspaceId, src);
           } else {
             await fileService.deleteNewAsset(
@@ -85,7 +88,11 @@ export const useEditorConfig = () => {
           }
         },
         restore: async (src: string) => {
-          if (src?.startsWith("http")) {
+          if (src?.includes("/api/assets/v2/")) {
+            // v2-format srcs are absolute http URLs; routing them by startsWith("http")
+            // sent the bare asset id to the v1 endpoint, which expects a full S3 key and always 404s
+            await fileService.restoreNewAsset(workspaceSlug, src);
+          } else if (src?.startsWith("http")) {
             await fileService.restoreOldEditorAsset(workspaceId, src);
           } else {
             await fileService.restoreNewAsset(workspaceSlug, src);
