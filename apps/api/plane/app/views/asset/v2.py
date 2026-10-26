@@ -23,8 +23,24 @@ from plane.settings.storage import S3Storage
 from plane.app.permissions import allow_permission, ROLE
 from plane.utils.cache import invalidate_cache_directly
 from plane.utils.path_validator import sanitize_filename
-from plane.bgtasks.storage_metadata_task import get_asset_object_metadata
 from plane.throttles.asset import AssetRateThrottle
+
+
+def get_verified_upload_metadata(storage, asset):
+    """Return storage metadata only when the uploaded object exists with content.
+
+    Uploads are finalized client-side after a presigned PUT; a failed or empty
+    PUT otherwise leaves a finalized row pointing at a 0-byte object (observed
+    in production on 2026-10-26, losing image content). HEAD is strongly
+    consistent on S3 and R2, so this is safe to call right after the PUT.
+    """
+    try:
+        metadata = storage.get_object_metadata(object_name=asset.asset.name)
+    except Exception:
+        return None
+    if metadata and metadata.get("ContentLength"):
+        return metadata
+    return None
 
 
 class UserAssetsV2Endpoint(BaseAPIView):
@@ -171,11 +187,18 @@ class UserAssetsV2Endpoint(BaseAPIView):
     def patch(self, request, asset_id):
         # get the asset id
         asset = FileAsset.objects.get(id=asset_id, user_id=request.user.id)
-        # get the storage metadata
+        # finalize only uploads whose storage object actually has content
+        metadata = get_verified_upload_metadata(S3Storage(request=request), asset)
+        if metadata is None:
+            return Response(
+                {
+                    "error": "Upload verification failed: the file did not reach storage. Please retry the upload.",
+                    "status": False,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         asset.is_uploaded = True
-        # get the storage metadata
-        if not asset.storage_metadata:
-            get_asset_object_metadata.delay(asset_id=str(asset_id))
+        asset.storage_metadata = metadata
         # get the entity and save the asset id for the request field
         self.entity_asset_save(
             asset_id=asset_id,
@@ -186,7 +209,7 @@ class UserAssetsV2Endpoint(BaseAPIView):
         # update the attributes
         asset.attributes = request.data.get("attributes", asset.attributes)
         # save the asset
-        asset.save(update_fields=["is_uploaded", "attributes"])
+        asset.save(update_fields=["is_uploaded", "storage_metadata", "attributes"])
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     def delete(self, request, asset_id):
@@ -382,11 +405,18 @@ class WorkspaceFileAssetEndpoint(BaseAPIView):
     def patch(self, request, slug, asset_id):
         # get the asset id
         asset = FileAsset.objects.get(id=asset_id, workspace__slug=slug)
-        # get the storage metadata
+        # finalize only uploads whose storage object actually has content
+        metadata = get_verified_upload_metadata(S3Storage(request=request), asset)
+        if metadata is None:
+            return Response(
+                {
+                    "error": "Upload verification failed: the file did not reach storage. Please retry the upload.",
+                    "status": False,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         asset.is_uploaded = True
-        # get the storage metadata
-        if not asset.storage_metadata:
-            get_asset_object_metadata.delay(asset_id=str(asset_id))
+        asset.storage_metadata = metadata
         # get the entity and save the asset id for the request field
         self.entity_asset_save(
             asset_id=asset_id,
@@ -397,7 +427,7 @@ class WorkspaceFileAssetEndpoint(BaseAPIView):
         # update the attributes
         asset.attributes = request.data.get("attributes", asset.attributes)
         # save the asset
-        asset.save(update_fields=["is_uploaded", "attributes"])
+        asset.save(update_fields=["is_uploaded", "storage_metadata", "attributes"])
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @allow_permission([ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST], level="WORKSPACE")
@@ -476,6 +506,15 @@ class AssetRestoreEndpoint(BaseAPIView):
     @allow_permission([ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST], level="WORKSPACE")
     def post(self, request, slug, asset_id):
         asset = FileAsset.all_objects.get(id=asset_id, workspace__slug=slug)
+        # restoring a row whose storage object is gone produces a permanently broken asset
+        if get_verified_upload_metadata(S3Storage(request=request), asset) is None:
+            return Response(
+                {
+                    "error": "Storage object is missing or empty; the asset cannot be restored. Please re-upload the file.",
+                    "status": False,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         asset.is_deleted = False
         asset.deleted_at = None
         asset.save(update_fields=["is_deleted", "deleted_at"])
@@ -585,16 +624,23 @@ class ProjectAssetEndpoint(BaseAPIView):
     def patch(self, request, slug, project_id, pk):
         # get the asset id
         asset = FileAsset.objects.get(id=pk, workspace__slug=slug, project_id=project_id)
-        # get the storage metadata
+        # finalize only uploads whose storage object actually has content
+        metadata = get_verified_upload_metadata(S3Storage(request=request), asset)
+        if metadata is None:
+            return Response(
+                {
+                    "error": "Upload verification failed: the file did not reach storage. Please retry the upload.",
+                    "status": False,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         asset.is_uploaded = True
-        # get the storage metadata
-        if not asset.storage_metadata:
-            get_asset_object_metadata.delay(asset_id=str(pk))
+        asset.storage_metadata = metadata
 
         # update the attributes
         asset.attributes = request.data.get("attributes", asset.attributes)
         # save the asset
-        asset.save(update_fields=["is_uploaded", "attributes"])
+        asset.save(update_fields=["is_uploaded", "storage_metadata", "attributes"])
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @allow_permission([ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST])
