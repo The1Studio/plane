@@ -49,8 +49,8 @@ WORKSPACE="$(pwd)"
 # production's plane.env sets LISTEN_HTTP_PORT=8081, supplied explicitly by
 # deploy-master.yml. This default only applies when HEALTH_HTTP_PORT is unset,
 # and it assumes the compose proxy's host port is 80. Verify against plane.env
-# before relying on it. Environments with TRAEFIK_HOST set ignore this: the
-# override resets the published ports and the checks go through Traefik instead.
+# before relying on it. Environments with the proxy hostname set ignore this: the
+# override resets the published ports and the checks go through the proxy instead.
 #
 # This is not cosmetic. Until 2026-08-26 the checks below hardcoded
 # `http://localhost/`, so a SECOND stack on another port would have probed
@@ -187,7 +187,7 @@ rm -f "$OVERRIDE"          # never leave a stale override behind when flags flip
       --save ""
 YAML
   # The NetBird proxy is the only ingress: join the overlay and drop the host
-  # ports. The proxy service maps the hostname; no Traefik labels.
+  # ports. The proxy service maps the hostname; no the NetBird proxy labels.
     # NOTE: only the service stanza here. The top-level `networks:` key MUST be
     # emitted AFTER the LOCAL_DB/LOCAL_STORAGE gates below — those append more
     # service stanzas, and a `networks:` block mid-file would swallow them as
@@ -300,14 +300,14 @@ fi
 # transient 502 and failing an otherwise healthy deploy. Observed 2026-08-22, run
 # 32561842827.
 #
-# Traefik deployments publish no host port (the override resets them), so probe
-# through the router. The public name is resolved to this box's NetBird address:
-# the request then arrives from 10.100.0.0/16, which the ipAllowList admits.
+# Proxy-backed deployments publish no host port (the override resets them), so probe
+# through the proxy. The public name is resolved to this box's NetBird address:
+# the request then arrives from 10.100.0.0/16, which the proxy NetBird-only access admits.
 PROBE_CURL=(curl -s)
 if [ -n "${TRAEFIK_HOST:-}" ]; then
   PROBE_IP="${TRAEFIK_PROBE_IP:-$(ip -4 -o addr show wt0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1)}"
   if [ -z "$PROBE_IP" ]; then
-    echo "ERROR: TRAEFIK_HOST is set but this host has no NetBird wt0 address; set TRAEFIK_PROBE_IP"
+    echo "ERROR: the proxy hostname is set but this host has no NetBird wt0 address; set TRAEFIK_PROBE_IP"
     exit 1
   fi
   HEALTH_BASE="https://$TRAEFIK_HOST"
