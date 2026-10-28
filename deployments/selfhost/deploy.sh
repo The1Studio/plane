@@ -302,6 +302,7 @@ fi
 # through the proxy. The public name is resolved to this box's NetBird address:
 # the request then arrives from 10.100.0.0/16, which the proxy NetBird-only access admits.
 PROBE_CURL=(curl -s)
+TRAEFIK_HOST="${TRAEFIK_HOST:-$(grep -E '^TRAEFIK_HOST=' "$RUN_DIR/plane.env" 2>/dev/null | head -n1 | cut -d= -f2-)}"
 if [ -n "${TRAEFIK_HOST:-}" ]; then
   PROBE_IP="${TRAEFIK_PROBE_IP:-$(ip -4 -o addr show wt0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1)}"
   if [ -z "$PROBE_IP" ]; then
