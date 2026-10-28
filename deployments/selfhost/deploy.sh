@@ -223,14 +223,12 @@ YAML
   fi
   # Top-level keys LAST: the gates above append service stanzas, and anything
   # emitted before them would swallow those stanzas into its own mapping.
-  if [ -n "${TRAEFIK_HOST:-}" ]; then
-    cat <<'YAML'
+  cat <<'YAML'
 networks:
   netbird:
     external: true
     name: theone-vpn_netbird
 YAML
-  fi
 } > "$OVERRIDE"
 echo "==> wrote $OVERRIDE (LOCAL_DB=$LOCAL_DB LOCAL_STORAGE=$LOCAL_STORAGE, redis cache config always on)"
 
