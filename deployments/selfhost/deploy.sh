@@ -304,13 +304,8 @@ fi
 PROBE_CURL=(curl -s)
 TRAEFIK_HOST="${TRAEFIK_HOST:-$(grep -E '^TRAEFIK_HOST=' "$RUN_DIR/plane.env" 2>/dev/null | head -n1 | cut -d= -f2-)}"
 if [ -n "${TRAEFIK_HOST:-}" ]; then
-  PROBE_IP="${TRAEFIK_PROBE_IP:-$(ip -4 -o addr show wt0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1)}"
-  if [ -z "$PROBE_IP" ]; then
-    echo "ERROR: the proxy hostname is set but this host has no NetBird wt0 address; set TRAEFIK_PROBE_IP"
-    exit 1
-  fi
+  # Resolve via NetBird DNS: the proxy overlay, not this host's Traefik IP.
   HEALTH_BASE="https://$TRAEFIK_HOST"
-  PROBE_CURL=(curl -s --resolve "$TRAEFIK_HOST:443:$PROBE_IP")
 fi
 
 echo "==> Waiting for API and web to become healthy at $HEALTH_BASE ..."
