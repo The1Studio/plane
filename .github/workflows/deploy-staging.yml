@@ -77,7 +77,7 @@ jobs:
       # reflects a commit AFTER this deploy finishes — a smoke job in master-ci
       # runs at PR/push time and would test whatever was previously deployed.
       #
-      # deploy.sh already gates on web+api returning 200 through Traefik. These
+      # deploy.sh already gates on web+api returning 200 through the proxy. These
       # are the things it cannot see:
       #   1. the public path through the Cloudflare tunnel (deploy.sh resolves the
       #      name straight to this box's wt0 address)
@@ -95,7 +95,7 @@ jobs:
           fail=0
           SHORT_SHA="$(git rev-parse --short HEAD)"
           # The proxy publishes no host port (deploy.sh resets it), so the API is
-          # reached through Traefik. Resolving the name to this box's NetBird
+          # reached through the proxy. Resolving the name to this box's NetBird
           # address makes the request arrive from 10.100.0.0/16, which the
           # ipAllowList admits.
           API_HOST="${PUBLIC_URL#https://}"
@@ -105,7 +105,7 @@ jobs:
           echo "== 1. public URL through the tunnel =="
           code="$(curl -s -o /tmp/smoke_public -w '%{http_code}' -L --max-time 30 "$PUBLIC_URL/" || true)"
           if [ "$code" = "200" ]; then echo "   ok   $PUBLIC_URL -> 200"
-          else echo "   FAIL $PUBLIC_URL -> $code (tunnel/ingress, not the stack — Traefik path passed)"; fail=1; fi
+          else echo "   FAIL $PUBLIC_URL -> $code (tunnel/ingress, not the stack — proxy path passed)"; fail=1; fi
 
           echo "== 2. API answers with real JSON =="
           code="$(curl -s -o /tmp/smoke_api -w '%{http_code}' --resolve "$API_HOST:443:$PROBE_IP" --max-time 30 "${PUBLIC_URL%/}/api/instances/" || true)"
